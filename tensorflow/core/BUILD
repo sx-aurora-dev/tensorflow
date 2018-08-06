@@ -2786,6 +2786,7 @@ tf_cuda_library(
         "public/session.h",
         "public/session_options.h",
         "public/version.h",
+        "common_runtime/ve/ve_device.cc",
     ],
     hdrs = CORE_CPU_LIB_HEADERS,
     copts = tf_copts(),
