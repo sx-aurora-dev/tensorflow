@@ -2786,7 +2786,6 @@ tf_cuda_library(
         "public/session.h",
         "public/session_options.h",
         "public/version.h",
-        "common_runtime/ve/ve_device.cc",
     ],
     hdrs = CORE_CPU_LIB_HEADERS,
     copts = tf_copts(),
@@ -2800,12 +2799,31 @@ tf_cuda_library(
         ":protos_all_cc",
         "//third_party/eigen3",
         "//tensorflow/core/grappler:grappler_item",
+        ":ve_runtime",
     ] + if_mkl(
         [
             "//third_party/mkl:intel_binary_blob",
             "@mkl_dnn",
         ],
     ),
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "ve_runtime",
+    hdrs = ["common_runtime/ve/ve_device.h"],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "ve_runtime_impl",
+    srcs = ["common_runtime/ve/ve_device.cc"],
+    deps = [
+        ":core_cpu_impl",
+        ":ve_runtime",
+        "//third_party/veoffload",
+        "//tensorflow/core:stream_executor",
+        ],
     alwayslink = 1,
 )
 

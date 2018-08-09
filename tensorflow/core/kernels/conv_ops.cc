@@ -57,11 +57,18 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
+#define VE
+#ifdef VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef VE
 typedef Eigen::VeDevice VEDevice;
+#endif
 
 namespace {
 template <typename Device, typename T>
@@ -141,6 +148,7 @@ struct LaunchConv2DOp<CPUDevice, T> {
   }
 };
 
+#ifdef VE
 template <typename T>
 struct LaunchConv2DOp<VEDevice, T> {
   void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
@@ -149,23 +157,16 @@ struct LaunchConv2DOp<VEDevice, T> {
                   const Padding& padding, Tensor* output,
                   TensorFormat data_format) {
     VLOG(2) << "LaunchConv2DOp<VEDevice, T>";
-#if 0
-    if (data_format != FORMAT_NHWC) {
-      ctx->SetStatus(
-          errors::Unimplemented("Generic conv implementation only supports "
-                                "NHWC tensor format for now."));
-      return;
-    }
-    const int64 in_depth = GetTensorDim(input, data_format, 'C');
-    OP_REQUIRES(ctx, in_depth == filter.dim_size(2),
-                errors::Unimplemented("Generic conv implementation does not "
-                                      "support grouped convolutions for now."));
-    LaunchGeneric<CPUDevice, T>()(ctx, input, filter, row_stride, col_stride,
-                                  row_dilation, col_dilation, padding, output,
-                                  data_format);
-#endif
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: vectx=" << vectx;
+
+    vectx->conv2d(input, filter, output);
   }
 };
+#endif
 
 template <typename Device, typename T>
 class LaunchDeepConvOp {
@@ -489,7 +490,7 @@ TF_CALL_float(REGISTER_CPU);
 TF_CALL_double(REGISTER_CPU);
 #endif  // USE_GEMM_FOR_CONV
 
-#if 1
+#ifdef VE
 REGISTER_KERNEL_BUILDER(
       Name("Conv2D").Device(DEVICE_VE).TypeConstraint<float>("T"),
       Conv2DOp<VEDevice, float>);
@@ -500,8 +501,9 @@ template struct LaunchConv2DOp<CPUDevice, Eigen::half>;
 template struct LaunchConv2DOp<CPUDevice, float>;
 template struct LaunchConv2DOp<CPUDevice, double>;
 
-//template struct LaunchConv2DOp<VEDevice, Eigen::half>;
+#ifdef VE
 template struct LaunchConv2DOp<VEDevice, float>;
+#endif
 
 #if GOOGLE_CUDA
 int64 GetCudnnWorkspaceLimit(const string& envvar_in_mb,
