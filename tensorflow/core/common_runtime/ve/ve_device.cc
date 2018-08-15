@@ -54,34 +54,31 @@ class VEO {
       return veo_read_mem(proc_, vh_buff, ve_addr, len);
     }
 
-    int conv2d(uint64_t addr, uint64_t len) {
-      VLOG(2) << "VEO::conv2d";
-      struct veo_args *argp = veo_args_alloc();
-      veo_args_set_i64(argp, 0, addr);
-      veo_args_set_i64(argp, 1, len);
-      VLOG(2) << "VEO::call: ctx_=" << ctx_;
+    int compute(const std::string& name, const void* arg, size_t len) {
+      struct veo_args* args = veo_args_alloc();
 
-      uint64_t id = veo_call_async(ctx_, sym_, argp);
-      VLOG(2) << "VEO::call: VEO request ID = " << id;
+      int kernelID = 1215;
 
-#if 0
-      uint64_t buffer = 0;
-      uint64_t bufptr = veo_get_sym(proc, handle, "buffer");
+      veo_args_set_i64(args, 0, kernelID);
+      veo_args_set_stack(args, VEO_INTENT_IN, 1, (char*)arg, len);
+      veo_args_set_i64(args, 2, len);
+
       int ret;
-      ret = veo_read_mem(proc, &buffer, bufptr, sizeof(buffer));
-      printf("veo_read_mem() returned %d\n", ret);
-      printf("%016lx\n", buffer);
-      buffer = 0xc0ffee;
-      ret = veo_write_mem(proc, bufptr, &buffer, sizeof(buffer));
-      printf("veo_write_mem() returned %d\n", ret);
-      uint64_t sym2 = veo_get_sym(proc, handle, "print_buffer");
-      uint64_t id2 = veo_call_async(ctx, sym2, argp);
-      uint64_t retval;
-#endif
-      uint64_t retval;
-      int ret = veo_call_wait_result(ctx_, id, &retval);
-      VLOG(2) << "VEO::call: id=" << id << " ret=" << ret << " retval=" << retval;
+      {
+        FAKE();
+        int req_id = veo_call_async(ctx_, sym_, args);
+        VLOG(2) << "VEO::call: VEO request ID = " << req_id;
+
+        uint64_t retval;
+        ret = veo_call_wait_result(ctx_, req_id, &retval);
+        VLOG(2) << "VEO::call: id=" << req_id << " ret=" << ret << " retval=" << retval;
+      }
+
+      veo_args_free(args);
+
+      return ret;
     }
+
 
 #undef FAKE
 
@@ -107,21 +104,12 @@ void VEO::init() {
 
   proc_pid_ = getpid();
 
-#if 0
-  {
-    uint64_t addr;
-    VLOG(2) << "veo_alloc_mem: " << pthread_self();
-    VLOG(2) << "veo_alloc_mem";
-    int rc = veo_alloc_mem(proc_, &addr, 1024);
-    VLOG(2) << "veo_alloc_mem: rc=" << rc;
-  }
-#endif
-
   lib_id_ = veo_load_library(proc_, filename);
   VLOG(2) << "VEO::init: lib_id_=" << lib_id_;
 
   //sym_ = veo_get_sym(proc_, lib_id_, "hello");
-  sym_ = veo_get_sym(proc_, lib_id_, "conv2d");
+  //sym_ = veo_get_sym(proc_, lib_id_, "conv2d");
+  sym_ = veo_get_sym(proc_, lib_id_, "compute");
   VLOG(2) << "VEO::init: sym_=" << (void*)sym_;
 
   ctx_ = veo_context_open(proc_);
@@ -160,7 +148,7 @@ void VEMemAllocator::Free(void* ptr, size_t num_bytes) {
 class VEBFCAllocator : public BFCAllocator {
   public:
     VEBFCAllocator(size_t total_memory, bool allow_growth, const string& name, 
-        VEO* veo);
+                   VEO* veo);
 
   private:
 };
@@ -172,11 +160,11 @@ VEBFCAllocator::VEBFCAllocator(size_t total_memory, bool allow_growth, const str
 class VEDevice : public LocalDevice {
   public:
     VEDevice(const SessionOptions& options, const string name,
-        Allocator* ve_allocator) :
+             Allocator* ve_allocator) :
       LocalDevice(options,
-          Device::BuildDeviceAttributes(name, "VE",
-            Bytes(256 << 20),
-            DeviceLocality())),
+                  Device::BuildDeviceAttributes(name, "VE",
+                                                Bytes(256 << 20),
+                                                DeviceLocality())),
       ve_allocator_(ve_allocator) {}
 
     ~VEDevice() override;
@@ -220,7 +208,7 @@ Status VEDevice::Init(const SessionOptions& options, VEO* veo) {
 
 class VEDeviceFactory : public DeviceFactory {
   Status CreateDevices(const SessionOptions& options, const string& name_prefix,
-      std::vector<Device*>* devices) override {
+                       std::vector<Device*>* devices) override {
     const string device_name = strings::StrCat(name_prefix, "/device:VE:0");
     VLOG(2) << "VEDeviceFactory::CreateDevices: " << device_name;
 
@@ -242,8 +230,8 @@ class VEDeviceFactory : public DeviceFactory {
 REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 
 void VEDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
-    Tensor* device_tensor,
-    StatusCallback done) const {
+                                            Tensor* device_tensor,
+                                            StatusCallback done) const {
   VLOG(2) << "VEDeviceContext::CopyCPUTensorToDevice";
 
   const void* in = DMAHelper::base(cpu_tensor);
@@ -258,8 +246,8 @@ void VEDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* de
 }
 
 void VEDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
-    Device* device, Tensor* cpu_tensor,
-    StatusCallback done) {
+                                            Device* device, Tensor* cpu_tensor,
+                                            StatusCallback done) {
   VLOG(2) << "VEDeviceContext::CopyDeviceTensorToCPU";
 
   const void* in = DMAHelper::base(device_tensor);
@@ -274,12 +262,9 @@ void VEDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringP
   done(Status::OK());
 }
 
-void VEDeviceContext::conv2d(const Tensor& input, const Tensor& filter, Tensor* output) {
-  VLOG(2) << "VEDeviceContext::conv2d";
-  void* out = DMAHelper::base(output);
-  VLOG(2) << "VEDeviceContext::conv2d: out=" << out;
-
-  veo_->conv2d((uint64_t)out, output->TotalBytes());
+void VEDeviceContext::Compute(const std::string& name, const void* arg, size_t len)
+{
+  veo_->compute(name, arg, len);
 }
 
 } // namespace tensorflow
