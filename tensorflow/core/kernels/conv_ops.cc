@@ -60,6 +60,7 @@ limitations under the License.
 #define VE
 #ifdef VE
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
 #endif
 
 namespace tensorflow {
@@ -159,11 +160,66 @@ struct LaunchConv2DOp<VEDevice, T> {
     VLOG(2) << "LaunchConv2DOp<VEDevice, T>";
     VLOG(2) << "LaunchConv2DOp<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
 
+    struct TensorParam {
+      int w, h, c, n;
+      TensorParam(const Tensor& t, TensorFormat f) : 
+        w(GetTensorDim(t, f, 'W')),
+        h(GetTensorDim(t, f, 'H')),
+        c(GetTensorDim(t, f, 'C')),
+        n(GetTensorDim(t, f, 'N')) {}
+    };
+
+    struct ConvParam {
+      uint64_t in;
+      uint64_t filter;
+      uint64_t out;
+      TensorParam in_param;
+      TensorParam filter_param;
+      TensorParam out_param;
+
+      int row_stride;
+      int col_stride;
+      int row_dilation;
+      int col_dilation;
+      int row_padding;
+      int col_padding;
+
+      int data_format;
+      int data_type;
+
+      ConvParam(const Tensor& in, const Tensor& filter, Tensor* out, TensorFormat f) :
+        in_param(in, f), filter_param(filter, f), out_param(*out, f) {}
+    };
+
+    ConvParam p(input, filter, output, data_format);
+
+    p.in = (uint64_t)DMAHelper::base(&input);
+    p.filter = (uint64_t)DMAHelper::base(&filter);
+    p.out = (uint64_t)DMAHelper::base(output);
+    p.data_format = data_format;
+    p.data_type = input.dtype();
+    p.row_stride = row_stride;
+    p.col_stride = col_stride;
+    p.row_dilation = row_dilation;
+    p.col_dilation = col_dilation;
+    p.row_padding = 0;
+    p.col_padding = 0;
+
+    if (padding == SAME) {
+      p.row_padding = std::max<int>(0, 
+                                    (p.out_param.w - 1) * row_stride +
+                                    (p.filter_param.w - 1) * row_dilation + 1 -
+                                    p.in_param.w);
+      p.col_padding = std::max<int>(0, 
+                                    (p.out_param.h - 1) * col_stride +
+                                    (p.filter_param.h - 1) * col_dilation + 1 -
+                                    p.in_param.h);
+    }
+
+    //VLOG(2) << "VEDeviceContext::conv2d: sizeof(ConvParam)=" << sizeof(ConvParam);
+
     VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-
-    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: vectx=" << vectx;
-
-    vectx->conv2d(input, filter, output);
+    vectx->Compute("Conv2D", (void*)&p, sizeof(p));
   }
 };
 #endif

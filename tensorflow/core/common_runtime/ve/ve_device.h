@@ -19,7 +19,7 @@ class VEDeviceContext : public DeviceContext {
         Device* device, Tensor* cpu_tensor,
         StatusCallback done) override;
 
-    void conv2d(const Tensor& input, const Tensor& filter, Tensor* output);
+    void Compute(const std::string& name, const void* arg, size_t len);
 
   private:
     VEO* veo_;
