@@ -219,7 +219,9 @@ struct LaunchConv2DOp<VEDevice, T> {
     //VLOG(2) << "VEDeviceContext::conv2d: sizeof(ConvParam)=" << sizeof(ConvParam);
 
     VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    vectx->Compute("Conv2D", (void*)&p, sizeof(p));
+    Status s = vectx->Compute("Conv2D", (void*)&p, sizeof(p));
+    if (!s.ok())
+      ctx->SetStatus(s);
   }
 };
 #endif

@@ -63,8 +63,7 @@ class VEO {
       return veo_read_mem(proc_, vh_buff, ve_addr, len);
     }
 
-    int compute(const std::string& name, const void* arg, size_t len) {
-
+    Status compute(const std::string& name, const void* arg, size_t len) {
       auto it = kernel_map_.find(name);
       CHECK(it != kernel_map_.end()) << "kernel not found: " << name;
 
@@ -79,13 +78,19 @@ class VEO {
         FAKE();
         int req_id = veo_call_async(ctx_, sym, a.args);
         VLOG(2) << "VEO::call: VEO request ID = " << req_id;
+        if (req_id == VEO_REQUEST_ID_INVALID)
+          return errors::Internal("Failed to call kernel");
 
         uint64_t retval;
         ret = veo_call_wait_result(ctx_, req_id, &retval);
         VLOG(2) << "VEO::call: id=" << req_id << " ret=" << ret << " retval=" << retval;
+        if (ret != 0)
+          return errors::Internal("Failed to wait kernel result");
+        if (retval != 0)
+          return errors::Internal("Failed in the kernel");
       }
 
-      return ret;
+      return Status::OK();
     }
 #undef FAKE
 
@@ -255,7 +260,7 @@ class VEDeviceContextImpl : public VEDeviceContext {
                                        Device* device, Tensor* cpu_tensor,
                                        StatusCallback done) override;
 
-    virtual void Compute(const std::string& name, const void* arg, size_t len);
+    virtual Status Compute(const std::string& name, const void* arg, size_t len);
 
   private:
     VEO* veo_;
@@ -364,9 +369,9 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
   done(Status::OK());
 }
 
-void VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len)
+Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len)
 {
-  veo_->compute(name, arg, len);
+  return veo_->compute(name, arg, len);
 }
 
 } // namespace tensorflow
