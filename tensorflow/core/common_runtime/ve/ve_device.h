@@ -5,24 +5,11 @@
 
 namespace tensorflow {
 
-class VEO;
-
 class VEDeviceContext : public DeviceContext {
   public:
-    VEDeviceContext(VEO* veo) : veo_(veo) {}
+    virtual ~VEDeviceContext() {}
 
-    void CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
-        Tensor* device_tensor,
-        StatusCallback done) const override;
-
-    void CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
-        Device* device, Tensor* cpu_tensor,
-        StatusCallback done) override;
-
-    void Compute(const std::string& name, const void* arg, size_t len);
-
-  private:
-    VEO* veo_;
+    virtual void Compute(const std::string& name, const void* arg, size_t len) = 0;
 };
 
 }

@@ -16,14 +16,23 @@ extern void set_fake_tid(long) __attribute__((weak));
 
 namespace tensorflow {
 
+namespace {
+
 class VEO {
-  class Fake {
-    public:
-      Fake(int pid) { if (set_fake_tid) set_fake_tid(pid); }
-      ~Fake() { if (set_fake_tid) set_fake_tid(0); }
-  };
+  private:
+    class Fake {
+      public:
+        Fake(int pid) { if (set_fake_tid) set_fake_tid(pid); }
+        ~Fake() { if (set_fake_tid) set_fake_tid(0); }
+    };
 
   public:
+    struct Args {
+      struct veo_args* args;
+      Args() : args(veo_args_alloc()) { }
+      ~Args() { veo_args_free(args); }
+    };
+
     VEO() {}
     virtual ~VEO();
 
@@ -55,18 +64,20 @@ class VEO {
     }
 
     int compute(const std::string& name, const void* arg, size_t len) {
-      struct veo_args* args = veo_args_alloc();
 
-      int kernelID = 1215;
+      auto it = kernel_map_.find(name);
+      CHECK(it != kernel_map_.end()) << "kernel not found: " << name;
 
-      veo_args_set_i64(args, 0, kernelID);
-      veo_args_set_stack(args, VEO_INTENT_IN, 1, (char*)arg, len);
-      veo_args_set_i64(args, 2, len);
+      uint64_t sym = it->second;
+
+      Args a;
+      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
+      veo_args_set_i64(a.args, 1, len);
 
       int ret;
       {
         FAKE();
-        int req_id = veo_call_async(ctx_, sym_, args);
+        int req_id = veo_call_async(ctx_, sym, a.args);
         VLOG(2) << "VEO::call: VEO request ID = " << req_id;
 
         uint64_t retval;
@@ -74,46 +85,123 @@ class VEO {
         VLOG(2) << "VEO::call: id=" << req_id << " ret=" << ret << " retval=" << retval;
       }
 
-      veo_args_free(args);
-
       return ret;
     }
-
-
 #undef FAKE
 
-    void init();
+    Status init();
 
   private:
     pid_t proc_pid_;
     struct veo_proc_handle* proc_;
-    uint64_t lib_id_;
-    uint64_t sym_;
     struct veo_thr_ctxt *ctx_;
+
+    std::map<std::string, uint64_t> kernel_map_;
 };
 
-void VEO::init() {
-  const char* filename = getenv("VEO_LIB");
+Status veo_sym_call(struct veo_proc_handle* proc,
+                 struct veo_thr_ctxt* ctx,
+                 uint64_t lib_id,
+                 const char* name,
+                 uint64_t* retval)
+{
+  uint64_t sym = veo_get_sym(proc, lib_id, name);
+  if (!sym)
+    return errors::Internal("Fails to get symbol for ", name);
+
+  VEO::Args args;
+
+  if (!args.args)
+    return errors::Internal("Fails to allocate arguments");
+
+  int req_id = veo_call_async(ctx, sym, args.args);
+  //VLOG(2) << "VEO::load_kernel_syms: VEO request ID = " << req_id;
+  if (req_id == VEO_REQUEST_ID_INVALID) {
+    return errors::Internal("Fails to call VE");
+  }
+
+  int ret = veo_call_wait_result(ctx, req_id, retval);
+  if (ret != 0) {
+    return errors::Internal("Fails to call wait result");
+  }
+
+  return Status::OK();
+}
+
+Status load_kernel_syms(struct veo_proc_handle* proc,
+                        struct veo_thr_ctxt* ctx,
+                        uint64_t lib_id,
+                        std::map<std::string, uint64_t>& map)
+{
+  Status s;
+
+  uint64_t num_kernels;
+  s = veo_sym_call(proc, ctx, lib_id, "get_num_kernels", &num_kernels);
+  if (!s.ok())
+    return s;
+  VLOG(2) << "VEO::load_kernel_syms: num_kernels=" << num_kernels;
+
+  uint64_t addr;
+  s = veo_sym_call(proc, ctx, lib_id, "get_kernel_table_addr", &addr);
+  if (!s.ok())
+    return s;
+
+  struct kernel {
+    char name[256];
+    char func[256];
+  } table[num_kernels];
+
+  int ret = veo_read_mem(proc, table, addr, num_kernels * sizeof(kernel));
+  if (ret != 0)
+    return errors::Internal("Failed to read mem");
+
+  for (int i = 0; i < num_kernels; ++i) {
+    uint64_t sym = veo_get_sym(proc, lib_id, table[i].func);
+    VLOG(2) << "VEO::load_kernel_syms:"
+      << " name=" << table[i].name
+      << " func=" << table[i].func
+      << " sym=" << (void*)sym;
+    if (!sym)
+      return errors::Internal("Failed to get symbol for ", table[i].func);
+    map[table[i].name] = sym;
+  }
+
+  return Status::OK();
+}
+
+Status VEO::init() {
+  const char* filename = "libvetfkernel.so";
+
+  if (const char* tmp = getenv("VEO_KERNEL")) {
+    filename = tmp;
+  }
   VLOG(2) << "VEO::init: filename=" << filename;
-  if (filename == NULL)
-    return; // error
 
   int nodeid = 0;
+  if (const char* tmp = getenv("VE_NODE_NUMBER")) {
+    nodeid = atoi(tmp);
+  }
+
+  VLOG(2) << "VEO::init: nodeid=" << nodeid;
+
   proc_ = veo_proc_create(nodeid);
   VLOG(2) << "VEO::init: proc_=" << proc_;
+  if (!proc_)
+    return errors::Internal("Failed to create VEO proc");
 
   proc_pid_ = getpid();
 
-  lib_id_ = veo_load_library(proc_, filename);
-  VLOG(2) << "VEO::init: lib_id_=" << lib_id_;
-
-  //sym_ = veo_get_sym(proc_, lib_id_, "hello");
-  //sym_ = veo_get_sym(proc_, lib_id_, "conv2d");
-  sym_ = veo_get_sym(proc_, lib_id_, "compute");
-  VLOG(2) << "VEO::init: sym_=" << (void*)sym_;
+  uint64_t lib_id = veo_load_library(proc_, filename);
+  VLOG(2) << "VEO::init: lib_id=" << lib_id;
+  if (!lib_id)
+    return errors::Internal("Failed to load library: ", filename);
 
   ctx_ = veo_context_open(proc_);
   VLOG(2) << "VEO::init: ctx_=" << ctx_;
+  if (!ctx_)
+    return errors::Internal("Failed to open VEO context");
+
+  return load_kernel_syms(proc_, ctx_, lib_id, kernel_map_);
 }
 
 VEO::~VEO() {
@@ -121,8 +209,6 @@ VEO::~VEO() {
   veo_context_close(ctx_);
   veo_proc_destroy(proc_);
 }
-
-namespace {
 
 class VEMemAllocator : public SubAllocator {
   public:
@@ -157,6 +243,24 @@ VEBFCAllocator::VEBFCAllocator(size_t total_memory, bool allow_growth, const str
   BFCAllocator(new VEMemAllocator(veo), total_memory, allow_growth, name) {
   }
 
+class VEDeviceContextImpl : public VEDeviceContext {
+  public:
+    VEDeviceContextImpl(VEO* veo) : veo_(veo) {}
+
+    virtual void CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
+                                       Tensor* device_tensor,
+                                       StatusCallback done) const override;
+
+    virtual void CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
+                                       Device* device, Tensor* cpu_tensor,
+                                       StatusCallback done) override;
+
+    virtual void Compute(const std::string& name, const void* arg, size_t len);
+
+  private:
+    VEO* veo_;
+};
+
 class VEDevice : public LocalDevice {
   public:
     VEDevice(const SessionOptions& options, const string name,
@@ -181,7 +285,7 @@ class VEDevice : public LocalDevice {
 
   private:
     GpuDeviceInfo* gpu_device_info_;
-    std::vector<VEDeviceContext*> device_contexts_;
+    std::vector<VEDeviceContextImpl*> device_contexts_;
 };
 
 VEDevice::~VEDevice() {
@@ -191,15 +295,11 @@ VEDevice::~VEDevice() {
 
 Status VEDevice::Init(const SessionOptions& options, VEO* veo) {
   VLOG(2) << "VEDevice::Init";
-  //VEO& veo = initVEO();
-  device_contexts_.push_back(new VEDeviceContext(veo));
+  device_contexts_.push_back(new VEDeviceContextImpl(veo));
 
   VLOG(2) << "VEDevice::Init DeviceContext=" << device_contexts_.back();
 
   gpu_device_info_ = new GpuDeviceInfo;
-#if 0
-  gpu_device_info_->stream = stream;
-#endif
   gpu_device_info_->default_context = device_contexts_[0];
   set_tensorflow_gpu_device_info(gpu_device_info_);
 
@@ -213,7 +313,9 @@ class VEDeviceFactory : public DeviceFactory {
     VLOG(2) << "VEDeviceFactory::CreateDevices: " << device_name;
 
     VEO* veo = new VEO();
-    veo->init();
+    Status s = veo->init();
+    if (!s.ok())
+      return s;
 
     size_t total_memory = 20UL*1024*1024*1024;
     Allocator* ve_allocator = new VEBFCAllocator(total_memory, true, "VE_0_bfc", veo);
@@ -225,44 +327,44 @@ class VEDeviceFactory : public DeviceFactory {
   }
 };
 
-}
+} // namespace
 
 REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 
-void VEDeviceContext::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
-                                            Tensor* device_tensor,
-                                            StatusCallback done) const {
-  VLOG(2) << "VEDeviceContext::CopyCPUTensorToDevice";
+void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
+                                                Tensor* device_tensor,
+                                                StatusCallback done) const {
+  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice";
 
   const void* in = DMAHelper::base(cpu_tensor);
   void* out = DMAHelper::base(device_tensor);
 
-  VLOG(2) << "VEDeviceContext::CopyCPUTensorToDevice: in=" << in << " out=" << out;
+  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: in=" << in << " out=" << out;
 
   int rc = veo_->write_mem((uint64_t)out, in, cpu_tensor->TotalBytes());
-  VLOG(2) << "VEDeviceContext::CopyCPUTensorToDevice: rc=" << rc;
+  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: rc=" << rc;
 
   done(Status::OK());
 }
 
-void VEDeviceContext::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
-                                            Device* device, Tensor* cpu_tensor,
-                                            StatusCallback done) {
-  VLOG(2) << "VEDeviceContext::CopyDeviceTensorToCPU";
+void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
+                                                Device* device, Tensor* cpu_tensor,
+                                                StatusCallback done) {
+  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU";
 
   const void* in = DMAHelper::base(device_tensor);
   void* out = DMAHelper::base(cpu_tensor);
 
   int rc = veo_->read_mem(out, (uint64_t)in, device_tensor->TotalBytes());
 
-  VLOG(2) << "VEDeviceContext::CopyDeviceTensorToCPU: rc=" << rc;
+  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: rc=" << rc;
 
-  VLOG(2) << "VEDeviceContext::CopyDeviceTensorToCPU: " << (char*)out;
+  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: " << (char*)out;
 
   done(Status::OK());
 }
 
-void VEDeviceContext::Compute(const std::string& name, const void* arg, size_t len)
+void VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len)
 {
   veo_->compute(name, arg, len);
 }
