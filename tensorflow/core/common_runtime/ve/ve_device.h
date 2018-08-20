@@ -9,7 +9,7 @@ class VEDeviceContext : public DeviceContext {
   public:
     virtual ~VEDeviceContext() {}
 
-    virtual void Compute(const std::string& name, const void* arg, size_t len) = 0;
+    virtual Status Compute(const std::string& name, const void* arg, size_t len) = 0;
 };
 
 }
