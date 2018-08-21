@@ -151,4 +151,6 @@ REGISTER_GPU_HOST_KERNEL(ResourceHandle);
 
 #endif
 
+REGISTER_KERNEL_BUILDER(Name("Identity").Device(DEVICE_VE), IdentityOp);
+
 }  // namespace tensorflow

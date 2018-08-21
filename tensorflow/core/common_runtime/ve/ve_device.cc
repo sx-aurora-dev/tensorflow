@@ -269,11 +269,13 @@ class VEDeviceContextImpl : public VEDeviceContext {
 class VEDevice : public LocalDevice {
   public:
     VEDevice(const SessionOptions& options, const string name,
-             Allocator* ve_allocator) :
+             Allocator* ve_allocator,
+             Allocator* cpu_allocator) :
       LocalDevice(options,
                   Device::BuildDeviceAttributes(name, "VE",
                                                 Bytes(256 << 20),
                                                 DeviceLocality())),
+      cpu_allocator_(cpu_allocator),
       ve_allocator_(ve_allocator) {}
 
     ~VEDevice() override;
@@ -282,11 +284,19 @@ class VEDevice : public LocalDevice {
     Status Sync() override { return Status::OK(); }
 
     Allocator* GetAllocator(AllocatorAttributes attr) override {
-      return ve_allocator_;
+      if (attr.on_host())
+        return cpu_allocator_;
+      else
+        return ve_allocator_;
     }
+
+    Status MakeTensorFromProto(const TensorProto& tensor_proto,
+                               const AllocatorAttributes alloc_attrs,
+                               Tensor* tensor) override;
 
   protected:
     Allocator* ve_allocator_;
+    Allocator* cpu_allocator_;
 
   private:
     GpuDeviceInfo* gpu_device_info_;
@@ -311,6 +321,38 @@ Status VEDevice::Init(const SessionOptions& options, VEO* veo) {
   return Status::OK();
 }
 
+Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
+                                     const AllocatorAttributes alloc_attrs,
+                                     Tensor* tensor) {
+  AllocatorAttributes attr;
+  attr.set_on_host(true);
+  Allocator* host_alloc = GetAllocator(attr);
+
+  Tensor parsed(tensor_proto.dtype());
+  if (!parsed.FromProto(host_alloc, tensor_proto)) {
+    return errors::InvalidArgument("Cannot parse tensor from proto: ",
+                                   tensor_proto.DebugString());
+  }
+  Status status;
+  if (alloc_attrs.on_host()) {
+    *tensor = parsed;
+  } else {
+    Tensor copy(GetAllocator(alloc_attrs), parsed.dtype(), parsed.shape());
+
+    // If the tensor is not initialized, we likely ran out of memory.
+    if (!copy.IsInitialized()) {
+      return errors::ResourceExhausted(
+          "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
+          " and type ", DataTypeString(parsed.dtype()));
+    }
+
+    device_contexts_[0]->CopyCPUTensorToDevice(
+        &parsed, this, &copy, [&status](const Status& s) { status = s; });
+    *tensor = copy;
+  }
+  return status;
+}
+
 class VEDeviceFactory : public DeviceFactory {
   Status CreateDevices(const SessionOptions& options, const string& name_prefix,
                        std::vector<Device*>* devices) override {
@@ -325,7 +367,10 @@ class VEDeviceFactory : public DeviceFactory {
     size_t total_memory = 20UL*1024*1024*1024;
     Allocator* ve_allocator = new VEBFCAllocator(total_memory, true, "VE_0_bfc", veo);
 
-    VEDevice* device = new VEDevice(options, device_name, ve_allocator);
+    int numa_node = 0;
+
+    VEDevice* device = new VEDevice(options, device_name, ve_allocator,
+                                    ProcessState::singleton()->GetCPUAllocator(numa_node));
     TF_RETURN_IF_ERROR(device->Init(options, veo));
     devices->push_back(device);
     return Status::OK();
@@ -334,6 +379,7 @@ class VEDeviceFactory : public DeviceFactory {
 
 } // namespace
 
+//REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 
 void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
@@ -371,6 +417,7 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
 
 Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len)
 {
+  VLOG(2) << "VEDeviceContextImpl::Compute: name=" << name;
   return veo_->compute(name, arg, len);
 }
 
