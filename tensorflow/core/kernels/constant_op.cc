@@ -90,6 +90,7 @@ void ConstantOp::Compute(OpKernelContext* ctx) {
 ConstantOp::~ConstantOp() {}
 
 REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_CPU), ConstantOp);
+REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_VE), ConstantOp);
 
 #if GOOGLE_CUDA
 #define REGISTER_KERNEL(D, TYPE)                                      \
