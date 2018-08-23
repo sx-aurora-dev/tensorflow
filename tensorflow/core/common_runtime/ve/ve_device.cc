@@ -11,7 +11,7 @@
 #include "ve_offload.h"
 
 extern "C" {
-extern void set_fake_tid(long) __attribute__((weak));
+  extern void set_fake_tid(long) __attribute__((weak));
 }
 
 namespace tensorflow {
@@ -342,12 +342,12 @@ Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
     // If the tensor is not initialized, we likely ran out of memory.
     if (!copy.IsInitialized()) {
       return errors::ResourceExhausted(
-                                       "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
-                                       " and type ", DataTypeString(parsed.dtype()));
+          "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
+          " and type ", DataTypeString(parsed.dtype()));
     }
 
     device_contexts_[0]->CopyCPUTensorToDevice(
-                                               &parsed, this, &copy, [&status](const Status& s) { status = s; });
+        &parsed, this, &copy, [&status](const Status& s) { status = s; });
     *tensor = copy;
   }
   return status;
