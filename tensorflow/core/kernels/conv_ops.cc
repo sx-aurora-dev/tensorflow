@@ -396,6 +396,7 @@ class Conv2DOp : public BinaryOp<T> {
   }
 
   void Compute(OpKernelContext* context) override {
+    VLOG(2) << __PRETTY_FUNCTION__;
     // Input tensor is of the following dimensions:
     // [ batch, in_rows, in_cols, in_depth ]
 

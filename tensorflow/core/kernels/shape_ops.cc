@@ -119,6 +119,19 @@ REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .TypeConstraint<int64>("out_type"),
                         ShapeNOp<int64>);
 
+#if 1
+REGISTER_KERNEL_BUILDER(Name("ShapeN")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("out_type"),
+                        ShapeNOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("ShapeN")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int64>("out_type"),
+                        ShapeNOp<int64>);
+#endif
+
 #if GOOGLE_CUDA
 #define REGISTER_GPU_KERNEL(type)                                \
   REGISTER_KERNEL_BUILDER(Name("ShapeN")                         \

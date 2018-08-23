@@ -105,10 +105,10 @@ class VEO {
 };
 
 Status veo_sym_call(struct veo_proc_handle* proc,
-                 struct veo_thr_ctxt* ctx,
-                 uint64_t lib_id,
-                 const char* name,
-                 uint64_t* retval)
+                    struct veo_thr_ctxt* ctx,
+                    uint64_t lib_id,
+                    const char* name,
+                    uint64_t* retval)
 {
   uint64_t sym = veo_get_sym(proc, lib_id, name);
   if (!sym)
@@ -342,12 +342,12 @@ Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
     // If the tensor is not initialized, we likely ran out of memory.
     if (!copy.IsInitialized()) {
       return errors::ResourceExhausted(
-          "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
-          " and type ", DataTypeString(parsed.dtype()));
+                                       "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
+                                       " and type ", DataTypeString(parsed.dtype()));
     }
 
     device_contexts_[0]->CopyCPUTensorToDevice(
-        &parsed, this, &copy, [&status](const Status& s) { status = s; });
+                                               &parsed, this, &copy, [&status](const Status& s) { status = s; });
     *tensor = copy;
   }
   return status;
@@ -379,7 +379,6 @@ class VEDeviceFactory : public DeviceFactory {
 
 } // namespace
 
-//REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 
 void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
@@ -409,8 +408,6 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
   int rc = veo_->read_mem(out, (uint64_t)in, device_tensor->TotalBytes());
 
   VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: rc=" << rc;
-
-  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: " << (char*)out;
 
   done(Status::OK());
 }
