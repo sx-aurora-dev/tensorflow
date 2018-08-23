@@ -11,7 +11,7 @@
 #include "ve_offload.h"
 
 extern "C" {
-extern void set_fake_tid(long) __attribute__((weak));
+  extern void set_fake_tid(long) __attribute__((weak));
 }
 
 namespace tensorflow {
@@ -105,10 +105,10 @@ class VEO {
 };
 
 Status veo_sym_call(struct veo_proc_handle* proc,
-                 struct veo_thr_ctxt* ctx,
-                 uint64_t lib_id,
-                 const char* name,
-                 uint64_t* retval)
+                    struct veo_thr_ctxt* ctx,
+                    uint64_t lib_id,
+                    const char* name,
+                    uint64_t* retval)
 {
   uint64_t sym = veo_get_sym(proc, lib_id, name);
   if (!sym)
@@ -379,7 +379,6 @@ class VEDeviceFactory : public DeviceFactory {
 
 } // namespace
 
-//REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 
 void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
@@ -409,8 +408,6 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
   int rc = veo_->read_mem(out, (uint64_t)in, device_tensor->TotalBytes());
 
   VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: rc=" << rc;
-
-  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: " << (char*)out;
 
   done(Status::OK());
 }

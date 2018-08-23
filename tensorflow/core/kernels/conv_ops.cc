@@ -159,6 +159,19 @@ struct LaunchConv2DOp<VEDevice, T> {
                   TensorFormat data_format) {
     VLOG(2) << "LaunchConv2DOp<VEDevice, T>";
     VLOG(2) << "LaunchConv2DOp<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
+#if 0
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: input.dtype=" << input.dtype();
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: DT_FLOAT=" << DT_FLOAT
+      << " DT_DOUBLE=" << DT_DOUBLE;
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: sizeof(T)=" << sizeof(T);
+#endif
+
+    if (data_format != FORMAT_NCHW) {
+      ctx->SetStatus(
+          errors::Unimplemented("VE conv implementation only supports "
+                                "NCHW tensor format for now."));
+      return;
+    }
 
     struct TensorParam {
       int w, h, c, n;
@@ -167,6 +180,7 @@ struct LaunchConv2DOp<VEDevice, T> {
         h(GetTensorDim(t, f, 'H')),
         c(GetTensorDim(t, f, 'C')),
         n(GetTensorDim(t, f, 'N')) {}
+      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
     };
 
     struct ConvParam {
@@ -188,7 +202,10 @@ struct LaunchConv2DOp<VEDevice, T> {
       int data_type;
 
       ConvParam(const Tensor& in, const Tensor& filter, Tensor* out, TensorFormat f) :
-        in_param(in, f), filter_param(filter, f), out_param(*out, f) {}
+        in_param(in, f),
+        filter_param(filter.dim_size(1), filter.dim_size(0),
+                     filter.dim_size(2), filter.dim_size(3)),
+        out_param(*out, f) {}
     };
 
     ConvParam p(input, filter, output, data_format);
@@ -396,6 +413,7 @@ class Conv2DOp : public BinaryOp<T> {
   }
 
   void Compute(OpKernelContext* context) override {
+    VLOG(2) << __PRETTY_FUNCTION__;
     // Input tensor is of the following dimensions:
     // [ batch, in_rows, in_cols, in_depth ]
 

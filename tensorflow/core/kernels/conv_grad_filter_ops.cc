@@ -91,6 +91,7 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+typedef Eigen::VeDevice VEDevice;
 
 template <typename T>
 struct LaunchConv2DBackpropFilterOp<CPUDevice, T> {
@@ -1063,5 +1064,25 @@ template struct LaunchConv2DBackpropFilterOp<GPUDevice, Eigen::half>;
 template struct LaunchConv2DBackpropFilterOp<GPUDevice, double>;
 
 #endif  // GOOGLE_CUDA
+
+#if 1
+template <typename T>
+struct LaunchConv2DBackpropFilterOp<VEDevice, T> {
+  void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+                  const Tensor& out_backprop, const Tensor& input,
+                  int row_dilation, int col_dilation, int row_stride,
+                  int col_stride, const Padding& padding,
+                  Tensor* filter_backprop, TensorFormat data_format) {
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropFilter")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("filter_sizes"),
+                        Conv2DFastBackpropFilterOp<VEDevice, float>);
+
+template struct LaunchConv2DBackpropFilterOp<VEDevice, float>;
+#endif
 
 }  // namespace tensorflow

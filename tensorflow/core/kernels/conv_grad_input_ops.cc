@@ -92,6 +92,7 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+typedef Eigen::VeDevice VEDevice;
 
 // The fast versions using eigen computations directly. They are only enabled
 // for CPU for now since nvcc times out when trying to compile them.
@@ -1135,5 +1136,25 @@ template struct LaunchConv2DBackpropInputOp<GPUDevice, Eigen::half>;
 template struct LaunchConv2DBackpropInputOp<GPUDevice, double>;
 
 #endif  // GOOGLE_CUDA
+
+#if 1
+template <typename T>
+struct LaunchConv2DBackpropInputOp<VEDevice, T> {
+  void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+                  const Tensor& out_backprop, const Tensor& filter,
+                  int row_dilation, int col_dilation, int row_stride,
+                  int col_stride, const Padding& padding, Tensor* in_backprop,
+                  TensorFormat data_format) {
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropInput")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("input_sizes"),
+                        Conv2DFastBackpropInputOp<VEDevice, float>);
+
+template struct LaunchConv2DBackpropInputOp<VEDevice, float>;
+#endif
 
 }  // namespace tensorflow
