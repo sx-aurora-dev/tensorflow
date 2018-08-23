@@ -224,13 +224,13 @@ struct LaunchConv2DOp<VEDevice, T> {
 
     if (padding == SAME) {
       p.row_padding = std::max<int>(0, 
-                                    (p.out_param.w - 1) * row_stride +
-                                    (p.filter_param.w - 1) * row_dilation + 1 -
-                                    p.in_param.w);
-      p.col_padding = std::max<int>(0, 
-                                    (p.out_param.h - 1) * col_stride +
-                                    (p.filter_param.h - 1) * col_dilation + 1 -
+                                    (p.out_param.h - 1) * row_stride +
+                                    (p.filter_param.h - 1) * row_dilation + 1 -
                                     p.in_param.h);
+      p.col_padding = std::max<int>(0, 
+                                    (p.out_param.w - 1) * col_stride +
+                                    (p.filter_param.w - 1) * col_dilation + 1 -
+                                    p.in_param.w);
     }
 
     //VLOG(2) << "VEDeviceContext::conv2d: sizeof(ConvParam)=" << sizeof(ConvParam);
