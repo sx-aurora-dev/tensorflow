@@ -9,6 +9,8 @@
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
 
 #include "ve_offload.h"
+#include <sys/types.h>
+#include <sys/syscall.h>
 
 extern "C" {
   extern void set_fake_tid(long) __attribute__((weak));
@@ -37,6 +39,7 @@ class VEO {
     virtual ~VEO();
 
 #define FAKE() Fake fake(proc_pid_);
+//#define FAKE()
 
     void* alloc_mem(size_t size) {
       VLOG(2) << "VEO::alloc_mem: " << pthread_self();
@@ -195,6 +198,8 @@ Status VEO::init() {
     return errors::Internal("Failed to create VEO proc");
 
   proc_pid_ = getpid();
+
+  VLOG(2) << "VEO::init: proc_pid_=" << proc_pid_ << " tid=" << syscall(SYS_gettid);
 
   uint64_t lib_id = veo_load_library(proc_, filename);
   VLOG(2) << "VEO::init: lib_id=" << lib_id;
@@ -390,6 +395,7 @@ void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device
   void* out = DMAHelper::base(device_tensor);
 
   VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: in=" << in << " out=" << out;
+  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: proc_pid_=" << getpid() << " tid=" << syscall(SYS_gettid);
 
   int rc = veo_->write_mem((uint64_t)out, in, cpu_tensor->TotalBytes());
   VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: rc=" << rc;
