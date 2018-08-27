@@ -92,7 +92,9 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
 typedef Eigen::VeDevice VEDevice;
+#endif
 
 // The fast versions using eigen computations directly. They are only enabled
 // for CPU for now since nvcc times out when trying to compile them.
@@ -1137,7 +1139,7 @@ template struct LaunchConv2DBackpropInputOp<GPUDevice, double>;
 
 #endif  // GOOGLE_CUDA
 
-#if 1
+#ifdef TENSORFLOW_USE_VE
 template <typename T>
 struct LaunchConv2DBackpropInputOp<VEDevice, T> {
   void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,

@@ -119,7 +119,7 @@ REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .TypeConstraint<int64>("out_type"),
                         ShapeNOp<int64>);
 
-#if 1
+#ifdef TENSORFLOW_USE_VE
 REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .Device(DEVICE_VE)
                             .HostMemory("output")
