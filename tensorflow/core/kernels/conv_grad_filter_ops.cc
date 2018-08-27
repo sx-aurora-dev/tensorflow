@@ -91,7 +91,9 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
 typedef Eigen::VeDevice VEDevice;
+#endif
 
 template <typename T>
 struct LaunchConv2DBackpropFilterOp<CPUDevice, T> {
@@ -1065,7 +1067,7 @@ template struct LaunchConv2DBackpropFilterOp<GPUDevice, double>;
 
 #endif  // GOOGLE_CUDA
 
-#if 1
+#ifdef TENSORFLOW_USE_VE
 template <typename T>
 struct LaunchConv2DBackpropFilterOp<VEDevice, T> {
   void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,

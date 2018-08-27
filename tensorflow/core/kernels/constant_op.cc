@@ -90,7 +90,10 @@ void ConstantOp::Compute(OpKernelContext* ctx) {
 ConstantOp::~ConstantOp() {}
 
 REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_CPU), ConstantOp);
+
+#ifdef TENSORFLOW_USE_VE
 REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_VE), ConstantOp);
+#endif
 
 #if GOOGLE_CUDA
 #define REGISTER_KERNEL(D, TYPE)                                      \

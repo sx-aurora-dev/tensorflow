@@ -57,8 +57,7 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
-#define VE
-#ifdef VE
+#ifdef TENSORFLOW_USE_VE
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
 #endif
@@ -67,7 +66,7 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
-#ifdef VE
+#ifdef TENSORFLOW_USE_VE
 typedef Eigen::VeDevice VEDevice;
 #endif
 
@@ -149,7 +148,7 @@ struct LaunchConv2DOp<CPUDevice, T> {
   }
 };
 
-#ifdef VE
+#ifdef TENSORFLOW_USE_VE
 template <typename T>
 struct LaunchConv2DOp<VEDevice, T> {
   void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
@@ -566,7 +565,7 @@ TF_CALL_float(REGISTER_CPU);
 TF_CALL_double(REGISTER_CPU);
 #endif  // USE_GEMM_FOR_CONV
 
-#ifdef VE
+#ifdef TENSORFLOW_USE_VE
 REGISTER_KERNEL_BUILDER(
       Name("Conv2D").Device(DEVICE_VE).TypeConstraint<float>("T"),
       Conv2DOp<VEDevice, float>);
@@ -577,7 +576,7 @@ template struct LaunchConv2DOp<CPUDevice, Eigen::half>;
 template struct LaunchConv2DOp<CPUDevice, float>;
 template struct LaunchConv2DOp<CPUDevice, double>;
 
-#ifdef VE
+#ifdef TENSORFLOW_USE_VE
 template struct LaunchConv2DOp<VEDevice, float>;
 #endif
 

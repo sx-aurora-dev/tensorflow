@@ -61,3 +61,5 @@ build --define=grpc_no_ares=true
 build --spawn_strategy=standalone
 build --genrule_strategy=standalone
 build -c opt
+
+build:ve --copt=-DTENSORFLOW_USE_VE
