@@ -38,8 +38,8 @@ class VEO {
     VEO() {}
     virtual ~VEO();
 
-#define FAKE() Fake fake(proc_pid_);
-//#define FAKE()
+//#define FAKE() Fake fake(proc_pid_);
+#define FAKE()
 
     void* alloc_mem(size_t size) {
       VLOG(2) << "VEO::alloc_mem: " << pthread_self();
