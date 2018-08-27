@@ -38,8 +38,8 @@ class VEO {
     VEO() {}
     virtual ~VEO();
 
-//#define FAKE() Fake fake(proc_pid_);
-#define FAKE()
+#define FAKE() Fake fake(proc_pid_);
+//#define FAKE()
 
     void* alloc_mem(size_t size) {
       VLOG(2) << "VEO::alloc_mem: " << pthread_self();
@@ -115,22 +115,22 @@ Status veo_sym_call(struct veo_proc_handle* proc,
 {
   uint64_t sym = veo_get_sym(proc, lib_id, name);
   if (!sym)
-    return errors::Internal("Fails to get symbol for ", name);
+    return errors::Internal("Failed to get symbol for ", name);
 
   VEO::Args args;
 
   if (!args.args)
-    return errors::Internal("Fails to allocate arguments");
+    return errors::Internal("Failed to allocate arguments");
 
   int req_id = veo_call_async(ctx, sym, args.args);
   //VLOG(2) << "VEO::load_kernel_syms: VEO request ID = " << req_id;
   if (req_id == VEO_REQUEST_ID_INVALID) {
-    return errors::Internal("Fails to call VE");
+    return errors::Internal("Failed to call VE");
   }
 
   int ret = veo_call_wait_result(ctx, req_id, retval);
   if (ret != 0) {
-    return errors::Internal("Fails to call wait result");
+    return errors::Internal("Failed to call wait result");
   }
 
   return Status::OK();
@@ -178,6 +178,7 @@ Status load_kernel_syms(struct veo_proc_handle* proc,
 }
 
 Status VEO::init() {
+  VLOG(2) << "VEO::init: pid=" << getpid() << " tid=" << syscall(SYS_gettid);
   const char* filename = "libvetfkernel.so";
 
   if (const char* tmp = getenv("VEO_KERNEL")) {
@@ -199,7 +200,7 @@ Status VEO::init() {
 
   proc_pid_ = getpid();
 
-  VLOG(2) << "VEO::init: proc_pid_=" << proc_pid_ << " tid=" << syscall(SYS_gettid);
+  VLOG(2) << "VEO::init: pid=" << proc_pid_ << " tid=" << syscall(SYS_gettid);
 
   uint64_t lib_id = veo_load_library(proc_, filename);
   VLOG(2) << "VEO::init: lib_id=" << lib_id;
@@ -358,14 +359,48 @@ Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
   return status;
 }
 
+class VEOFactory {
+  public:
+    Status GetOrCreate(VEO** pveo) {
+      mutex_lock guard(lock_);
+
+      if (!veo_) {
+        veo_ = new VEO;
+        Status s = veo_->init();
+        if (!s.ok())
+          return s;
+      }
+
+      *pveo = veo_;
+      return Status::OK();
+    }
+
+    static VEOFactory* Global() {
+      static VEOFactory* instance = new VEOFactory;
+      return instance;
+    }
+
+  private:
+    mutex lock_;
+    VEO* veo_ = NULL;
+
+    VEOFactory() = default;
+    TF_DISALLOW_COPY_AND_ASSIGN(VEOFactory);
+};
+
 class VEDeviceFactory : public DeviceFactory {
   Status CreateDevices(const SessionOptions& options, const string& name_prefix,
                        std::vector<Device*>* devices) override {
     const string device_name = strings::StrCat(name_prefix, "/device:VE:0");
     VLOG(2) << "VEDeviceFactory::CreateDevices: " << device_name;
 
+#if 0
     VEO* veo = new VEO();
     Status s = veo->init();
+#else
+    VEO* veo = NULL;
+    Status s = VEOFactory::Global()->GetOrCreate(&veo);
+#endif
     if (!s.ok())
       return s;
 
