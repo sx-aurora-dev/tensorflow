@@ -37,6 +37,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 template <typename Device, typename T>
 class AddNOp : public OpKernel {
@@ -258,6 +261,29 @@ REGISTER_KERNEL_BUILDER(Name("AddN")
                             .HostMemory("sum"),
                         AddNOp<CPUDevice, int32>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class AddNOp<VEDevice, T> : public OpKernel {
+ public:
+  explicit AddNOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    if (!ctx->ValidateInputsAreSameShape(this)) return;
+
+    const Tensor& input0 = ctx->input(0);
+    const int num = ctx->num_inputs();
+
+    //if (num == 1) {
+      ctx->set_output(0, input0);
+      return;
+    //}
+  }
+};
+
+REGISTER_ADDN(float, VE);
+REGISTER_ADDN(double, VE);
+#endif // TENSORFLOW_USE_VE
 
 #undef REGISTER_ADDN
 

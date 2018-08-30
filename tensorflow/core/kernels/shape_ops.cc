@@ -107,6 +107,19 @@ REGISTER_KERNEL_BUILDER(Name("Shape")
 
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("Shape")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("out_type"),
+                        ShapeOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("Shape")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int64>("out_type"),
+                        ShapeOp<int64>);
+#endif
+
 // ShapeN ---------------------------------------
 REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .Device(DEVICE_CPU)

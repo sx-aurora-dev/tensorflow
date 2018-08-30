@@ -187,6 +187,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 template <typename Device, typename T, typename Index>
 class FillOp : public OpKernel {
@@ -283,6 +286,37 @@ REGISTER_KERNEL_BUILDER(Name("Fill")
                             .HostMemory("value")
                             .HostMemory("output"),
                         FillOp<CPUDevice, int32, int32>);
+#endif
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T, typename Index>
+class FillOp<VEDevice, T, Index> : public OpKernel {
+  public:
+    explicit FillOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+    void Compute(OpKernelContext* context) override {
+      VLOG(2) << __PRETTY_FUNCTION__;
+      const Tensor& Tdims = context->input(0);
+      OP_REQUIRES(context, IsLegacyVector(Tdims.shape()),
+                  errors::InvalidArgument("dims must be a vector, got shape ",
+                                          Tdims.shape().DebugString()));
+      const Tensor& Tvalue = context->input(1);
+      OP_REQUIRES(context, IsLegacyScalar(Tvalue.shape()),
+                  errors::InvalidArgument("value must be a scalar, got shape ",
+                                          Tvalue.shape().DebugString()));
+      auto dims = Tdims.flat<Index>();
+      TensorShape shape;
+      OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+              reinterpret_cast<const Index*>(dims.data()),
+              dims.size(), &shape));
+      Tensor* out = nullptr;
+      OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
+    }
+};
+
+REGISTER_KERNEL(VE, float);
+REGISTER_KERNEL(VE, double);
 #endif
 
 #undef REGISTER_KERNEL

@@ -1068,23 +1068,37 @@ template struct LaunchConv2DBackpropFilterOp<GPUDevice, double>;
 #endif  // GOOGLE_CUDA
 
 #ifdef TENSORFLOW_USE_VE
-template <typename T>
-struct LaunchConv2DBackpropFilterOp<VEDevice, T> {
-  void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
-                  const Tensor& out_backprop, const Tensor& input,
-                  int row_dilation, int col_dilation, int row_stride,
-                  int col_stride, const Padding& padding,
-                  Tensor* filter_backprop, TensorFormat data_format) {
+template <typename Device, class T>
+class Conv2DVEBackpropFilterOp : public OpKernel {
+ public:
+  explicit Conv2DVEBackpropFilterOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    //const Tensor& input = context->input(0);
+    const Tensor& filter_sizes = context->input(1);
+    //const Tensor& out_backprop = context->input(2);
+    OP_REQUIRES(
+        context, TensorShapeUtils::IsVector(filter_sizes.shape()),
+        errors::InvalidArgument(
+            "Conv2DBackpropFilter: filter_sizes input must be 1-dim, not ",
+            filter_sizes.dims()));
+    TensorShape filter_shape;
+    OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+                                filter_sizes.vec<int32>(), &filter_shape));
+
+    Tensor* filter_backprop = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, filter_shape, &filter_backprop));
   }
 };
+
 
 REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropFilter")
                             .Device(DEVICE_VE)
                             .TypeConstraint<float>("T")
                             .HostMemory("filter_sizes"),
-                        Conv2DFastBackpropFilterOp<VEDevice, float>);
-
-template struct LaunchConv2DBackpropFilterOp<VEDevice, float>;
+                        Conv2DVEBackpropFilterOp<VEDevice, float>);
 #endif
 
 }  // namespace tensorflow
