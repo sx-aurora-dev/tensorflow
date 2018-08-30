@@ -32,9 +32,22 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/util/status_util.h"
 
+#ifdef DEBUG_VE
+#include <string>
+#endif
+
 namespace tensorflow {
 
 namespace {
+
+#ifdef DEBUG_VE
+string NodeToString(const Node& node) {
+  return "node[id=" + std::to_string(node.id())
+    + ",name=" + node.name()
+    + ",type=" + node.type_string()
+    + "]";
+}
+#endif
 
 // We hoist the conversion from C-style string literal to StringPiece here,
 // so that we can avoid the many repeated calls to strlen().
@@ -150,6 +163,16 @@ class ColocationGraph {
           if (str_util::ConsumePrefix(&spec,
                                       kColocationGroupPrefixStringPiece)) {
             found_spec = true;
+#ifdef DEBUG_VE
+#if 0
+            VLOG(2) << __FUNCTION__ << ": "
+              << "node[id=" << node->id()
+              << ",name=" << node->name()
+              << ",type=" << node->type_string()
+              << "] "
+              << " class_spec=" << class_spec;
+#endif
+#endif
             TF_RETURN_IF_ERROR(
                 ColocateNodeToGroup(&colocation_group_root, node, spec));
           }
@@ -184,6 +207,12 @@ class ColocationGraph {
         return AttachDef(s, *node);
       }
     }
+#ifdef DEBUG_VE
+    VLOG(2) << __FUNCTION__ << ": assign "
+      << NodeToString(*node)
+      << " to group " << colocation_group
+      << " (root=" << NodeToString(*root_node) << ")";
+#endif
     return Status::OK();
   }
 
@@ -273,6 +302,18 @@ class ColocationGraph {
           "other nodes colocated with them.",
           DebugInfo(x_root), DebugInfo(y_root));
     }
+
+#ifdef DEBUG_VE
+#if 1
+    {
+      string tmp;
+      for (auto& deviceType : new_root_member.supported_device_types)
+        tmp += " " + string(deviceType.type());
+      VLOG(2) << __FUNCTION__ << ": new_root=" << new_root
+        << " old_root=" << old_root << ": " << tmp;
+    }
+#endif
+#endif
 
     return Status::OK();
   }
@@ -388,11 +429,27 @@ class ColocationGraph {
     } else {
       // The device is completely unspecified, so enumerate the devices that
       // support all of the nodes in the set.
+#ifdef DEBUG_VE
+      //VLOG(2) << __FUNCTION__ << ": completely unspecified";
+#endif
       if (device_set_->devices().empty()) {
         return errors::Internal("No devices are registered");
       }
       devices = FilterSupportedDevices(
           device_set_->devices(), members_[node_root].supported_device_types);
+
+#ifdef DEBUG_VE
+      {
+        string tmp;
+        for (auto& deviceType : members_[node_root].supported_device_types)
+          tmp += " " + string(deviceType.type());
+
+        VLOG(2) << __FUNCTION__ << ": "
+          << NodeToString(*node)
+          << " root=" << node_root
+          << " root's supported_device_types: " << tmp;
+      }
+#endif
 
       if (devices.empty()) {
         return errors::InvalidArgument(
@@ -518,6 +575,16 @@ class ColocationGraph {
       // the TensorFlow runtime, we consider errors in this branch to
       // be INTERNAL.
       const string& assigned_device_name = node.assigned_device_name();
+#ifdef DEBUG_VE
+#if 0
+      VLOG(2) << __FUNCTION__ << ": "
+        << "node[id=" << node.id()
+        << ",name=" << node.name()
+        << ",type=" << node.type_string()
+        << "]"
+        << " assigned_device_name=" << assigned_device_name;
+#endif
+#endif
       if (!DeviceNameUtils::ParseFullName(assigned_device_name,
                                           &member->device_name)) {
         return errors::Internal("Malformed assigned device '",
@@ -541,6 +608,12 @@ class ColocationGraph {
                               "for ",
                               node.type_string());
     } else {
+#ifdef DEBUG_VE
+#if 0
+      VLOG(2) << __FUNCTION__ << ": node=" << node.name()
+        << " requested_device.size=" << node.requested_device().size();
+#endif
+#endif
       // This node has not yet been assigned to a device, so we
       // calculate any constraints due to the set of registered
       // kernels and any (partial) user-provided device specification
@@ -575,6 +648,18 @@ class ColocationGraph {
         }
       }
     }
+#ifdef DEBUG_VE
+    {
+      string tmp;
+      for (auto& deviceType : member->supported_device_types)
+        tmp += " " + string(deviceType.type());
+      VLOG(2) << __FUNCTION__ << ": "
+        << "node[id=" << node.id()
+        << ",name=" << node.name()
+        << ",type=" << node.type_string()
+        << "] supported_device_types: " << tmp;
+    }
+#endif
     return Status::OK();
   }
 
@@ -708,6 +793,10 @@ Status Placer::Run() {
   // the constraints) may not be acyclic.
   TF_RETURN_IF_ERROR(colocation_graph.ColocateAllNodes());
 
+#ifdef DEBUG_VE
+  VLOG(2) << __FUNCTION__ << " ColocateAllNodes finish";
+#endif
+
   // 2. Enumerate the constraint edges, and use them to update the disjoint
   // node set.
 
@@ -769,6 +858,14 @@ Status Placer::Run() {
           }
         }
       }
+#ifdef DEBUG_VE
+#if 0
+      VLOG(2) << __FUNCTION__ << " dst=" << dst->name() 
+        << " device=" << DeviceNameUtils::ParsedNameToString(dst_root.device_name)
+        << " src=" << src->name()
+        << " device=" << DeviceNameUtils::ParsedNameToString(src_root.device_name);
+#endif
+#endif
 
       Status status =
           colocation_graph.ColocateNodes(*src, src_root_id, *dst, dst_root_id);
@@ -845,6 +942,9 @@ Status Placer::Run() {
 
     // Provide the default, if necessary.
     if (assigned_device == -1) {
+#ifdef DEBUG_VE
+      VLOG(2) << "Assigne default device: " << (*devices)[0]->name() << " devices.size=" << devices->size();
+#endif
       assigned_device = graph_->InternDeviceName((*devices)[0]->name());
     }
 
