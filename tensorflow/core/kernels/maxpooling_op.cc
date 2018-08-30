@@ -1476,4 +1476,53 @@ REGISTER_KERNEL_BUILDER(Name("MaxPoolV2")
 
 #undef REGISTER_MAX_POOL_KERNELS
 
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+template <typename Device, typename T>
+class MaxPoolingVEOp : public OpKernel {
+  public:
+    explicit MaxPoolingVEOp(OpKernelConstruction* context) : OpKernel(context)  {
+      OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+      OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+      OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    }
+    void Compute(OpKernelContext* context) override {
+      VLOG(2) << __PRETTY_FUNCTION__;
+
+      TensorFormat data_format = FORMAT_NCHW;
+
+      const Tensor& tensor_in = context->input(0);
+      PoolParameters param{
+        context, ksize_, stride_, padding_, data_format, tensor_in.shape()};
+
+      Tensor* output = nullptr;
+      context->allocate_output(0, param.forward_output_shape(), &output);
+    }
+
+  private:
+    std::vector<int32> ksize_;
+    std::vector<int32> stride_;
+    Padding padding_;
+};
+
+class DummyOp : public OpKernel {
+  public:
+    explicit DummyOp(OpKernelConstruction* context) : OpKernel(context) {}
+    void Compute(OpKernelContext* context) override {
+      VLOG(2) << __PRETTY_FUNCTION__;
+      const Tensor& tensor_in = context->input(0);
+      const TensorShape& output_shape = tensor_in.shape();
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(context, context->allocate_output( 0, output_shape, &output));
+    }
+};
+
+REGISTER_KERNEL_BUILDER(
+    Name("MaxPool").Device(DEVICE_VE).TypeConstraint<float>("T"),
+    MaxPoolingVEOp<VEDevice, float>);
+
+REGISTER_KERNEL_BUILDER(Name("MaxPoolGrad").Device(DEVICE_VE), DummyOp);
+
+#endif
+
 }  // namespace tensorflow

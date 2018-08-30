@@ -334,6 +334,10 @@ REGISTER_SYCL_HOST_KERNEL(ResourceHandle);
 #undef REGISTER_SYCL_HOST_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("Merge").Device(DEVICE_VE), MergeOp);
+#endif
+
 void EnterOp::Compute(OpKernelContext* context) {
   if (IsRefType(context->input_dtype(0))) {
     context->forward_ref_input_to_ref_output(0, 0);
@@ -649,5 +653,16 @@ class AbortOp : public OpKernel {
 };
 
 REGISTER_KERNEL_BUILDER(Name("Abort").Device(DEVICE_CPU), AbortOp);
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_SWITCH(type)                          \
+  REGISTER_KERNEL_BUILDER(Name("Switch")                  \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("pred")         \
+                              .TypeConstraint<type>("T"), \
+                          SwitchOp)
+
+TF_CALL_ALL_TYPES(REGISTER_VE_SWITCH);
+#endif
 
 }  // namespace tensorflow
