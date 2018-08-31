@@ -1596,6 +1596,7 @@ void CheckNotInComputeAsync(OpKernelContext* ctx,
     }                                                       \
   } while (0)
 
+#if 0
 #ifdef TENSORFLOW_USE_VE
 
 class VEDummyOp : public OpKernel {
@@ -1611,6 +1612,7 @@ class VEDummyOp : public OpKernel {
   REGISTER_KERNEL_BUILDER(Name(NAME).Device(DEVICE_VE), VEDummyOp);
 
 #endif // TENSORFLOW_USE_VE
+#endif
 
 }  // namespace tensorflow
 

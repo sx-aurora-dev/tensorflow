@@ -41,8 +41,8 @@ class VEO {
 #define FAKE() Fake fake(proc_pid_);
 //#define FAKE()
 
-    void* alloc_mem(size_t size) {
-      VLOG(2) << "VEO::alloc_mem: " << pthread_self();
+    uint64_t alloc_mem(size_t size) {
+      VLOG(2) << "VEO::alloc_mem: tid=" << syscall(SYS_gettid);
       VLOG(2) << "VEO::alloc_mem: proc_=" << proc_ << " size=" << size;
       uint64_t addr;
 
@@ -53,7 +53,11 @@ class VEO {
       }
 
       VLOG(2) << "VEO::alloc_mem: ret=" << ret << " addr=" << std::hex << addr;
-      return (void*)addr;
+      return addr;
+    }
+
+    int free_mem(uint64_t addr) {
+      return veo_free_mem(proc_, addr);
     }
 
     int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
@@ -230,11 +234,37 @@ VEMemAllocator::~VEMemAllocator() {}
 
 void* VEMemAllocator::Alloc(size_t alignments, size_t num_bytes) {
   VLOG(2) << "VEMemAllocator::Alloc: alignments=" << alignments << " num_bytes=" << num_bytes;
+#if 0
   return veo_->alloc_mem(num_bytes);
+#else
+#if 0
+  void* p = veo_->alloc_mem(num_bytes);
+  if (reinterpret_cast<intptr_t>(p) % alignments != 0) {
+    VLOG(2) << "VEMemAllocator::Alloc: alignment error. addr=" << p;
+    return NULL;
+  }
+#endif
+
+  size_t n = num_bytes + alignments + sizeof(intptr_t);
+  uint64_t addr = veo_->alloc_mem(n);
+  uint64_t addr0 = (addr + sizeof(uint64_t) + alignments) & ~(alignments - 1);
+  VLOG(2) << "VEMemAllocator:Alloc addr=" << std::hex << addr
+    << " addr0=" << std::hex << addr0;
+  *reinterpret_cast<uint64_t*>(addr0 - sizeof(uint64_t)) = addr;
+  return reinterpret_cast<void*>(addr0);
+#endif
 }
 
 void VEMemAllocator::Free(void* ptr, size_t num_bytes) {
+  VLOG(2) << "VEMemAllocator::Free: ptr=" << ptr;
+
+  uint64_t addr = *reinterpret_cast<uint64_t*>(ptr - sizeof(uint64_t));
+
+  VLOG(2) << "VEMemAllocator::Free: addr=" << std::hex << addr;
+
+  veo_->free_mem(addr);
 }
+
 
 class VEBFCAllocator : public BFCAllocator {
   public:
