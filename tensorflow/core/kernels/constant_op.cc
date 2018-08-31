@@ -312,6 +312,7 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
               dims.size(), &shape));
       Tensor* out = nullptr;
       OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
+      VLOG(2) << __PRETTY_FUNCTION__ << " done";
     }
 };
 

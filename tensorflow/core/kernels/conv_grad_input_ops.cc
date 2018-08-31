@@ -1140,7 +1140,46 @@ template struct LaunchConv2DBackpropInputOp<GPUDevice, double>;
 #endif  // GOOGLE_CUDA
 
 #ifdef TENSORFLOW_USE_VE
-REGISTER_KERNEL_BUILDER_VE_DUMMY("Conv2DBackpropInput");
+template <typename Device, class T>
+class Conv2DVEBackpropInputOp : public OpKernel {
+ public:
+  explicit Conv2DVEBackpropInputOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input_sizes = context->input(0);
+    //const Tensor& filter = context->input(1);
+    //const Tensor& out_backprop = context->input(2);
+    OP_REQUIRES(
+        context, TensorShapeUtils::IsVector(input_sizes.shape()),
+        errors::InvalidArgument(
+            "Conv2DBackpropInput: input_sizes input must be 1-dim, not ",
+            input_sizes.dims()));
+    TensorShape input_shape;
+    OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+                                input_sizes.vec<int32>(), &input_shape));
+
+#if 0
+    ConvBackpropDimensions dims;
+    OP_REQUIRES_OK(context,
+                   ConvBackpropComputeDimensions(
+                       "Conv2DFastBackpropInput", /*num_spatial_dims=*/2,
+                       input_shape, filter.shape(), out_backprop.shape(),
+                       strides_, padding_, data_format_, &dims));
+#endif
+
+    Tensor* in_backprop = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, input_shape, &in_backprop));
+
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropInput")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<float>("T")
+                        .HostMemory("input_sizes"),
+                        Conv2DVEBackpropInputOp<VEDevice, float>);
 #endif
 
 }  // namespace tensorflow
