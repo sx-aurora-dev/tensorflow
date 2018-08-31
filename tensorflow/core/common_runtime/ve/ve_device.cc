@@ -97,7 +97,7 @@ class VEO {
     }
 #undef FAKE
 
-    Status init();
+    Status init(int nodeid);
 
   private:
     pid_t proc_pid_;
@@ -177,7 +177,7 @@ Status load_kernel_syms(struct veo_proc_handle* proc,
   return Status::OK();
 }
 
-Status VEO::init() {
+Status VEO::init(int nodeid) {
   VLOG(2) << "VEO::init: pid=" << getpid() << " tid=" << syscall(SYS_gettid);
   const char* filename = "libvetfkernel.so";
 
@@ -185,12 +185,6 @@ Status VEO::init() {
     filename = tmp;
   }
   VLOG(2) << "VEO::init: filename=" << filename;
-
-  int nodeid = 0;
-  if (const char* tmp = getenv("VE_NODE_NUMBER")) {
-    nodeid = atoi(tmp);
-  }
-
   VLOG(2) << "VEO::init: nodeid=" << nodeid;
 
   proc_ = veo_proc_create(nodeid);
@@ -361,12 +355,12 @@ Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
 
 class VEOFactory {
   public:
-    Status GetOrCreate(VEO** pveo) {
+    Status GetOrCreate(VEO** pveo, int nodeid) {
       mutex_lock guard(lock_);
 
       if (!veo_) {
         veo_ = new VEO;
-        Status s = veo_->init();
+        Status s = veo_->init(nodeid);
         if (!s.ok())
           return s;
       }
@@ -394,13 +388,16 @@ class VEDeviceFactory : public DeviceFactory {
     const string device_name = strings::StrCat(name_prefix, "/device:VE:0");
     VLOG(2) << "VEDeviceFactory::CreateDevices: " << device_name;
 
-#if 0
-    VEO* veo = new VEO();
-    Status s = veo->init();
-#else
+    int nodeid = 0;
+    if (const char* tmp = getenv("VE_NODE_NUMBER")) {
+      nodeid = atoi(tmp);
+    }
+
+    if (nodeid < 0) // user want to disable VE
+      return Status::OK();
+
     VEO* veo = NULL;
-    Status s = VEOFactory::Global()->GetOrCreate(&veo);
-#endif
+    Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
     if (!s.ok())
       return s;
 
