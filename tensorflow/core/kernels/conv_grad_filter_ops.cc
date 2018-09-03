@@ -49,6 +49,11 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace {
 
 // Returns in 'col_data', image patches in storage order (height, width, depth)
@@ -109,6 +114,95 @@ struct LaunchConv2DBackpropFilterOp<CPUDevice, T> {
         /*row_dilation=*/1, /*col_dilation=*/1);
   }
 };
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+struct LaunchConv2DBackpropFilterOp<VEDevice, T> {
+  void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+                  const Tensor& out_backprop, const Tensor& input,
+                  int row_dilation, int col_dilation, int row_stride,
+                  int col_stride, const Padding& padding,
+                  Tensor* filter_backprop, TensorFormat data_format) {
+    VLOG(2) << "LaunchConv2DBackpropFilterOp<VEDevice, T>";
+    VLOG(2) << "LaunchConv2DBackpropFilterOp<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
+
+    if (data_format != FORMAT_NCHW) {
+      ctx->SetStatus(
+          errors::Unimplemented("VE conv implementation only supports "
+                                "NCHW tensor format for now."));
+      return;
+    }
+
+#if 1
+
+    struct TensorParam {
+      int w, h, c, n;
+      TensorParam(const Tensor& t, TensorFormat f) :
+        w(GetTensorDim(t, f, 'W')),
+        h(GetTensorDim(t, f, 'H')),
+        c(GetTensorDim(t, f, 'C')),
+        n(GetTensorDim(t, f, 'N')) {}
+      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
+    };
+
+    struct ConvParam {
+      uint64_t out_bp;
+      uint64_t in;
+      uint64_t filter_bp;
+      TensorParam out_bp_param;
+      TensorParam in_param;
+      TensorParam filter_bp_param;
+
+      int row_stride;
+      int col_stride;
+      int row_dilation;
+      int col_dilation;
+      int row_padding;
+      int col_padding;
+
+      int data_format;
+      int data_type;
+
+      ConvParam(const Tensor& out_backprop, const Tensor& input, Tensor* filter_backprop, TensorFormat f) :
+        out_bp_param(out_backprop, f),
+	in_param(input, f),
+        filter_bp_param(filter_backprop->dim_size(1), filter_backprop->dim_size(0),
+                     filter_backprop->dim_size(2), filter_backprop->dim_size(3)) {}
+    };
+
+    ConvParam p(out_backprop, input, filter_backprop, data_format);
+
+    p.out_bp    = (uint64_t)DMAHelper::base(&out_backprop);
+    p.in = (uint64_t)DMAHelper::base(&input);
+    p.filter_bp = (uint64_t)DMAHelper::base(filter_backprop);
+    p.data_format = data_format;
+    p.data_type = input.dtype();
+    p.row_stride = row_stride;
+    p.col_stride = col_stride;
+    p.row_dilation = row_dilation;
+    p.col_dilation = col_dilation;
+    p.row_padding = 0;
+    p.col_padding = 0;
+
+    if (padding == SAME) {
+      p.row_padding = std::max<int>(0,
+                                    (p.out_bp_param.h - 1) * row_stride +
+                                    (p.filter_bp_param.h - 1) * row_dilation + 1 -
+                                    p.in_param.h);
+      p.col_padding = std::max<int>(0,
+                                    (p.out_bp_param.w - 1) * col_stride +
+                                    (p.filter_bp_param.w - 1) * col_dilation + 1 -
+                                    p.in_param.w);
+    }
+
+#endif
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("Conv2DBackpropFilter", (void*)&p, sizeof(p));
+    if (!s.ok())
+      ctx->SetStatus(s);
+  }
+};
+#endif
 
 #ifdef TENSORFLOW_USE_LIBXSMM_CONVOLUTIONS
 template <typename Device, class T>
@@ -532,6 +626,10 @@ TF_CALL_double(REGISTER_CPU_KERNELS);
 template struct LaunchConv2DBackpropFilterOp<CPUDevice, Eigen::half>;
 template struct LaunchConv2DBackpropFilterOp<CPUDevice, float>;
 template struct LaunchConv2DBackpropFilterOp<CPUDevice, double>;
+
+#ifdef TENSORFLOW_USE_VE
+template struct LaunchConv2DBackpropFilterOp<VEDevice, float>;
+#endif
 
 // GPU definitions.
 #if GOOGLE_CUDA
@@ -1072,12 +1170,41 @@ template <typename Device, class T>
 class Conv2DVEBackpropFilterOp : public OpKernel {
  public:
   explicit Conv2DVEBackpropFilterOp(OpKernelConstruction* context)
-      : OpKernel(context) {}
+      : OpKernel(context) {
+    string data_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                errors::InvalidArgument("Invalid data format"));
+    OP_REQUIRES(context, data_format_ == FORMAT_NCHW,
+                errors::InvalidArgument(
+                    "Conv2DVEBackpropFilterOp only supports NCHW."));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &strides_));
+    OP_REQUIRES(context, strides_.size() == 4,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES(
+        context, (strides_[0] == 1 && strides_[3] == 1),
+        errors::InvalidArgument("Current implementation does not yet support "
+                                "strides in the batch and depth dimensions."));
+    OP_REQUIRES(context, strides_[1] > 0 && strides_[2] > 0,
+                errors::InvalidArgument(
+                    "Row and column strides should be larger than 0."));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilations_));
+    OP_REQUIRES(context, dilations_.size() == 4,
+                errors::InvalidArgument("Sliding window dilations field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES(context, (dilations_[0] == 1 && dilations_[3] == 1),
+                errors::InvalidArgument(
+                    "Current implementation does not yet support "
+                    "dilations in the batch and depth dimensions."));
+
+  }
 
   void Compute(OpKernelContext* context) override {
-    //const Tensor& input = context->input(0);
+    const Tensor& input = context->input(0);
     const Tensor& filter_sizes = context->input(1);
-    //const Tensor& out_backprop = context->input(2);
+    const Tensor& out_backprop = context->input(2);
     OP_REQUIRES(
         context, TensorShapeUtils::IsVector(filter_sizes.shape()),
         errors::InvalidArgument(
@@ -1087,10 +1214,28 @@ class Conv2DVEBackpropFilterOp : public OpKernel {
     OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
                                 filter_sizes.vec<int32>(), &filter_shape));
 
+    ConvBackpropDimensions dims;
+    OP_REQUIRES_OK(
+        context,
+        ConvBackpropComputeDimensions(
+            type_string(), /*num_spatial_dims=*/2, input.shape(), filter_shape,
+            out_backprop.shape(), strides_, padding_, data_format_, &dims));
+
     Tensor* filter_backprop = nullptr;
     OP_REQUIRES_OK(context,
                    context->allocate_output(0, filter_shape, &filter_backprop));
+
+    LaunchConv2DBackpropFilterOp<Device, T>()(
+        context, false, false, out_backprop, input,
+        /*row_dilation=*/1, /*col_dilation=*/1, dims.spatial_dims[0].stride,
+        dims.spatial_dims[1].stride, padding_, filter_backprop, data_format_);
   }
+
+ private:
+  std::vector<int32> dilations_;
+  std::vector<int32> strides_;
+  Padding padding_;
+  TensorFormat data_format_;
 };
 
 
