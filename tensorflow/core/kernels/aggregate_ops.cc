@@ -30,6 +30,11 @@ limitations under the License.
 #include "tensorflow/core/lib/gtl/inlined_vector.h"
 #include "tensorflow/core/platform/logging.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -274,10 +279,37 @@ class AddNOp<VEDevice, T> : public OpKernel {
     const Tensor& input0 = ctx->input(0);
     const int num = ctx->num_inputs();
 
-    //if (num == 1) {
+    if (num == 1) {
       ctx->set_output(0, input0);
       return;
-    //}
+    } else {
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input0.shape(), &output));
+
+#define MAX_INPUTS 16
+      struct {
+        int output_type;
+        uint64_t out;
+        size_t num_elems;
+        size_t num_inputs;
+        uint64_t in[MAX_INPUTS];
+      } args;
+
+      args.output_type = DataTypeToEnum<T>::v();
+      args.out = (uint64_t)DMAHelper::base(output);
+      args.num_elems = input0.NumElements();
+      args.num_inputs = num;
+      for (int i = 0; i < num; ++i) {
+        OP_REQUIRES(ctx, ctx->input(i).dtype() == args.output_type,
+                    errors::InvalidArgument("type mismatch"));
+        args.in[i] = (uint64_t)DMAHelper::base(&ctx->input(i));
+      }
+
+      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("AddN", (void*)&args, sizeof(args));
+      if (!s.ok())
+        ctx->SetStatus(s);
+    }
   }
 };
 

@@ -1248,6 +1248,7 @@ cc_library(
         ":core_cpu",
         ":gpu_runtime",
         ":sycl_runtime",
+        ":ve_runtime",
     ],
 )
 

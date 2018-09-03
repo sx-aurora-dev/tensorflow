@@ -2823,7 +2823,9 @@ cc_library(
 tf_kernel_library(
     name = "aggregate_ops",
     prefix = "aggregate_ops",
-    deps = MATH_DEPS,
+    deps = MATH_DEPS + [
+        "//tensorflow/core:ve_runtime",
+    ],
 )
 
 tf_kernel_library(
