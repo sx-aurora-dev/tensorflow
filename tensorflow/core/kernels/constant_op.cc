@@ -40,6 +40,11 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/sycl/sycl_util.h"
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif  // TENSORFLOW_USE_SYCL
+
 namespace tensorflow {
 
 namespace {
@@ -312,6 +317,26 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
               dims.size(), &shape));
       Tensor* out = nullptr;
       OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
+
+      struct {
+        int32 data_type;
+        uint64_t in;
+        uint64_t out;
+        size_t num_elems;
+      } args;
+
+      args.data_type = out->dtype();
+      args.in = (uint64_t)DMAHelper::base(&Tvalue);
+      args.out = (uint64_t)DMAHelper::base(out);
+      args.num_elems = out->NumElements();
+
+      VLOG(2) << "FillOp: num_elems=" << out->NumElements();
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("Fill", (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+
       VLOG(2) << __PRETTY_FUNCTION__ << " done";
     }
 };

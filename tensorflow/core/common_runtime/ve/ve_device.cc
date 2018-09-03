@@ -248,7 +248,7 @@ void* VEMemAllocator::Alloc(size_t alignments, size_t num_bytes) {
   size_t n = num_bytes + alignments + sizeof(intptr_t);
   uint64_t addr = veo_->alloc_mem(n);
   uint64_t addr0 = (addr + sizeof(uint64_t) + alignments) & ~(alignments - 1);
-  VLOG(2) << "VEMemAllocator:Alloc addr=" << std::hex << addr
+  VLOG(2) << "VEMemAllocator::Alloc addr=" << std::hex << addr
     << " addr0=" << std::hex << addr0;
   *reinterpret_cast<uint64_t*>(addr0 - sizeof(uint64_t)) = addr;
   return reinterpret_cast<void*>(addr0);
@@ -354,6 +354,7 @@ Status VEDevice::Init(const SessionOptions& options, VEO* veo) {
 Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
                                      const AllocatorAttributes alloc_attrs,
                                      Tensor* tensor) {
+  VLOG(2) << "VEDeviceContextImpl::MakeTensorFromProto";
   AllocatorAttributes attr;
   attr.set_on_host(true);
   Allocator* host_alloc = GetAllocator(attr);
