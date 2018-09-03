@@ -295,6 +295,10 @@ class AddNOp<VEDevice, T> : public OpKernel {
         uint64_t in[MAX_INPUTS];
       } args;
 
+      OP_REQUIRES(ctx, num <= MAX_INPUTS,
+                  errors::InvalidArgument(
+                      "number of inputs must be less than 16 in VE AddN"));
+
       args.output_type = DataTypeToEnum<T>::v();
       args.out = (uint64_t)DMAHelper::base(output);
       args.num_elems = input0.NumElements();
