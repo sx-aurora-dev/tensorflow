@@ -1596,24 +1596,6 @@ void CheckNotInComputeAsync(OpKernelContext* ctx,
     }                                                       \
   } while (0)
 
-#if 0
-#ifdef TENSORFLOW_USE_VE
-
-class VEDummyOp : public OpKernel {
- public:
-  explicit VEDummyOp(OpKernelConstruction* context) : OpKernel(context) {}
-
-  void Compute(OpKernelContext* ctx) override {
-    VLOG(2) << "VEDummyOp for " << type_string();
-  }
-};
-
-#define REGISTER_KERNEL_BUILDER_VE_DUMMY(NAME) \
-  REGISTER_KERNEL_BUILDER(Name(NAME).Device(DEVICE_VE), VEDummyOp);
-
-#endif // TENSORFLOW_USE_VE
-#endif
-
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_FRAMEWORK_OP_KERNEL_H_

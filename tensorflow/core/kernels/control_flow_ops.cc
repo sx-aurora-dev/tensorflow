@@ -165,6 +165,17 @@ REGISTER_SYCL_HOST_REF_KERNEL(string);
 #undef REGISTER_SYCL_HOST_REF_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_SWITCH(type)                          \
+  REGISTER_KERNEL_BUILDER(Name("Switch")                  \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("pred")         \
+                              .TypeConstraint<type>("T"), \
+                          SwitchOp)
+
+TF_CALL_ALL_TYPES(REGISTER_VE_SWITCH);
+#endif
+
 class RefSelectOp : public OpKernel {
  public:
   explicit RefSelectOp(OpKernelConstruction* context) : OpKernel(context) {
@@ -660,15 +671,5 @@ class AbortOp : public OpKernel {
 
 REGISTER_KERNEL_BUILDER(Name("Abort").Device(DEVICE_CPU), AbortOp);
 
-#ifdef TENSORFLOW_USE_VE
-#define REGISTER_VE_SWITCH(type)                          \
-  REGISTER_KERNEL_BUILDER(Name("Switch")                  \
-                              .Device(DEVICE_VE)          \
-                              .HostMemory("pred")         \
-                              .TypeConstraint<type>("T"), \
-                          SwitchOp)
-
-TF_CALL_ALL_TYPES(REGISTER_VE_SWITCH);
-#endif
 
 }  // namespace tensorflow
