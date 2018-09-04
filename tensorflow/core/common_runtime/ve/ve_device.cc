@@ -38,8 +38,8 @@ class VEO {
     VEO() {}
     virtual ~VEO();
 
-#define FAKE() Fake fake(proc_pid_);
-//#define FAKE()
+//#define FAKE() Fake fake(proc_pid_);
+#define FAKE()
 
     uint64_t alloc_mem(size_t size) {
       VLOG(2) << "VEO::alloc_mem: tid=" << syscall(SYS_gettid);
@@ -71,8 +71,10 @@ class VEO {
     }
 
     Status compute(const std::string& name, const void* arg, size_t len) {
+      VLOG(2) << "VEO::compute: name=" << name;
       auto it = kernel_map_.find(name);
-      CHECK(it != kernel_map_.end()) << "kernel not found: " << name;
+      if (it == kernel_map_.end())
+        return errors::Internal("Kernel not found: ", name);
 
       uint64_t sym = it->second;
 
@@ -80,17 +82,17 @@ class VEO {
       veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
       veo_args_set_i64(a.args, 1, len);
 
-      int ret;
       {
         FAKE();
         int req_id = veo_call_async(ctx_, sym, a.args);
-        VLOG(2) << "VEO::call: VEO request ID = " << req_id;
+        VLOG(2) << "VEO::compute: return from veo_call_async. req_id=" << req_id;
         if (req_id == VEO_REQUEST_ID_INVALID)
           return errors::Internal("Failed to call kernel");
 
+        VLOG(2) << "VEO::compute: call veo_wait_result for req_id=" << req_id;
         uint64_t retval;
-        ret = veo_call_wait_result(ctx_, req_id, &retval);
-        VLOG(2) << "VEO::call: id=" << req_id << " ret=" << ret << " retval=" << retval;
+        int ret = veo_call_wait_result(ctx_, req_id, &retval);
+        VLOG(2) << "VEO::compute: return from veo_wait_result. req_id=" << req_id << " ret=" << ret << " retval=" << retval;
         if (ret != 0)
           return errors::Internal("Failed to wait kernel result");
         if (retval != 0)
@@ -424,7 +426,7 @@ class VEDeviceFactory : public DeviceFactory {
       nodeid = atoi(tmp);
     }
 
-    if (nodeid < 0) // user want to disable VE
+    if (nodeid < 0) // user disables VE
       return Status::OK();
 
     VEO* veo = NULL;
