@@ -46,6 +46,11 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -1478,31 +1483,132 @@ REGISTER_KERNEL_BUILDER(Name("MaxPoolV2")
 
 #ifdef TENSORFLOW_USE_VE
 typedef Eigen::VeDevice VEDevice;
-template <typename Device, typename T>
+
+
+template <typename T>
+struct LaunchMaxPoolingVEOP {
+  void operator()  (
+    OpKernelContext* ctx,
+    const PoolParameters& params,
+    const Tensor& input,
+    Tensor* output )
+  {
+    VLOG(2) << "LaunchMaxPoolingVEOP<VEDevice, T>";
+    VLOG(2) << "LaunchMaxPoolingVEOP<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
+
+    if (params.data_format != FORMAT_NCHW) {
+      ctx->SetStatus(
+          errors::Unimplemented("LaunchMaxPoolingVEOP implementation only supports"
+                                "NCHW tensor format for now."));
+      return;
+    }
+
+    struct TensorParam {
+      int w, h, c, n;
+      TensorParam(const Tensor& t, TensorFormat f) :
+        w(GetTensorDim(t, f, 'W')),
+        h(GetTensorDim(t, f, 'H')),
+        c(GetTensorDim(t, f, 'C')),
+        n(GetTensorDim(t, f, 'N')) {}
+      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
+    };
+
+    struct PoolingParam {
+      uint64_t in;
+      uint64_t out;
+      TensorParam in_param;
+      TensorParam out_param;
+
+      int row_window;
+      int col_window;
+      int row_stride;
+      int col_stride;
+//      int row_padding;
+//      int col_padding;
+
+      int data_format;
+      int data_type;
+
+      PoolingParam(const Tensor& input, Tensor* output, TensorFormat f) :
+	in_param(input, f),
+	out_param(*output, f) {}
+    };
+
+    PoolingParam p(input, output, params.data_format) ;
+
+    p.in  = (uint64_t)DMAHelper::base(&input);
+    p.out = (uint64_t)DMAHelper::base(output);
+    p.data_format = params.data_format;
+    p.data_type = input.dtype();
+
+    p.row_window = params.window_rows ;
+    p.col_window = params.window_cols ;
+    p.row_stride = params.row_stride ;
+    p.col_stride = params.col_stride ;
+//    p.row_padding = params.pad_rows ;
+//    p.col_padding = params.pad_cols ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("MaxPooling", (void*)&p, sizeof(p));
+    if (!s.ok())
+      ctx->SetStatus(s);
+  }
+};
+
+template struct LaunchMaxPoolingVEOP<float> ;
+
+template <typename T>
 class MaxPoolingVEOp : public OpKernel {
-  public:
-    explicit MaxPoolingVEOp(OpKernelConstruction* context) : OpKernel(context)  {
-      OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
-      OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
-      OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
-    }
-    void Compute(OpKernelContext* context) override {
-      VLOG(2) << __PRETTY_FUNCTION__;
+public:
+ explicit MaxPoolingVEOp(OpKernelConstruction* context)
+     : OpKernel(context) {
+   string data_format;
+   OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+   OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+               errors::InvalidArgument("Invalid data format"));
+   OP_REQUIRES(
+       context, data_format_ == FORMAT_NCHW,
+       errors::InvalidArgument(
+           "MaxPoolingVEOp only supports NCHW on device type ",
+            DeviceTypeString(context->device_type())));
+   OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+   OP_REQUIRES(context, ksize_.size() == 4,
+               errors::InvalidArgument("Sliding window ksize field must "
+                                       "specify 4 dimensions"));
+   OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+   OP_REQUIRES(context, stride_.size() == 4,
+               errors::InvalidArgument("Sliding window stride field must "
+                                       "specify 4 dimensions"));
+   OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+   OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+               errors::Unimplemented(
+                   "Pooling is not yet supported on the batch dimension."));
+ }
 
-      TensorFormat data_format = FORMAT_NCHW;
+ void Compute(OpKernelContext* context) override {
+   const Tensor& tensor_in = context->input(0);
 
-      const Tensor& tensor_in = context->input(0);
-      PoolParameters param{
-        context, ksize_, stride_, padding_, data_format, tensor_in.shape()};
+   PoolParameters params{context,  ksize_,       stride_,
+                         padding_, data_format_, tensor_in.shape()};
+   if (!context->status().ok()) {
+     return;
+   }
 
-      Tensor* output = nullptr;
-      context->allocate_output(0, param.forward_output_shape(), &output);
-    }
+   TensorShape out_shape({params.tensor_in_batch, params.depth,
+			  params.out_height, params.out_width});
 
-  private:
-    std::vector<int32> ksize_;
-    std::vector<int32> stride_;
-    Padding padding_;
+   Tensor* output = nullptr;
+   OP_REQUIRES_OK(context, context->allocate_output(0, out_shape, &output));
+
+   LaunchMaxPoolingVEOP<T>()(context, params, tensor_in, output);
+ }
+
+private:
+ std::vector<int32> ksize_;
+ std::vector<int32> stride_;
+ Padding padding_;
+ TensorFormat data_format_;
+
 };
 
 class DummyOp : public OpKernel {
@@ -1519,7 +1625,7 @@ class DummyOp : public OpKernel {
 
 REGISTER_KERNEL_BUILDER(
     Name("MaxPool").Device(DEVICE_VE).TypeConstraint<float>("T"),
-    MaxPoolingVEOp<VEDevice, float>);
+    MaxPoolingVEOp<float>);
 
 REGISTER_KERNEL_BUILDER(Name("MaxPoolGrad").Device(DEVICE_VE), DummyOp);
 
