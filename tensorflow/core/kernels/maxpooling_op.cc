@@ -1555,7 +1555,92 @@ struct LaunchMaxPoolingVEOP {
   }
 };
 
+template <typename T>
+struct LaunchMaxPoolingGradVEOP {
+  void operator()  (
+    OpKernelContext* ctx,
+    const PoolParameters& params,
+    const Tensor& input,
+    const Tensor& output,
+    const Tensor& out_backprop,
+    Tensor* in_backprop )
+  {
+    VLOG(2) << "LaunchMaxPoolingGradVEOP<VEDevice, T>";
+    VLOG(2) << "LaunchMaxPoolingGradVEOP<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
+
+    if (params.data_format != FORMAT_NCHW) {
+      ctx->SetStatus(
+          errors::Unimplemented("LaunchMaxPoolingGradVEOP implementation only supports"
+                                "NCHW tensor format for now."));
+      return;
+    }
+
+    struct TensorParam {
+      int w, h, c, n;
+      TensorParam(const Tensor& t, TensorFormat f) :
+        w(GetTensorDim(t, f, 'W')),
+        h(GetTensorDim(t, f, 'H')),
+        c(GetTensorDim(t, f, 'C')),
+        n(GetTensorDim(t, f, 'N')) {}
+      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
+    };
+
+    struct PoolingGradParam {
+      uint64_t in;
+      uint64_t out;
+      uint64_t out_bp;
+      uint64_t in_bp;
+
+      TensorParam in_param;
+      TensorParam out_param;
+      TensorParam out_bp_param;
+      TensorParam in_bp_param;
+
+      int row_window;
+      int col_window;
+      int row_stride;
+      int col_stride;
+//      int row_padding;
+//      int col_padding;
+
+      int data_format;
+      int data_type;
+
+      PoolingGradParam(const Tensor& input, const Tensor& output, const Tensor& out_backprop,
+	  Tensor* in_backprop, TensorFormat f) :
+	in_param(input, f),
+	out_param(output, f),
+	out_bp_param(out_backprop, f),
+	in_bp_param(*in_backprop, f) {}
+    };
+
+    PoolingGradParam p(input, output, out_backprop, in_backprop, params.data_format) ;
+
+    p.in  = (uint64_t)DMAHelper::base(&input);
+    p.out = (uint64_t)DMAHelper::base(&output);
+    p.out_bp = (uint64_t)DMAHelper::base(&out_backprop);
+    p.in_bp = (uint64_t)DMAHelper::base(in_backprop);
+
+    p.data_format = params.data_format;
+    p.data_type = input.dtype();
+
+    p.row_window = params.window_rows ;
+    p.col_window = params.window_cols ;
+    p.row_stride = params.row_stride ;
+    p.col_stride = params.col_stride ;
+//    p.row_padding = params.pad_rows ;
+//    p.col_padding = params.pad_cols ;
+
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("MaxPoolingBackprop", (void*)&p, sizeof(p));
+    if (!s.ok())
+      ctx->SetStatus(s);
+  }
+};
+
 template struct LaunchMaxPoolingVEOP<float> ;
+template struct LaunchMaxPoolingGradVEOP<float> ;
 
 template <typename T>
 class MaxPoolingVEOp : public OpKernel {
@@ -1611,23 +1696,102 @@ private:
 
 };
 
-class DummyOp : public OpKernel {
+
+template <typename T>
+class MaxPoolingGradVEOp : public OpKernel {
   public:
-    explicit DummyOp(OpKernelConstruction* context) : OpKernel(context) {}
-    void Compute(OpKernelContext* context) override {
-      VLOG(2) << __PRETTY_FUNCTION__;
-      const Tensor& tensor_in = context->input(0);
-      const TensorShape& output_shape = tensor_in.shape();
-      Tensor* output = nullptr;
-      OP_REQUIRES_OK(context, context->allocate_output( 0, output_shape, &output));
+  explicit MaxPoolingGradVEOp(OpKernelConstruction* context) : OpKernel(context) {
+    string data_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                errors::InvalidArgument("Invalid data format"));
+    OP_REQUIRES(
+        context, data_format_ == FORMAT_NCHW,
+        errors::InvalidArgument("MaxPoolingGradVEOp only supports NCHW ",
+                                "on device type ",
+                                DeviceTypeString(context->device_type())));
+
+    if (context->num_inputs() == 3) {
+      OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+      OP_REQUIRES(context, ksize_.size() == 4,
+		  errors::InvalidArgument("Sliding window ksize field must "
+					  "specify 4 dimensions"));
+      OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+      OP_REQUIRES(context, stride_.size() == 4,
+		  errors::InvalidArgument("Sliding window strides field must "
+					  "specify 4 dimensions"));
+      OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+		  errors::Unimplemented(
+		      "Pooling is not yet supported on the batch dimension."));
+      OP_REQUIRES(
+	  context, ksize_[1] == 1 && stride_[1] == 1,
+	  errors::Unimplemented(
+	      "MaxPoolingGradVEOp is not yet supported on the depth dimension."));
     }
+
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in = context->input(0);
+    const Tensor& tensor_out = context->input(1);
+    const Tensor& out_backprop = context->input(2);
+
+    // For maxpooling, tensor_in should have 4 dimensions.
+    OP_REQUIRES(context, tensor_in.dims() == 4,
+                errors::InvalidArgument("tensor_in must be 4-dimensional"));
+    OP_REQUIRES(context, tensor_out.dims() == 4,
+                errors::InvalidArgument("tensor_out must be 4-dimensional"));
+    // For maxpooling, out_backprop should have 4 dimensions.
+    OP_REQUIRES(context, out_backprop.dims() == 4,
+                errors::InvalidArgument("out_backprop must be 4-dimensional"));
+
+    const TensorShape& output_shape = tensor_in.shape();
+
+
+    std::vector<int32> ksize = ksize_;
+    std::vector<int32> stride = stride_;
+    if (context->num_inputs() == 5) {
+      const Tensor& tensor_ksize = context->input(3);
+      auto value_ksize = tensor_ksize.flat<int32>();
+      ksize.resize(tensor_ksize.shape().num_elements());
+      std::copy_n(&value_ksize(0), ksize.size(), ksize.begin());
+
+      const Tensor& tensor_stride = context->input(4);
+      auto value_stride = tensor_stride.flat<int32>();
+      stride.resize(tensor_stride.shape().num_elements());
+      std::copy_n(&value_stride(0), stride.size(), stride.begin());
+    }
+
+    PoolParameters params{context,  ksize,      stride,
+                          padding_, FORMAT_NCHW, tensor_in.shape()};
+    if (!context->status().ok()) {
+      return;
+    }
+
+    Tensor* in_backprop = nullptr;
+    // forward_input_or_allocate_output is better ??
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &in_backprop));
+
+
+    LaunchMaxPoolingGradVEOP<T>()(context, params, tensor_in, tensor_out,
+	out_backprop, in_backprop);
+  }
+
+ private:
+  std::vector<int32> ksize_;
+  std::vector<int32> stride_;
+  Padding padding_;
+  TensorFormat data_format_;
 };
 
 REGISTER_KERNEL_BUILDER(
     Name("MaxPool").Device(DEVICE_VE).TypeConstraint<float>("T"),
     MaxPoolingVEOp<float>);
 
-REGISTER_KERNEL_BUILDER(Name("MaxPoolGrad").Device(DEVICE_VE), DummyOp);
+REGISTER_KERNEL_BUILDER(
+    Name("MaxPoolGrad").Device(DEVICE_VE),
+    MaxPoolingGradVEOp<float>);
 
 #endif
 
