@@ -1523,8 +1523,8 @@ struct LaunchMaxPoolingVEOP {
       int col_window;
       int row_stride;
       int col_stride;
-//      int row_padding;
-//      int col_padding;
+      int row_padding;
+      int col_padding;
 
       int data_format;
       int data_type;
@@ -1545,8 +1545,8 @@ struct LaunchMaxPoolingVEOP {
     p.col_window = params.window_cols ;
     p.row_stride = params.row_stride ;
     p.col_stride = params.col_stride ;
-//    p.row_padding = params.pad_rows ;
-//    p.col_padding = params.pad_cols ;
+    p.row_padding = params.pad_rows ;
+    p.col_padding = params.pad_cols ;
 
     VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
     Status s = vectx->Compute("MaxPooling", (void*)&p, sizeof(p));
@@ -1600,8 +1600,8 @@ struct LaunchMaxPoolingGradVEOP {
       int col_window;
       int row_stride;
       int col_stride;
-//      int row_padding;
-//      int col_padding;
+      int row_padding;
+      int col_padding;
 
       int data_format;
       int data_type;
@@ -1628,8 +1628,8 @@ struct LaunchMaxPoolingGradVEOP {
     p.col_window = params.window_cols ;
     p.row_stride = params.row_stride ;
     p.col_stride = params.col_stride ;
-//    p.row_padding = params.pad_rows ;
-//    p.col_padding = params.pad_cols ;
+    p.row_padding = params.pad_rows ;
+    p.col_padding = params.pad_cols ;
 
 
     VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
