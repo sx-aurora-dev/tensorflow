@@ -694,10 +694,73 @@ class BiasOp<VEDevice, T> : public BinaryOp<T> {
   TensorFormat data_format_;
 };
 
+template <typename T>
+class BiasGradOp<VEDevice, T> : public OpKernel {
+  public:
+    explicit BiasGradOp(OpKernelConstruction* context) : OpKernel(context) {
+      string data_format;
+      OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+      OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                  errors::InvalidArgument("Invalid data format"));
+      OP_REQUIRES(
+          context, data_format_ == FORMAT_NHWC,
+          errors::InvalidArgument("BiasGradOp only supports NCHW on device type ",
+                                  DeviceTypeString(context->device_type())));
+    }
+
+    void Compute(OpKernelContext* context) override {
+      const Tensor& output_backprop = context->input(0);
+
+      OP_REQUIRES(context,
+                  TensorShapeUtils::IsMatrixOrHigher(output_backprop.shape()),
+                  errors::InvalidArgument("Input tensor must be at least 2D: ",
+                                          output_backprop.shape().DebugString()));
+      int32 batch, height, width, channel;
+      GetBiasValueDims(output_backprop, data_format_, &batch, &height, &width,
+                       &channel);
+      Tensor* output = nullptr;
+      TensorShape output_shape{channel};
+      OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
+      if (channel == 0) return;
+
+      struct {
+        int dtype;
+        int data_format;
+        uint64_t output_backprop;
+        uint64_t output;
+        int batch;
+        int width;
+        int height;
+        int channel;
+      } args;
+
+      args.dtype = output_backprop.dtype();
+      args.data_format = data_format_;
+      args.output_backprop = (uint64_t)DMAHelper::base(&output_backprop);
+      args.output = (uint64_t)DMAHelper::base(output);
+      args.batch = batch;
+      args.width = width;
+      args.height = height;
+      args.channel = channel;
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("BiasAddGrad", (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+    }
+
+ private:
+  TensorFormat data_format_;
+};
+
+
 #define REGISTER_KERNEL(type)                                          \
   REGISTER_KERNEL_BUILDER(                                             \
-      Name("BiasAdd").Device(DEVICE_VE).TypeConstraint<type>("T"),   \
-      BiasOp<VEDevice, type>);
+      Name("BiasAdd").Device(DEVICE_VE).TypeConstraint<type>("T"),     \
+      BiasOp<VEDevice, type>);                                         \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("BiasAddGrad").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      BiasGradOp<VEDevice, type>);
 
 TF_CALL_INTEGRAL_TYPES(REGISTER_KERNEL);
 REGISTER_KERNEL(float);
