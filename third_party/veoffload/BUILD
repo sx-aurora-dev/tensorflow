@@ -1,5 +1,13 @@
 licenses(["unencumbered"])
 
+config_setting(
+    name = "using_ve",
+    values = {
+      "define": "using_ve=true",
+    },
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
   name = "veoffload",
   #srcs = ["libveo.so"],
