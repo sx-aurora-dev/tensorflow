@@ -120,6 +120,7 @@ struct LaunchConv2DBackpropInputOp<CPUDevice, T> {
   }
 };
 
+#ifdef TENSORFLOW_USE_VE
 template <typename T>
 struct LaunchConv2DBackpropInputOp<VEDevice, T> {
   void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
@@ -205,6 +206,7 @@ struct LaunchConv2DBackpropInputOp<VEDevice, T> {
 
   }
 };
+#endif
 
 
 #ifdef TENSORFLOW_USE_LIBXSMM_CONVOLUTIONS
