@@ -10,6 +10,7 @@ load(
     "//third_party/mkl:build_defs.bzl",
     "if_mkl",
 )
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
 
 # Appends a suffix to a list of deps.
 def tf_deps(deps, suffix):
@@ -706,5 +707,9 @@ def tf_additional_binary_deps():
   ] + if_mkl(
       [
           "//third_party/mkl:intel_binary_blob",
+      ],
+  ) + if_ve(
+      [
+          "//tensorflow/core:ve_runtime_impl",
       ],
   )

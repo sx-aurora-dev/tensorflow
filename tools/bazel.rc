@@ -62,4 +62,4 @@ build --spawn_strategy=standalone
 build --genrule_strategy=standalone
 build -c opt
 
-build:ve --copt=-DTENSORFLOW_USE_VE --copt=-DDEBUG_VE
+build:ve --copt=-DTENSORFLOW_USE_VE --copt=-DDEBUG_VE --define=using_ve=true
