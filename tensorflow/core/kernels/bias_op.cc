@@ -634,7 +634,7 @@ class BiasOp<VEDevice, T> : public BinaryOp<T> {
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
                 errors::InvalidArgument("Invalid data format"));
     OP_REQUIRES(
-        context, data_format_ == FORMAT_NHWC,
+        context, data_format_ == FORMAT_NCHW,
         errors::InvalidArgument("BiasOp only supports NCHW on device type ",
                                 DeviceTypeString(context->device_type())));
   }
@@ -703,7 +703,7 @@ class BiasGradOp<VEDevice, T> : public OpKernel {
       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
                   errors::InvalidArgument("Invalid data format"));
       OP_REQUIRES(
-          context, data_format_ == FORMAT_NHWC,
+          context, data_format_ == FORMAT_NCHW,
           errors::InvalidArgument("BiasGradOp only supports NCHW on device type ",
                                   DeviceTypeString(context->device_type())));
     }
