@@ -1683,6 +1683,15 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       nodestats::SetScheduled(stats, scheduled_usec);
       nodestats::SetAllStart(stats);
     }
+#ifdef STOPWATCH
+    else {
+      params.track_allocations = true;
+      stats = new NodeExecStatsWrapper;
+      stats->stats()->set_node_name(node->name());
+      nodestats::SetScheduled(stats, scheduled_usec);
+      nodestats::SetAllStart(stats);
+    }
+#endif
 
     if (vlog_) {
       VLOG(1) << "Process node: " << id << " step " << params.step_id << " "
@@ -1752,6 +1761,11 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
                     << " device: " << device->name();
           }
 
+#ifdef STOPWATCH
+	  fprintf (stderr, "%s(Async) , Compute: %ld us\n",
+			  state->item->node->type_string().c_str(),  stats->stats()->op_end_rel_micros() - stats->stats()->op_start_rel_micros());
+#endif
+
           // Clears inputs.
           const int num_inputs = state->item->num_inputs;
           for (int i = 0; i < num_inputs; ++i) {
@@ -1794,6 +1808,11 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
           ctx.retrieve_accessed_tensors(&accessed_tensors);
           device_context = ctx.op_device_context();
         }
+
+#ifdef STOPWATCH
+	fprintf (stderr, "%s, Compute: %ld us\n",
+			op_kernel->type_string().c_str(), stats->stats()->op_end_rel_micros() - stats->stats()->op_start_rel_micros());
+#endif
         nodestats::SetMemory(stats, &ctx);
       }
     }

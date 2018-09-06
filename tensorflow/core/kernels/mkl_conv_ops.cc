@@ -113,7 +113,17 @@ class MklConv2DFwdPrimitive : public MklPrimitive {
         static_cast<void*>(const_cast<T*>(bias_data)));
     context_.dst_mem->set_data_handle(
         static_cast<void*>(const_cast<T*>(dst_data)));
+#ifdef STOPWATCH
+int64 start_time,end_time;
+start_time = Env::Default()->NowMicros();
+#endif
+
     context_.fwd_stream->submit(context_.fwd_primitives);
+
+#ifdef STOPWATCH
+end_time = Env::Default()->NowMicros();
+fprintf (stderr, "submit(context_.fwd_primitives): %lld us\n", end_time-start_time);
+#endif
 
     // after exec, set data handle back
     context_.src_mem->set_data_handle(DummyData);
@@ -799,6 +809,11 @@ class MklConv2DOp : public OpKernel {
       // Input tensors
       const Tensor& src_tensor = MklGetInput(context, kInputIndex_Src);
       const Tensor& filter_tensor = MklGetInput(context, kInputIndex_Filter);
+#ifdef STOPWATCH
+int64 start_time,end_time;
+start_time = Env::Default()->NowMicros();
+#endif
+
 
       MklDnnShape src_mkl_shape, filter_mkl_shape;
       GetMklShape(context, kInputIndex_Src, &src_mkl_shape);
@@ -929,6 +944,11 @@ class MklConv2DOp : public OpKernel {
       } else {
         conv2d_fwd->Execute(src_data, filter_data, dst_data);
       }
+#ifdef STOPWATCH
+end_time = Env::Default()->NowMicros();
+fprintf (stderr, "MklConv2DOp Compute: %lld us\n", end_time-start_time);
+#endif
+
     } catch (mkldnn::error &e) {
       string error_msg = tensorflow::strings::StrCat(
           "Status: ", e.status, ", message: ", string(e.message), ", in file ",

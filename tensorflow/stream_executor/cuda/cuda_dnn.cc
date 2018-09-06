@@ -2422,6 +2422,17 @@ port::Status CudnnSupport::DoConvolveImpl(
       return port::Status(port::error::INTERNAL, "Failed to start timer");
     }
   }
+#ifdef STOPWATCH
+  else {
+    timer.reset(new CUDATimer(parent_));  // NOLINT
+    // The start and stop of the timer should be as close to the Cudnn call as
+    // possible. It is still possible for other threads to issue workload on
+    // to this stream. So it could take multiple profiling measurements.
+    if (!timer->Init() || !timer->Start(AsCUDAStream(stream))) {
+      return port::Status(port::error::INTERNAL, "Failed to start timer");
+    }
+  }
+#endif
 
   // Report an error if we might be hitting a cuDNN bug that accesses illegal
   // memory. See nvbugs/2138754, b/80018418.
@@ -2467,6 +2478,17 @@ port::Status CudnnSupport::DoConvolveImpl(
     output_profile_result->set_elapsed_time_in_ms(
         timer->GetElapsedMilliseconds());
   }
+#ifdef STOPWATCH
+  else {
+    if (!timer->Stop(AsCUDAStream(stream))) {
+      return port::Status(port::error::INTERNAL, "Failed to stop timer");
+    }
+
+    fprintf (stderr, " + cudnnConvolutionForward: %6.0f us, in: %s, flt:%s, out:%s\n",
+           timer->GetElapsedMilliseconds() * 1000, input_descriptor.ToShortString().c_str(),
+           filter_descriptor.ToShortString().c_str(), output_descriptor.ToShortString().c_str());
+  }
+#endif
 
   return port::Status::OK();
 }
@@ -3232,6 +3254,15 @@ port::Status CudnnSupport::DoConvolveBackwardFilterImpl(
       return port::Status(port::error::INTERNAL, "Failed to start timer");
     }
   }
+#ifdef STOPWATCH
+  else {
+    timer.reset(new CUDATimer(parent_));  // NOLINT
+    if (!timer->Init() || !timer->Start(AsCUDAStream(stream))) {
+      return port::Status(port::error::INTERNAL, "Failed to start timer");
+    }
+  }
+#endif
+
 
   // Report an error if we might be hitting a cuDNN bug that produces incorrect
   // results. See nvbugs/2072856
@@ -3283,6 +3314,16 @@ port::Status CudnnSupport::DoConvolveBackwardFilterImpl(
     output_profile_result->set_elapsed_time_in_ms(
         timer->GetElapsedMilliseconds());
   }
+#ifdef STOPWATCH
+  else {
+    if (!timer->Stop(AsCUDAStream(stream))) {
+      return port::Status(port::error::INTERNAL, "Failed to stop timer");
+    }
+    fprintf (stderr, " + cudnnConvolutionBackwardFilter: %6.0f us, in: %s, flt:%s, out:%s\n",
+           timer->GetElapsedMilliseconds() * 1000, input_descriptor.ToShortString().c_str(),
+           filter_descriptor.ToShortString().c_str(), output_descriptor.ToShortString().c_str());
+  }
+#endif
 
   return port::Status::OK();
 }

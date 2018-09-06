@@ -116,10 +116,19 @@ struct LaunchGeneric {
           input.shaped<T, 2>({input.dim_size(0), k}),
           filter.shaped<T, 2>({k, filter.dim_size(3)}), dim_pair);
     } else {
+#ifdef STOPWATCH
+      int64 start_time,end_time;
+      start_time = Env::Default()->NowMicros();
+#endif
       functor::SpatialConvolution<Device, T>()(
           ctx->eigen_device<Device>(), output->tensor<T, 4>(),
           input.tensor<T, 4>(), filter.tensor<T, 4>(), row_stride, col_stride,
           row_dilation, col_dilation, BrainPadding2EigenPadding(padding));
+
+#ifdef STOPWATCH
+      end_time = Env::Default()->NowMicros();
+      fprintf (stderr, "SpatialConvolution: %lld\n", end_time-start_time);
+#endif
     }
   }
 };

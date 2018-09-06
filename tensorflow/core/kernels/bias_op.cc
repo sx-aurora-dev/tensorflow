@@ -580,8 +580,20 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
 
     // Choose the best algorithm based on autotune results.
     if (algo_config.get_mode() == BiasAddGradGPUMode::kReduction) {
+#ifdef STOPWATCH
+      perftools::gputools::Timer timer(stream->parent());
+      stream->InitTimer(&timer);
+      stream->ThenStartTimer(&timer);
+#endif
+
       ComputeWithReduceSum(context, output_backprop, batch, width, height,
                            channel, output);
+#ifdef STOPWATCH
+      stream->ThenStopTimer(&timer);
+      uint64 elapsed_microseconds = timer.Microseconds();
+      fprintf (stderr, " + %s : %lld us, b%d w%d h%d c%d\n",
+                 "ComputeWithReduceSum", elapsed_microseconds, batch, width, height, channel);
+#endif
     } else {
       // Default to the customized kernel.
       ComputeWithCustomKernel(context, output_backprop, batch, width, height,
