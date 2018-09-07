@@ -3102,6 +3102,17 @@ port::Status CudnnSupport::DoConvolveBackwardDataImpl(
       return port::Status(port::error::INTERNAL, "Failed to start timer");
     }
   }
+#ifdef STOPWATCH
+  else {
+    timer.reset(new CUDATimer(parent_));  // NOLINT
+    // The start and stop of the timer should be as close to the Cudnn call as
+    // possible. It is still possible for other threads to issue workload on
+    // to this stream. So it could take multiple profiling measurements.
+    if (!timer->Init() || !timer->Start(AsCUDAStream(stream))) {
+      return port::Status(port::error::INTERNAL, "Failed to start timer");
+    }
+  }
+#endif
 
   // Cudnn 7.1.4 has a bug if the workspace of the following convolution is not
   // zero-initialized.
@@ -3141,6 +3152,18 @@ port::Status CudnnSupport::DoConvolveBackwardDataImpl(
     output_profile_result->set_elapsed_time_in_ms(
         timer->GetElapsedMilliseconds());
   }
+#ifdef STOPWATCH
+  else {
+    if (!timer->Stop(AsCUDAStream(stream))) {
+      return port::Status(port::error::INTERNAL, "Failed to stop timer");
+    }
+
+    fprintf (stderr, " + cudnnConvolutionBackwardData: %6.0f us, in: %s, flt:%s, out:%s\n",
+           timer->GetElapsedMilliseconds() * 1000, input_descriptor.ToShortString().c_str(),
+           filter_descriptor.ToShortString().c_str(), output_descriptor.ToShortString().c_str());
+  }
+#endif
+
 
   return port::Status::OK();
 }
