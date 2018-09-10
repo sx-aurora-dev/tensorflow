@@ -78,8 +78,18 @@ class DenseUpdateOp : public OpKernel {
         errors::InvalidArgument("Parameters and update must be the same size"));
 
     functor::DenseUpdate<Device, T, OP> update_functor;
+#ifdef STOPWATCH
+  int64 start,end;
+  start = Env::Default()->NowMicros();
+#endif
+
     update_functor(context->template eigen_device<Device>(), Tparams.flat<T>(),
                    Tupdate.flat<T>());
+#ifdef STOPWATCH
+  end = Env::Default()->NowMicros();
+  fprintf (stderr, " + %s : %lld us\n", "DenseUpdateOp", end - start);
+#endif
+
   }
 
   bool use_exclusive_lock_;

@@ -2108,6 +2108,14 @@ bool CUDABlas::DoBlasGemmWithProfilingImpl(
       return false;
     }
   }
+#ifdef STOPWATCH
+  else {
+    timer.reset(new CUDATimer(parent_));
+    if (!timer->Init() || !timer->Start(AsCUDAStream(stream))) {
+      return false;
+    }
+  }
+#endif
 
   // Call blasGemm
   bool result = DoBlasGemm(stream, transa, transb, m, n, k, alpha, a, lda, b,
@@ -2119,10 +2127,22 @@ bool CUDABlas::DoBlasGemmWithProfilingImpl(
     if (!timer->Stop(AsCUDAStream(stream))) {
       return false;
     }
+#ifdef STOPWATCH
+    if (output_profile_result != nullptr) {
+        output_profile_result->set_is_valid(true);
+        output_profile_result->set_algorithm(blas::kDefaultBlasGemv);
+        output_profile_result->set_elapsed_time_in_ms(
+            timer->GetElapsedMilliseconds());
+    } else {
+        fprintf (stderr, " + BlasGemm: %6.0f us\n",
+              timer->GetElapsedMilliseconds() * 1000);
+    }
+#else
     output_profile_result->set_is_valid(true);
     output_profile_result->set_algorithm(blas::kDefaultBlasGemm);
     output_profile_result->set_elapsed_time_in_ms(
         timer->GetElapsedMilliseconds());
+#endif
   }
   return result;
 }

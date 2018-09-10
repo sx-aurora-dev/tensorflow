@@ -167,11 +167,20 @@ struct LaunchBlasGemv {
     const auto blas_trans = trans ? se::blas::Transpose::kTranspose
                                   : se::blas::Transpose::kNoTranspose;
     if (output_profile == nullptr) {
+#ifdef STOPWATCH
+      bool blas_launch_status =
+          stream
+              ->ThenBlasGemvWithProfiling(blas_trans, m, n, static_cast<T>(1.0),
+                                          a, m, b, 1, static_cast<T>(0.0), c, 1,
+                                          output_profile)
+              .ok();
+#else
       bool blas_launch_status =
           stream
               ->ThenBlasGemv(blas_trans, m, n, static_cast<T>(1.0), a, m, b, 1,
                              static_cast<T>(0.0), c, 1)
               .ok();
+#endif
       if (!blas_launch_status) {
         ctx->SetStatus(
             errors::Internal("Blas GEMV launch failed:  m=", m, ", n=", n));
@@ -406,12 +415,21 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
                                    a_ptr, b_ptr, &c_ptr, nullptr);
       } else {
         // Use C' = B' x A' (' stands for transpose)
+#ifdef STOPWATCH
+        bool blas_launch_status =
+            stream
+                ->ThenBlasGemmWithProfiling(blas_transpose_b, blas_transpose_a, n, m, k,
+                               1.0f, b_ptr, transpose_b ? k : n, a_ptr,
+                               transpose_a ? m : k, 0.0f, &c_ptr, n, nullptr)
+                .ok();
+#else
         bool blas_launch_status =
             stream
                 ->ThenBlasGemm(blas_transpose_b, blas_transpose_a, n, m, k,
                                1.0f, b_ptr, transpose_b ? k : n, a_ptr,
                                transpose_a ? m : k, 0.0f, &c_ptr, n)
                 .ok();
+#endif
         if (!blas_launch_status) {
           ctx->SetStatus(errors::Internal(
               "Blas GEMM launch failed : a.shape=(", a.dim_size(0), ", ",
