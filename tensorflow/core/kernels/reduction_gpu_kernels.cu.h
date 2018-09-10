@@ -822,6 +822,10 @@ void ReduceImpl(OpKernelContext* ctx, OUT_T out, IN_T in, int in_rank,
                 const ReductionAxes& reduction_axes, Op op) {
   T init = reduction_op_helper::IdentityValue<T, Op>()();
   const cudaStream_t& cu_stream = GetCudaStream(ctx);
+#ifdef STOPWATCH
+  int64 start,end;
+  start = Env::Default()->NowMicros();
+#endif
   if (out_rank == 0) {
     const int in_size = in_dim0 * in_dim1 * in_dim2;
     LaunchScalarReduction(ctx, out, in, in_size, op, init, cu_stream);
@@ -846,6 +850,11 @@ void ReduceImpl(OpKernelContext* ctx, OUT_T out, IN_T in, int in_rank,
     if (out_rank == 2) ss << " " << reduction_axes[1];
     LOG(FATAL) << ss.str();
   }
+#ifdef STOPWATCH
+  cudaThreadSynchronize();
+  end = Env::Default()->NowMicros();
+  fprintf (stderr, " + %s : %lld us, indim0%d, in_dim1%d, in_dim2%d\n", "ReduceImpl", end - start, in_dim0, in_dim1, in_dim2);
+#endif
 }
 
 template <typename Reducer>
