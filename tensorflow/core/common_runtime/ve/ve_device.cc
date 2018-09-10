@@ -296,7 +296,6 @@ class VEDeviceContextImpl : public VEDeviceContext {
 
   private:
     VEO* veo_;
-    mutex lock_;
 };
 
 class VEDevice : public LocalDevice {
@@ -487,7 +486,6 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
 Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len)
 {
   VLOG(2) << "VEDeviceContextImpl::Compute: name=" << name;
-  mutex_lock guard(lock_);
   return veo_->compute(name, arg, len);
 }
 
