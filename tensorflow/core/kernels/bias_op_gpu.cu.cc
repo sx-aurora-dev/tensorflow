@@ -84,6 +84,11 @@ void BiasGPU<T>::compute(const GPUDevice& d, const T* input, const T* bias,
     return;
   }
   CudaLaunchConfig config = GetCudaLaunchConfig(total_count, d);
+#ifdef STOPWATCH
+  int64 start,end;
+  start = Env::Default()->NowMicros();
+#endif
+
   if (data_format == FORMAT_NHWC) {
     BiasNHWCKernel<T>
         <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(
@@ -94,6 +99,11 @@ void BiasGPU<T>::compute(const GPUDevice& d, const T* input, const T* bias,
             config.virtual_thread_count, input, bias, output, bias_size,
             image_size);
   }
+#ifdef STOPWATCH
+  cudaThreadSynchronize();
+  end = Env::Default()->NowMicros();
+  fprintf (stderr, " + %s : %lld us, b%d w%d h%d c%d\n", "BiasGPU<T>::compute", end - start, batch, height, width, channel);
+#endif
 }
 
 // A naive implementation that is functional on all cases.
