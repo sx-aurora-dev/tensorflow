@@ -179,6 +179,10 @@ class SoftmaxOpGPU : public OpKernel {
           context, const_cast<acc_type*>(sum_probs.flat<acc_type>().data()),
           input_itr, rows, cols);
 
+#ifdef STOPWATCH
+  int64 start,end;
+  start = Env::Default()->NowMicros();
+#endif
       GenerateNormalizedProb<T, acc_type>
           <<<numBlocks, numThreads, 0, cu_stream>>>(
               reinterpret_cast<const T*>(logits_in_.flat<T>().data()),
@@ -186,6 +190,11 @@ class SoftmaxOpGPU : public OpKernel {
                   sum_probs.flat<acc_type>().data()),
               reinterpret_cast<const T*>(max_logits.flat<T>().data()),
               const_cast<T*>(softmax_out->flat<T>().data()), rows, cols, log_);
+#ifdef STOPWATCH
+  cudaThreadSynchronize();
+  end = Env::Default()->NowMicros();
+  fprintf (stderr, " + %s : %lld us, rows%d, cols%d\n", "SoftmaxOpGPU", end - start, rows, cols);
+#endif
     }
   }
 
