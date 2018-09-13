@@ -630,13 +630,12 @@ class BiasOp<VEDevice, T> : public BinaryOp<T> {
  public:
   explicit BiasOp(OpKernelConstruction* context) : BinaryOp<T>(context) {
     string data_format;
-    OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
-    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
-                errors::InvalidArgument("Invalid data format"));
-    OP_REQUIRES(
-        context, data_format_ == FORMAT_NCHW,
-        errors::InvalidArgument("BiasOp only supports NCHW on device type ",
-                                DeviceTypeString(context->device_type())));
+    if (context->GetAttr("data_format", &data_format).ok()) {
+      OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                  errors::InvalidArgument("Invalid data format"));
+    } else {
+      data_format_ = FORMAT_NCHW;
+    }
   }
 
   void Compute(OpKernelContext* context) override {
@@ -699,13 +698,12 @@ class BiasGradOp<VEDevice, T> : public OpKernel {
   public:
     explicit BiasGradOp(OpKernelConstruction* context) : OpKernel(context) {
       string data_format;
-      OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
-      OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
-                  errors::InvalidArgument("Invalid data format"));
-      OP_REQUIRES(
-          context, data_format_ == FORMAT_NCHW,
-          errors::InvalidArgument("BiasGradOp only supports NCHW on device type ",
-                                  DeviceTypeString(context->device_type())));
+      if (context->GetAttr("data_format", &data_format).ok()) {
+        OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                    errors::InvalidArgument("Invalid data format"));
+      } else {
+        data_format_ = FORMAT_NCHW;
+      }
     }
 
     void Compute(OpKernelContext* context) override {
