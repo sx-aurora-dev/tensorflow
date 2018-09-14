@@ -60,4 +60,8 @@ you can see tensorflow package in /tmp/tensorflow_pkg.
 % make
 % cd ../../samples
 % mkdir libvetfkernel
-
+% (cd libvetfkernel && cmake3 -DVEDNN_PATH=../../vednn/src ../../libvetfkernel)
+% (cd libvetfkernel && make)
+% ./mk_veorun.sh
+% ./run.sh keras.sample.py
+~~
