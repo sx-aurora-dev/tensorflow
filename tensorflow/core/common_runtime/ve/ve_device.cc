@@ -185,7 +185,7 @@ Status load_kernel_syms(struct veo_proc_handle* proc,
 
 Status VEO::init(int nodeid) {
   VLOG(2) << "VEO::init: pid=" << getpid() << " tid=" << syscall(SYS_gettid);
-  const char* filename = "libvetfkernel.so";
+  const char* filename = NULL ;
 
   if (const char* tmp = getenv("VEO_KERNEL")) {
     filename = tmp;
@@ -202,10 +202,13 @@ Status VEO::init(int nodeid) {
 
   VLOG(2) << "VEO::init: pid=" << proc_pid_ << " tid=" << syscall(SYS_gettid);
 
-  uint64_t lib_id = veo_load_library(proc_, filename);
-  VLOG(2) << "VEO::init: lib_id=" << lib_id;
-  if (!lib_id)
-    return errors::Internal("Failed to load library: ", filename);
+  uint64_t lib_id = NULL ;
+  if( filename != NULL ) {
+    veo_load_library(proc_, filename);
+    VLOG(2) << "VEO::init: lib_id=" << lib_id;
+    if (!lib_id)
+      return errors::Internal("Failed to load library: ", filename);
+  }
 
   ctx_ = veo_context_open(proc_);
   VLOG(2) << "VEO::init: ctx_=" << ctx_;
