@@ -25,6 +25,11 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/errors.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -32,6 +37,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 #define REGISTER_RELU_KERNELS(type)                                   \
   REGISTER_KERNEL_BUILDER(                                            \
@@ -190,5 +198,72 @@ TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU_KERNELS);
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL_KERNELS);
 #undef REGISTER_SYCL_KERNELS
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class ReluOp<VEDevice, T> : public UnaryElementWiseOp<T, ReluOp<VEDevice, T>> {
+  public:
+    using UnaryElementWiseOp<T, ReluOp<VEDevice, T>>::UnaryElementWiseOp;
+
+    void Operate(OpKernelContext* context, const Tensor& input, Tensor* output) {
+      struct {
+        int dtype;
+        uint64_t in;
+        uint64_t out;
+        uint64_t num_elems;
+      } args;
+
+      args.dtype = DataTypeToEnum<T>::v();
+      args.in = (uint64_t)DMAHelper::base(&input);
+      args.out = (uint64_t)DMAHelper::base(output);
+      args.num_elems = input.NumElements();
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("Relu", (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+    }
+};
+
+template <typename T>
+class ReluGradOp<VEDevice, T> : public BinaryElementWiseOp<T, ReluGradOp<VEDevice, T>> {
+  public:
+    using BinaryElementWiseOp<T, ReluGradOp<VEDevice, T>>::BinaryElementWiseOp;
+
+    template <int NDIMS>
+      void Operate(OpKernelContext* context, const Tensor& g, const Tensor& a,
+                   Tensor* output) {
+      struct {
+        int dtype;
+        uint64_t g;
+        uint64_t a;
+        uint64_t output;
+        uint64_t num_elems;
+      } args;
+
+      args.dtype = DataTypeToEnum<T>::v();
+      args.g = (uint64_t)DMAHelper::base(&g);
+      args.a = (uint64_t)DMAHelper::base(&a);
+      args.output = (uint64_t)DMAHelper::base(output);
+      args.num_elems = g.NumElements();
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("ReluGrad", (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+      }
+};
+
+#define REGISTER_VE_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("Relu").Device(DEVICE_VE).TypeConstraint<type>("T"),      \
+      ReluOp<VEDevice, type>);                                       \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("ReluGrad").Device(DEVICE_VE).TypeConstraint<type>("T"),  \
+      ReluGradOp<VEDevice, type>);
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+#endif
 
 }  // namespace tensorflow
