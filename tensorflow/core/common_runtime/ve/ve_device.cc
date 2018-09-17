@@ -204,7 +204,7 @@ Status VEO::init(int nodeid) {
 
   uint64_t lib_id = NULL ;
   if( filename != NULL ) {
-    veo_load_library(proc_, filename);
+    lib_id = veo_load_library(proc_, filename);
     VLOG(2) << "VEO::init: lib_id=" << lib_id;
     if (!lib_id)
       return errors::Internal("Failed to load library: ", filename);
