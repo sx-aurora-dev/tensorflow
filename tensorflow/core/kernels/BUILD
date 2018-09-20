@@ -2882,7 +2882,10 @@ tf_kernel_library(
 tf_kernel_library(
     name = "cwise_op",
     prefix = "cwise_op",
-    deps = MATH_DEPS + ["//tensorflow/core:bitwise_ops_op_lib"],
+    deps = MATH_DEPS + [
+      "//tensorflow/core:bitwise_ops_op_lib",
+      "//tensorflow/core:ve_runtime",
+    ],
 )
 
 tf_kernel_library(

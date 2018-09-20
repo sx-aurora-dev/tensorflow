@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 REGISTER6(BinaryOp, CPU, "Mul", functor::mul, float, Eigen::half, double, uint8,
@@ -51,4 +56,81 @@ REGISTER_KERNEL_BUILDER(Name("Mul")
                             .TypeConstraint<int32>("T"),
                         BinaryOp<CPUDevice, functor::mul<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VEMulOp : public BinaryOpShared {
+  public:
+    explicit VEMulOp(OpKernelConstruction* context) 
+      : BinaryOpShared(context, DataTypeToEnum<T>::v(), DataTypeToEnum<T>::v()) {}
+    void Compute(OpKernelContext* context) override {
+      BinaryOpState state(context);
+      if (!context->status().ok()) return;
+
+      VLOG(2) << "VEMulOp:"
+        << " in0.shape=" << state.in0.shape().DebugString()
+        << " in1.shape=" << state.in1.shape().DebugString()
+        << " out.shape=" << state.out->shape().DebugString();
+
+      struct {
+        int dtype;
+        uint64_t in0;
+        uint64_t in1;
+        uint64_t out;
+        int32_t dims_in0;
+        int32_t dims_in1;
+        int32_t dims_out;
+        int64_t nelems_in0;
+        int64_t nelems_in1;
+        int64_t nelems_out;
+        int64_t dim_size_in0[8];
+        int64_t dim_size_in1[8];
+        int64_t dim_size_out[8];
+      } args;
+
+      args.dtype = state.in0.dtype();
+      args.in0 = (uint64_t)DMAHelper::base(&state.in0);
+      args.in1 = (uint64_t)DMAHelper::base(&state.in1);
+      args.out = (uint64_t)DMAHelper::base(state.out);
+      args.dims_in0 = state.in0.dims();
+      args.dims_in1 = state.in1.dims();
+      args.dims_out = state.out->dims();
+      args.nelems_in0 = state.in0.NumElements();
+      args.nelems_in1 = state.in1.NumElements();
+      args.nelems_out = state.out->NumElements();
+
+      if (args.dims_in0 > 8 || args.dims_in1 > 8 || args.dims_out > 8) {
+        context->SetStatus(errors::Unimplemented(
+                "dims_in0 > 8 || dims_in1 > 8 || dims_out > 8"
+                " is not supported by VEMulOp"));
+        return;
+      }
+
+      for (int i = 0; i < args.dims_in0; ++i)
+        args.dim_size_in0[i] = state.in0.dim_size(i);
+      for (int i = 0; i < args.dims_in1; ++i)
+        args.dim_size_in1[i] = state.in1.dim_size(i);
+      for (int i = 0; i < args.dims_out; ++i)
+        args.dim_size_out[i] = state.out->dim_size(i);
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("Mul", (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+    }
+};
+
+REGISTER_KERNEL_BUILDER(Name("Mul")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<float>("T"),
+                        VEMulOp<float>);
+
+REGISTER_KERNEL_BUILDER(Name("Mul")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::mul<int32>>);
+#endif
 }  // namespace tensorflow
