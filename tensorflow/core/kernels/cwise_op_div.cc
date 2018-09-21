@@ -55,4 +55,26 @@ REGISTER_KERNEL_BUILDER(Name("Div")
                             .TypeConstraint<int32>("T"),
                         BinaryOp<CPUDevice, functor::safe_div<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VEDivOp : public VEBinaryOp<T> {
+ public:
+    explicit VEDivOp(OpKernelConstruction* context) 
+      : VEBinaryOp<T>(context, "Div") {}
+};
+
+REGISTER_KERNEL_BUILDER(Name("RealDiv")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<float>("T"),
+                        VEDivOp<float>);
+
+REGISTER_KERNEL_BUILDER(Name("Div")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::safe_div<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow
