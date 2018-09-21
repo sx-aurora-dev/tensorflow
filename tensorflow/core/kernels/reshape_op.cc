@@ -86,6 +86,46 @@ REGISTER_KERNEL_BUILDER(Name("Reshape")
 #undef REGISTER_SYCL_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                              \
+  REGISTER_KERNEL_BUILDER(Name("Reshape")                       \
+                              .Device(DEVICE_VE)              \
+                              .HostMemory("shape")              \
+                              .TypeConstraint<type>("T")        \
+                              .TypeConstraint<int32>("Tshape"), \
+                          ReshapeOp);                           \
+  REGISTER_KERNEL_BUILDER(Name("Reshape")                       \
+                              .Device(DEVICE_VE)              \
+                              .HostMemory("shape")              \
+                              .TypeConstraint<type>("T")        \
+                              .TypeConstraint<int64>("Tshape"), \
+                          ReshapeOp);
+REGISTER_VE_KERNEL(float)
+REGISTER_VE_KERNEL(double)
+REGISTER_VE_KERNEL(uint8)
+REGISTER_VE_KERNEL(int8)
+REGISTER_VE_KERNEL(int64)
+REGISTER_VE_KERNEL(uint16)
+
+REGISTER_KERNEL_BUILDER(Name("Reshape")
+                            .Device(DEVICE_VE)
+                            .HostMemory("tensor")
+                            .HostMemory("shape")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("Tshape"),
+                        ReshapeOp);
+REGISTER_KERNEL_BUILDER(Name("Reshape")
+                            .Device(DEVICE_VE)
+                            .HostMemory("tensor")
+                            .HostMemory("shape")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int64>("Tshape"),
+                        ReshapeOp);
+#undef REGISTER_VE_KERNEL
+#endif  // TENSORFLOW_USE_VE
+
 #if GOOGLE_CUDA
 // A special GPU kernel for int32.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel
