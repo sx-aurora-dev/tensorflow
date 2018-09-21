@@ -66,4 +66,35 @@ REGISTER_KERNEL_BUILDER(Name("AddV2")
                             .TypeConstraint<int32>("T"),
                         BinaryOp<CPUDevice, functor::add<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#if TENSORFLOW_USE_VE
+template <typename T>
+class VEAddOp : public VEBinaryOp<T> {
+  public:
+    explicit VEAddOp(OpKernelConstruction* context)
+      : VEBinaryOp<T>(context, "Add") {}
+};
+
+REGISTER_KERNEL_BUILDER(Name("Add")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<float>("T"),
+                        VEAddOp<float>);
+
+//TF_CALL_VE_NUMBER_TYPES(REGISTER_KERNEL);
+
+REGISTER_KERNEL_BUILDER(Name("Add")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::add<int32>>);
+REGISTER_KERNEL_BUILDER(Name("AddV2")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::add<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow
