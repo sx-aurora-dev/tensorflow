@@ -24,4 +24,18 @@ REGISTER3(UnaryOp, GPU, "Floor", functor::floor, float, Eigen::half, double);
 #ifdef TENSORFLOW_USE_SYCL
 REGISTER2(UnaryOp, SYCL, "Floor", functor::floor, float, double);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VEFloorOp : public VEUnaryOp<T> {
+  public:
+    explicit VEFloorOp(OpKernelConstruction* ctx) 
+      : VEUnaryOp<T>(ctx, "Floor") {}
+};
+
+REGISTER_KERNEL_BUILDER(Name("Floor")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<float>("T"),
+                        VEFloorOp<float>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

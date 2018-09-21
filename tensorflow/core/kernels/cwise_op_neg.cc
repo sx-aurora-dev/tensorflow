@@ -35,47 +35,6 @@ REGISTER_KERNEL_BUILDER(Name("Neg")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-template <typename T>
-class VEUnaryOp : public OpKernel {
-  public:
-    explicit VEUnaryOp(OpKernelConstruction* ctx, std::string name) 
-      : OpKernel(ctx), name_(name) {}
-
-    void Compute(OpKernelContext* ctx) override {
-      const Tensor& inp = ctx->input(0);
-      Tensor* out = nullptr;
-      OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
-              {0}, 0, inp.shape(), &out));
-
-      struct _Tensor {
-        int dtype;
-        int data_format;
-        uint64_t addr;
-        int32_t dims;
-        int64_t nelems;
-        int64_t dim_size[8];
-      };
-
-      struct {
-        _Tensor in;
-        _Tensor out;
-      } args;
-
-      args.in.dtype = DataTypeToEnum<T>::v();
-      args.in.addr = (uint64_t)DMAHelper::base(&inp);
-      args.in.nelems = inp.NumElements();
-      args.out.addr = (uint64_t)DMAHelper::base(out);
-
-      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args));
-      if (!s.ok())
-        ctx->SetStatus(s);
-    }
-
-  private:
-    std::string name_;
-};
-
 template<typename T>
 class VENegOp : public VEUnaryOp<T> {
   public:
