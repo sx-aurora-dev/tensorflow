@@ -27,6 +27,10 @@ REGISTER3(UnaryOp, GPU, "Sqrt", functor::sqrt, float, Eigen::half, double);
 REGISTER2(UnaryOp, SYCL, "Sqrt", functor::sqrt, float, double);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Sqrt, float);
+#endif
+
 REGISTER6(SimpleBinaryOp, CPU, "SqrtGrad", functor::sqrt_grad, float,
           Eigen::half, bfloat16, double, complex64, complex128);
 #if GOOGLE_CUDA

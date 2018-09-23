@@ -35,19 +35,7 @@ REGISTER_KERNEL_BUILDER(Name("Neg")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-template<typename T>
-class VENegOp : public VEUnaryOp<T> {
-  public:
-    explicit VENegOp(OpKernelConstruction* ctx) 
-      : VEUnaryOp<T>(ctx, "Neg") {}
-};
-
-REGISTER_KERNEL_BUILDER(Name("Neg")
-                        .Device(DEVICE_VE)
-                        .TypeConstraint<float>("T"),
-                        VENegOp<float>);
-
-//REGISTER3(VEUnaryOp, VE, "Neg", functor::neg, float, double, int64);
+REGISTER_VE_UNARY_OP(Neg, float);
 REGISTER_KERNEL_BUILDER(Name("Neg")
                             .Device(DEVICE_VE)
                             .HostMemory("x")

@@ -714,6 +714,37 @@ class VEBinaryOp : public BinaryOpShared {
   private:
     std::string name_;
 };
+
+#define DEFINE_VE_UNRARY_OP(Name) \
+template<typename T> \
+class VE##Name##Op : public VEUnaryOp<T> { \
+  public: \
+    explicit VE##Name##Op(OpKernelConstruction* ctx)  \
+      : VEUnaryOp<T>(ctx, #Name) {} \
+};
+
+#define REGISTER_VE_UNARY_OP(NAME, T) \
+  DEFINE_VE_UNRARY_OP(NAME); \
+  REGISTER_KERNEL_BUILDER(Name(#NAME) \
+                          .Device(DEVICE_VE) \
+                          .TypeConstraint<T>("T"), \
+                          VE##NAME##Op<T>);
+
+#define DEFINE_VE_BIANRY_OP(Name) \
+template <typename T> \
+class VE##Name##Op : public VEBinaryOp<T> { \
+  public: \
+    explicit VE##Name##Op(OpKernelConstruction* context)  \
+      : VEBinaryOp<T>(context, #Name) {} \
+}
+
+#define REGISTER_VE_BINARY_OP(NAME, T) \
+DEFINE_VE_BIANRY_OP(NAME); \
+REGISTER_KERNEL_BUILDER(Name(#NAME) \
+                        .Device(DEVICE_VE) \
+                        .TypeConstraint<T>("T"), \
+                        VE##NAME##Op<T>);
+
 #endif // TENSORFLOW_USE_VE
 
 }  // end namespace tensorflow
