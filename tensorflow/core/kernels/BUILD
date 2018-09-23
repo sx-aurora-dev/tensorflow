@@ -53,6 +53,7 @@ load(
     "if_mkl",
 )
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
 
 config_setting(
     # Add "--define tensorflow_xsmm=1" to your build command to use libxsmm for
@@ -2934,6 +2935,8 @@ tf_kernel_library(
         "@mkl_dnn",
     ]) + if_cuda([
         "//tensorflow/core/platform/default/build_config:cublas_plugin",
+    ]) + if_ve([
+        "//tensorflow/core:ve_runtime",
     ]),
 )
 
