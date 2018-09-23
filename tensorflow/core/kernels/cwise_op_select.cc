@@ -187,6 +187,49 @@ REGISTER_SELECT_SYCL(int64);
 #undef REGISTER_SELECT_SYCL
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+class VESelectOp : public VEOpKernel {
+  public:
+    VESelectOp(OpKernelConstruction* context) : VEOpKernel(context, "Select") {}
+
+    void Compute(OpKernelContext* ctx) override {
+      Args args;
+      const Tensor* cond;
+      const Tensor* then;
+      const Tensor* else_;
+      OP_REQUIRES_OK(ctx, ctx->input("condition", &cond));
+      OP_REQUIRES_OK(ctx, ctx->input("t", &then));
+      OP_REQUIRES_OK(ctx, ctx->input("e", &else_));
+
+      if (!ctx->ValidateInputsAreSameShape(this)) return;
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+              {"t", "e"}, "output", then->shape(), &output));
+      if (output->NumElements() > 0) {
+        args.ninputs = 3;
+        args.noutputs = 1;
+        setInputTensor(args, 0, *cond);
+        setInputTensor(args, 1, *then);
+        setInputTensor(args, 2, *else_);
+        setOutputTensor(args, 0, *output);
+
+        Call(ctx, args);
+      }
+    }
+};
+
+#define REGISTER_SELECT_VE(type)                                  \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("Select").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      VESelectOp);
+
+REGISTER_SELECT_VE(float);
+REGISTER_SELECT_VE(double);
+REGISTER_SELECT_VE(int32);
+REGISTER_SELECT_VE(int64);
+#undef REGISTER_SELECT_VE
+#endif  // TENSORFLOW_USE_VE
+
 namespace functor {
 
 // CPU Specializations of Select functors.

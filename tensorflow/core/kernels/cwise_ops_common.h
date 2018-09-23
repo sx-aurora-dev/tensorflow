@@ -647,6 +647,61 @@ class VEUnaryOp : public OpKernel {
     std::string name_;
 };
 
+class VEOpKernel : public OpKernel {
+  protected:
+    static const int MAX_DIM_SIZE = 8;
+    static const int MAX_INPUTS = 4;
+    static const int MAX_OUTPUTS = 4;
+
+    struct _Tensor {
+      int dtype;
+      uint64_t addr;
+      int32_t dims;
+      int64_t nelems;
+      int64_t dim_size[MAX_DIM_SIZE];
+
+      void init(const Tensor& t) {
+        dtype = t.dtype();
+        addr = (uint64_t)DMAHelper::base(&t);
+        dims = t.dims();
+        nelems = t.NumElements();
+        for (int i = 0; i < dims; ++i) {
+          dim_size[i] = t.dim_size(i);
+        }
+      }
+    };
+
+    struct Args {
+      int ninputs;
+      int noutputs;
+      _Tensor input[MAX_INPUTS];
+      _Tensor output[MAX_OUTPUTS];
+    };
+
+  public:
+    explicit VEOpKernel(OpKernelConstruction* context, std::string name) 
+      : OpKernel(context), name_(name) {}
+
+    void setInputTensor(Args& args, int i, const Tensor& t) {
+      args.input[i].init(t);
+    }
+
+    void setOutputTensor(Args& args, int i, const Tensor& t) {
+      args.output[i].init(t);
+    }
+
+    void Call(OpKernelContext* context, Args& args) {
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+    }
+
+  private:
+    std::string name_;
+};
+
+
 template <typename T>
 class VEBinaryOp : public BinaryOpShared {
   public:
@@ -663,46 +718,40 @@ class VEBinaryOp : public BinaryOpShared {
         << " in1.shape=" << state.in1.shape().DebugString()
         << " out.shape=" << state.out->shape().DebugString();
 
-      struct {
-        int dtype;
-        uint64_t in0;
-        uint64_t in1;
-        uint64_t out;
-        int32_t dims_in0;
-        int32_t dims_in1;
-        int32_t dims_out;
-        int64_t nelems_in0;
-        int64_t nelems_in1;
-        int64_t nelems_out;
-        int64_t dim_size_in0[8];
-        int64_t dim_size_in1[8];
-        int64_t dim_size_out[8];
-      } args;
-
-      args.dtype = state.in0.dtype();
-      args.in0 = (uint64_t)DMAHelper::base(&state.in0);
-      args.in1 = (uint64_t)DMAHelper::base(&state.in1);
-      args.out = (uint64_t)DMAHelper::base(state.out);
-      args.dims_in0 = state.in0.dims();
-      args.dims_in1 = state.in1.dims();
-      args.dims_out = state.out->dims();
-      args.nelems_in0 = state.in0.NumElements();
-      args.nelems_in1 = state.in1.NumElements();
-      args.nelems_out = state.out->NumElements();
-
-      if (args.dims_in0 > 8 || args.dims_in1 > 8 || args.dims_out > 8) {
+      if (state.in0.dims() > 8 || state.in1.dims() > 8 || state.out->dims() > 8) {
         context->SetStatus(errors::Unimplemented(
-                "dims_in0 > 8 || dims_in1 > 8 || dims_out > 8"
+                "in0.dims > 8 || in1.dims > 8 || out.dims > 8"
                 " is not supported by VEMulOp"));
         return;
       }
 
-      for (int i = 0; i < args.dims_in0; ++i)
-        args.dim_size_in0[i] = state.in0.dim_size(i);
-      for (int i = 0; i < args.dims_in1; ++i)
-        args.dim_size_in1[i] = state.in1.dim_size(i);
-      for (int i = 0; i < args.dims_out; ++i)
-        args.dim_size_out[i] = state.out->dim_size(i);
+      struct _Tensor {
+        int dtype;
+        uint64_t addr;
+        int32_t dims;
+        int64_t nelems;
+        int64_t dim_size[8];
+
+        _Tensor(const Tensor& t) :
+          dtype(t.dtype()),
+          addr((uint64_t)DMAHelper::base(&t)),
+          dims(t.dims()),
+          nelems(t.NumElements()) {
+            for (int i = 0; i < dims; ++i) {
+              dim_size[i] = t.dim_size(i);
+            }
+        }
+      };
+
+      struct Args {
+        _Tensor in0;
+        _Tensor in1;
+        _Tensor out;
+
+        Args(const Tensor& in0_, const Tensor in1_, Tensor& out_) :
+          in0(in0_), in1(in1_), out(out_) {}
+      } args(state.in0, state.in1, *state.out);
+
 
       VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
       Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args));
@@ -744,7 +793,6 @@ REGISTER_KERNEL_BUILDER(Name(#NAME) \
                         .Device(DEVICE_VE) \
                         .TypeConstraint<T>("T"), \
                         VE##NAME##Op<T>);
-
 #endif // TENSORFLOW_USE_VE
 
 }  // end namespace tensorflow

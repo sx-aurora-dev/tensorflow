@@ -48,4 +48,15 @@ REGISTER_KERNEL_BUILDER(Name("LessEqual")
                             .TypeConstraint<int32>("T"),
                         BinaryOp<CPUDevice, functor::less_equal<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(LessEqual, float);
+REGISTER_KERNEL_BUILDER(Name("LessEqual")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::less_equal<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

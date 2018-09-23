@@ -26,16 +26,6 @@ REGISTER2(UnaryOp, SYCL, "Floor", functor::floor, float, double);
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-template <typename T>
-class VEFloorOp : public VEUnaryOp<T> {
-  public:
-    explicit VEFloorOp(OpKernelConstruction* ctx) 
-      : VEUnaryOp<T>(ctx, "Floor") {}
-};
-
-REGISTER_KERNEL_BUILDER(Name("Floor")
-                        .Device(DEVICE_VE)
-                        .TypeConstraint<float>("T"),
-                        VEFloorOp<float>);
+REGISTER_VE_UNARY_OP(Floor, float);
 #endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow
