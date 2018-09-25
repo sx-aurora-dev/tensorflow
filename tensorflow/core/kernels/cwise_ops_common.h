@@ -606,7 +606,6 @@ struct ApproximateEqual<CPUDevice, T> {
 #endif  // defined(__ANDROID_TYPES_SLIM__)
 
 #ifdef TENSORFLOW_USE_VE
-template <typename T>
 class VEUnaryOp : public OpKernel {
   public:
     explicit VEUnaryOp(OpKernelConstruction* ctx, std::string name) 
@@ -632,7 +631,7 @@ class VEUnaryOp : public OpKernel {
         _Tensor out;
       } args;
 
-      args.in.dtype = DataTypeToEnum<T>::v();
+      args.in.dtype = inp.dtype();
       args.in.addr = (uint64_t)DMAHelper::base(&inp);
       args.in.nelems = inp.NumElements();
       args.out.addr = (uint64_t)DMAHelper::base(out);
@@ -702,11 +701,11 @@ class VEOpKernel : public OpKernel {
 };
 
 
-template <typename T>
+template <typename Tin, typename Tout>
 class VEBinaryOp : public BinaryOpShared {
   public:
     explicit VEBinaryOp(OpKernelConstruction* context, std::string name) 
-      : BinaryOpShared(context, DataTypeToEnum<T>::v(), DataTypeToEnum<T>::v()),
+      : BinaryOpShared(context, DataTypeToEnum<Tin>::v(), DataTypeToEnum<Tout>::v()),
         name_(name) {}
 
     void Compute(OpKernelContext* context) override {
@@ -765,11 +764,10 @@ class VEBinaryOp : public BinaryOpShared {
 };
 
 #define DEFINE_VE_UNRARY_OP(Name) \
-template<typename T> \
-class VE##Name##Op : public VEUnaryOp<T> { \
+class VE##Name##Op : public VEUnaryOp { \
   public: \
     explicit VE##Name##Op(OpKernelConstruction* ctx)  \
-      : VEUnaryOp<T>(ctx, #Name) {} \
+      : VEUnaryOp(ctx, #Name) {} \
 };
 
 #define REGISTER_VE_UNARY_OP(NAME, T) \
@@ -777,22 +775,22 @@ class VE##Name##Op : public VEUnaryOp<T> { \
   REGISTER_KERNEL_BUILDER(Name(#NAME) \
                           .Device(DEVICE_VE) \
                           .TypeConstraint<T>("T"), \
-                          VE##NAME##Op<T>);
+                          VE##NAME##Op);
 
 #define DEFINE_VE_BIANRY_OP(Name) \
-template <typename T> \
-class VE##Name##Op : public VEBinaryOp<T> { \
+template <typename Tin, typename Tout> \
+class VE##Name##Op : public VEBinaryOp<Tin, Tout> { \
   public: \
     explicit VE##Name##Op(OpKernelConstruction* context)  \
-      : VEBinaryOp<T>(context, #Name) {} \
+      : VEBinaryOp<Tin, Tout>(context, #Name) {} \
 }
 
-#define REGISTER_VE_BINARY_OP(NAME, T) \
+#define REGISTER_VE_BINARY_OP(NAME, Tin, Tout, T) \
 DEFINE_VE_BIANRY_OP(NAME); \
 REGISTER_KERNEL_BUILDER(Name(#NAME) \
                         .Device(DEVICE_VE) \
                         .TypeConstraint<T>("T"), \
-                        VE##NAME##Op<T>);
+                        VE##NAME##Op<Tin, Tout>);
 #endif // TENSORFLOW_USE_VE
 
 }  // end namespace tensorflow

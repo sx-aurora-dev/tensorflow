@@ -47,7 +47,7 @@ REGISTER_KERNEL_BUILDER(Name("Minimum")
 
 #ifdef TENSORFLOW_USE_VE
 
-REGISTER_VE_BINARY_OP(Minimum, float);
+REGISTER_VE_BINARY_OP(Minimum, float, float, float);
 
 
 REGISTER_KERNEL_BUILDER(Name("Minimum")

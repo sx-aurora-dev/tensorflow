@@ -58,19 +58,7 @@ REGISTER_KERNEL_BUILDER(Name("Mul")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-template <typename T>
-class VEMulOp : public VEBinaryOp<T> {
- public:
-    explicit VEMulOp(OpKernelConstruction* context) 
-      : VEBinaryOp<T>(context, "Mul") {}
-};
-
-
-REGISTER_KERNEL_BUILDER(Name("Mul")
-                        .Device(DEVICE_VE)
-                        .TypeConstraint<float>("T"),
-                        VEMulOp<float>);
-
+REGISTER_VE_BINARY_OP(Mul, float, float, float);
 REGISTER_KERNEL_BUILDER(Name("Mul")
                             .Device(DEVICE_VE)
                             .HostMemory("x")

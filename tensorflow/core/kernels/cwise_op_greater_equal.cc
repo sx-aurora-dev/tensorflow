@@ -48,7 +48,7 @@ REGISTER_KERNEL_BUILDER(Name("GreaterEqual")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-REGISTER_VE_BINARY_OP(GreaterEqual, float);
+REGISTER_VE_BINARY_OP(GreaterEqual, float, bool, float);
 
 REGISTER_KERNEL_BUILDER(Name("GreaterEqual")
                             .Device(DEVICE_VE)

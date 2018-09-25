@@ -57,17 +57,12 @@ REGISTER_KERNEL_BUILDER(Name("Div")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-template <typename T>
-class VEDivOp : public VEBinaryOp<T> {
- public:
-    explicit VEDivOp(OpKernelConstruction* context) 
-      : VEBinaryOp<T>(context, "Div") {}
-};
+REGISTER_VE_BINARY_OP(Div, float, float, float);
 
 REGISTER_KERNEL_BUILDER(Name("RealDiv")
                         .Device(DEVICE_VE)
                         .TypeConstraint<float>("T"),
-                        VEDivOp<float>);
+                        VEDivOp<float, float>);
 
 REGISTER_KERNEL_BUILDER(Name("Div")
                             .Device(DEVICE_VE)
