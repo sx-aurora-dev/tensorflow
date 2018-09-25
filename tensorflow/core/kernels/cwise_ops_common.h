@@ -705,7 +705,7 @@ template <typename Tin, typename Tout>
 class VEBinaryOp : public BinaryOpShared {
   public:
     explicit VEBinaryOp(OpKernelConstruction* context, std::string name) 
-      : BinaryOpShared(context, DataTypeToEnum<Tin>::v(), DataTypeToEnum<Tout>::v()),
+      : BinaryOpShared(context, DataTypeToEnum<Tout>::v(), DataTypeToEnum<Tin>::v()),
         name_(name) {}
 
     void Compute(OpKernelContext* context) override {
