@@ -46,7 +46,7 @@ REGISTER_KERNEL_BUILDER(Name("Maximum")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-REGISTER_VE_BINARY_OP(Maximum, float);
+REGISTER_VE_BINARY_OP(Maximum, float, float, float);
 REGISTER_KERNEL_BUILDER(Name("Maximum")
                             .Device(DEVICE_VE)
                             .HostMemory("x")

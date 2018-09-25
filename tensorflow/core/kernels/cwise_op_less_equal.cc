@@ -50,7 +50,7 @@ REGISTER_KERNEL_BUILDER(Name("LessEqual")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-REGISTER_VE_BINARY_OP(LessEqual, float);
+REGISTER_VE_BINARY_OP(LessEqual, float, bool, float);
 REGISTER_KERNEL_BUILDER(Name("LessEqual")
                             .Device(DEVICE_VE)
                             .HostMemory("x")

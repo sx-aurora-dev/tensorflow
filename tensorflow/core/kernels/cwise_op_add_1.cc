@@ -68,20 +68,7 @@ REGISTER_KERNEL_BUILDER(Name("AddV2")
 #endif  // TENSORFLOW_USE_SYCL
 
 #if TENSORFLOW_USE_VE
-template <typename T>
-class VEAddOp : public VEBinaryOp<T> {
-  public:
-    explicit VEAddOp(OpKernelConstruction* context)
-      : VEBinaryOp<T>(context, "Add") {}
-};
-
-REGISTER_KERNEL_BUILDER(Name("Add")
-                        .Device(DEVICE_VE)
-                        .TypeConstraint<float>("T"),
-                        VEAddOp<float>);
-
-//TF_CALL_VE_NUMBER_TYPES(REGISTER_KERNEL);
-
+REGISTER_VE_BINARY_OP(Add, float, float, float);
 REGISTER_KERNEL_BUILDER(Name("Add")
                             .Device(DEVICE_VE)
                             .HostMemory("x")

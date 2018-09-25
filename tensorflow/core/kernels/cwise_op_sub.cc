@@ -56,7 +56,7 @@ REGISTER_KERNEL_BUILDER(Name("Sub")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-REGISTER_VE_BINARY_OP(Sub, float);
+REGISTER_VE_BINARY_OP(Sub, float, float, float);
 REGISTER_KERNEL_BUILDER(Name("Sub")
                             .Device(DEVICE_VE)
                             .HostMemory("x")
