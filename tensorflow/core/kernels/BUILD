@@ -3880,7 +3880,9 @@ RANDOM_OPS_DEPS = [
 tf_kernel_library(
     name = "random_op",
     prefix = "random_op",
-    deps = RANDOM_OPS_DEPS,
+    deps = RANDOM_OPS_DEPS + if_ve([
+      "//tensorflow/core:ve_runtime",
+    ]),
 )
 
 tf_kernel_library(
