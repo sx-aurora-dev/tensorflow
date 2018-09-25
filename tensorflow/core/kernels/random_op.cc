@@ -34,6 +34,11 @@ limitations under the License.
 #include "tensorflow/core/util/guarded_philox_random.h"
 #include "tensorflow/core/util/work_sharder.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 #if EIGEN_COMP_GNUC && __cplusplus > 199711L
 #define DISABLE_FLOAT_EQUALITY_WARNING \
   _Pragma("GCC diagnostic push")       \
@@ -741,5 +746,89 @@ TF_CALL_int64(REGISTER_INT);
 #undef REGISTER_INT
 
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+class VEOpKernel : public OpKernel {
+  protected:
+    static const int MAX_DIM_SIZE = 8;
+    static const int MAX_INPUTS = 4;
+    static const int MAX_OUTPUTS = 4;
+
+    struct _Tensor {
+      int dtype;
+      uint64_t addr;
+      int32_t dims;
+      int64_t nelems;
+      int64_t dim_size[MAX_DIM_SIZE];
+
+      void init(const Tensor& t) {
+        dtype = t.dtype();
+        addr = (uint64_t)DMAHelper::base(&t);
+        dims = t.dims();
+        nelems = t.NumElements();
+        for (int i = 0; i < dims; ++i) {
+          dim_size[i] = t.dim_size(i);
+        }
+      }
+    };
+
+    struct Args {
+      int ninputs;
+      int noutputs;
+      _Tensor input[MAX_INPUTS];
+      _Tensor output[MAX_OUTPUTS];
+    };
+
+  public:
+    explicit VEOpKernel(OpKernelConstruction* context, std::string name) 
+      : OpKernel(context), name_(name) {}
+
+    void setInputTensor(Args& args, int i, const Tensor& t) {
+      args.input[i].init(t);
+    }
+
+    void setOutputTensor(Args& args, int i, const Tensor& t) {
+      args.output[i].init(t);
+    }
+
+    void Call(OpKernelContext* context, Args& args) {
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+    }
+
+  private:
+    std::string name_;
+};
+
+class VERandomUniformOp : public VEOpKernel {
+  public:
+    explicit VERandomUniformOp(OpKernelConstruction* context) 
+      : VEOpKernel(context, "RandomUniform") {}
+
+    void Compute(OpKernelContext* ctx) override {
+      const Tensor& shape = ctx->input(0);
+      Tensor* output;
+      OP_REQUIRES_OK(ctx, AllocateOutputWithShape(ctx, shape, 0, &output));
+
+      Args args;
+
+      args.ninputs = 0;
+      args.noutputs = 1;
+      setOutputTensor(args, 0, *output);
+
+      Call(ctx, args);
+    }
+};
+
+#if 1
+REGISTER_KERNEL_BUILDER(Name("RandomUniform")
+                        .Device(DEVICE_VE)
+                        .HostMemory("shape")
+                        .TypeConstraint<float>("dtype"),
+                        VERandomUniformOp);
+#endif
+#endif // TENSORFLOW_USE_VE
 
 }  // end namespace tensorflow
