@@ -1,9 +1,21 @@
 ## setup
 
+### RHEL 7.3
+
+Add repositories.
+
+~~
+% yum localinstall centos-release-scl-2-2.el7.centos.noarch.rpm
+% yum localinstall centos-release-scl-rh-2-2.el7.centos.noarch.rpm
+~~
+
 Install packages shown below.
 
 ~~
-% rpm -qa | grep rh-python35
+devtoolset-4-libstdc++-devel-5.3.1-6.1.el7.x86_64
+devtoolset-4-gcc-c++-5.3.1-6.1.el7.x86_64
+devtoolset-4-gcc-5.3.1-6.1.el7.x86_64
+devtoolset-4-runtime-4.1-3.sc1.el7.x86_64
 rh-python35-python-pip-7.1.0-2.el7.noarch
 rh-python35-python-libs-3.5.1-11.el7.x86_64
 rh-python35-python-setuptools-18.0.1-2.el7.noarch
@@ -11,13 +23,6 @@ rh-python35-python-devel-3.5.1-11.el7.x86_64
 rh-python35-runtime-2.0-2.el7.x86_64
 rh-python35-python-3.5.1-11.el7.x86_64
 rh-python35-python-virtualenv-13.1.2-2.el7.noarch
-~~
-
-You probably have to add repositories:
-
-~~
-% yum localinstall centos-release-scl-2-2.el7.centos.noarch.rpm
-% yum localinstall centos-release-scl-rh-2-2.el7.centos.noarch.rpm
 ~~
 
 Creating virtualenv and install some packages:
@@ -28,30 +33,56 @@ $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
 (tmp)$ pip install numpy==1.14.5   # warning? error? with 1.15.0 
+(tmp)$ pip install -U wheel        # not work with 0.24.0
 ~~
 
-## Build tensorflow
+## Build & Install
 
-~~
+Work in the virtualenv.
+
+~~~
+$ scl enable rh-python35 devtoolset-4 bash
+$ source ~/.virtualenvs/tmp/bin/activate
+~~~
+
+~~~
+$ python --version
+Python 3.5.1
+$ gcc --version
+gcc (GCC) 5.3.1 20160406 (Red Hat 5.3.1-6)
+Copyright (C) 2015 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+~~~
+
+### Build tensorflow
+
+~~~
 % ./configure
-% bazel build --config=ve --config=opt //tensorflow/tools/pip_package:build_pip_package
-% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg
-~~
+% bazel build --config=ve --config=opt --config=mkl --copt=-mavx512f //tensorflow/tools/pip_package:build_pip_package
+% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
+~~~
 
-you can see tensorflow package in /tmp/tensorflow_pkg.
+you can see tensorflow package in current direcotry.
 
-## Build keras
+### Build keras
 
-~~
+~~~
 % python setup.py bdist_wheel
-~~
+~~~
 
+### Install
+
+~~~
+% pip install -U <tensorflow package for ve>
+% pip install -U <keras package for ve>
+~~~
 
 ## Run samples
 
-~~
-% pip install -U <tensorflow package for ve>
-% pip install -U <keras package for ve>
+Work in the virtualenv.
+
+~~~
 % cd <working directory>
 % git clone <url of vednn> vednn
 % git clone <url of libvetfkernel> libvetfkernel
@@ -64,4 +95,4 @@ you can see tensorflow package in /tmp/tensorflow_pkg.
 % (cd libvetfkernel && make)
 % ./mk_veorun.sh
 % ./run.sh keras.sample.py
-~~
+~~~
