@@ -21,13 +21,6 @@ namespace tensorflow {
 namespace {
 
 class VEO {
-  private:
-    class Fake {
-      public:
-        Fake(int pid) { if (set_fake_tid) set_fake_tid(pid); }
-        ~Fake() { if (set_fake_tid) set_fake_tid(0); }
-    };
-
   public:
     struct Args {
       struct veo_args* args;
@@ -38,9 +31,6 @@ class VEO {
     VEO() {}
     virtual ~VEO();
 
-//#define FAKE() Fake fake(proc_pid_);
-#define FAKE()
-
     uint64_t alloc_mem(size_t size) {
       VLOG(2) << "VEO::alloc_mem: tid=" << syscall(SYS_gettid);
       VLOG(2) << "VEO::alloc_mem: proc_=" << proc_ << " size=" << size;
@@ -48,7 +38,6 @@ class VEO {
 
       int ret;
       {
-        FAKE();
         ret = veo_alloc_mem(proc_, &addr, size);
       }
 
@@ -61,12 +50,10 @@ class VEO {
     }
 
     int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
-      FAKE();
       return veo_write_mem(proc_, ve_addr, vh_buff, len);
     }
 
     int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
-      FAKE();
       return veo_read_mem(proc_, vh_buff, ve_addr, len);
     }
 
@@ -82,26 +69,22 @@ class VEO {
       veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
       veo_args_set_i64(a.args, 1, len);
 
-      {
-        FAKE();
-        int req_id = veo_call_async(ctx_, sym, a.args);
-        VLOG(2) << "VEO::compute: return from veo_call_async. req_id=" << req_id;
-        if (req_id == VEO_REQUEST_ID_INVALID)
-          return errors::Internal("Failed to call kernel");
+      int req_id = veo_call_async(ctx_, sym, a.args);
+      VLOG(2) << "VEO::compute: return from veo_call_async. req_id=" << req_id;
+      if (req_id == VEO_REQUEST_ID_INVALID)
+        return errors::Internal("Failed to call kernel");
 
-        VLOG(2) << "VEO::compute: call veo_wait_result for req_id=" << req_id;
-        uint64_t retval;
-        int ret = veo_call_wait_result(ctx_, req_id, &retval);
-        VLOG(2) << "VEO::compute: return from veo_wait_result. req_id=" << req_id << " ret=" << ret << " retval=" << retval;
-        if (ret != 0)
-          return errors::Internal("Failed to wait kernel result");
-        if (retval != 0)
-          return errors::Internal("Failed in the kernel");
-      }
+      VLOG(2) << "VEO::compute: call veo_wait_result for req_id=" << req_id;
+      uint64_t retval;
+      int ret = veo_call_wait_result(ctx_, req_id, &retval);
+      VLOG(2) << "VEO::compute: return from veo_wait_result. req_id=" << req_id << " ret=" << ret << " retval=" << retval;
+      if (ret != 0)
+        return errors::Internal("Failed to wait kernel result");
+      if (retval != 0)
+        return errors::Internal("Failed in the kernel");
 
       return Status::OK();
     }
-#undef FAKE
 
     Status init(int nodeid);
 
