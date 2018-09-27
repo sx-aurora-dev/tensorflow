@@ -31,8 +31,7 @@ $ scl enable rh-python35 bash
 $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
-(tmp)$ pip install numpy==1.14.5   # warning? error? with 1.15.0 
-(tmp)$ pip install -U wheel        # not work with 0.24.0
+(tmp)$ pip install -U six numpy wheel
 ~~
 
 ## Build & Install
