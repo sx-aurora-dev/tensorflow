@@ -5,24 +5,23 @@
 Add repositories.
 
 ~~
-% yum localinstall centos-release-scl-2-2.el7.centos.noarch.rpm
-% yum localinstall centos-release-scl-rh-2-2.el7.centos.noarch.rpm
+% yum install centos-release-scl
 ~~
 
-Install packages shown below.
+Install packages like below.
 
 ~~
-devtoolset-4-libstdc++-devel-5.3.1-6.1.el7.x86_64
-devtoolset-4-gcc-c++-5.3.1-6.1.el7.x86_64
-devtoolset-4-gcc-5.3.1-6.1.el7.x86_64
-devtoolset-4-runtime-4.1-3.sc1.el7.x86_64
-rh-python35-python-pip-7.1.0-2.el7.noarch
-rh-python35-python-libs-3.5.1-11.el7.x86_64
-rh-python35-python-setuptools-18.0.1-2.el7.noarch
-rh-python35-python-devel-3.5.1-11.el7.x86_64
-rh-python35-runtime-2.0-2.el7.x86_64
-rh-python35-python-3.5.1-11.el7.x86_64
-rh-python35-python-virtualenv-13.1.2-2.el7.noarch
+% yum install devtoolset-4-libstdc++-devel-5.3.1-6.1.el7.x86_64 \
+  devtoolset-4-gcc-c++-5.3.1-6.1.el7.x86_64 \
+  devtoolset-4-gcc-5.3.1-6.1.el7.x86_64 \
+  devtoolset-4-runtime-4.1-3.sc1.el7.x86_64 \
+  rh-python35-python-pip-7.1.0-2.el7.noarch \
+  rh-python35-python-libs-3.5.1-11.el7.x86_64 \
+  rh-python35-python-setuptools-18.0.1-2.el7.noarch \
+  rh-python35-python-devel-3.5.1-11.el7.x86_64 \
+  rh-python35-runtime-2.0-2.el7.x86_64 \
+  rh-python35-python-3.5.1-11.el7.x86_64 \
+  rh-python35-python-virtualenv-13.1.2-2.el7.noarch
 ~~
 
 Creating virtualenv and install some packages:
@@ -32,8 +31,7 @@ $ scl enable rh-python35 bash
 $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
-(tmp)$ pip install numpy==1.14.5   # warning? error? with 1.15.0 
-(tmp)$ pip install -U wheel        # not work with 0.24.0
+(tmp)$ pip install -U six numpy wheel
 ~~
 
 ## Build & Install
@@ -89,10 +87,12 @@ Work in the virtualenv.
 % git clone <url of sampels> samples
 % cd vednn/src
 % make
+% cd ../../lbvetfkernel
+% mkdir build
+% cd build
+% cmake3 -DVEDNN_PATH=../../vednn/src ../../libvetfkernel
+% make
 % cd ../../samples
-% mkdir libvetfkernel
-% (cd libvetfkernel && cmake3 -DVEDNN_PATH=../../vednn/src ../../libvetfkernel)
-% (cd libvetfkernel && make)
 % ./mk_veorun.sh
 % ./run.sh keras.sample.py
 ~~~
