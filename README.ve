@@ -57,7 +57,7 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 ~~~
 % ./configure
-% bazel build --config=ve --config=opt --config=mkl --copt=-mavx512f //tensorflow/tools/pip_package:build_pip_package
+% bazel build --config=ve --config=opt --copt=-mavx512f //tensorflow/tools/pip_package:build_pip_package
 % ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
 ~~~
 
