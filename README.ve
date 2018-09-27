@@ -87,10 +87,12 @@ Work in the virtualenv.
 % git clone <url of sampels> samples
 % cd vednn/src
 % make
+% cd ../../lbvetfkernel
+% mkdir build
+% cd build
+% cmake3 -DVEDNN_PATH=../../vednn/src ../../libvetfkernel
+% make
 % cd ../../samples
-% mkdir libvetfkernel
-% (cd libvetfkernel && cmake3 -DVEDNN_PATH=../../vednn/src ../../libvetfkernel)
-% (cd libvetfkernel && make)
 % ./mk_veorun.sh
 % ./run.sh keras.sample.py
 ~~~
