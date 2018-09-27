@@ -5,8 +5,7 @@
 Add repositories.
 
 ~~
-% yum localinstall centos-release-scl-2-2.el7.centos.noarch.rpm
-% yum localinstall centos-release-scl-rh-2-2.el7.centos.noarch.rpm
+% yum install centos-release-scl
 ~~
 
 Install packages shown below.
