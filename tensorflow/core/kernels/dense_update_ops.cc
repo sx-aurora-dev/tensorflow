@@ -28,6 +28,11 @@ limitations under the License.
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 template <typename Device, typename T>
@@ -100,6 +105,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 #define REGISTER_KERNELS(type)                                     \
   REGISTER_KERNEL_BUILDER(                                         \
@@ -134,6 +142,78 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL_KERNELS);
 #undef REGISTER_SYCL_KERNELS
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+
+namespace VEKernelHelper {
+static const int MAX_DIM_SIZE = 8;
+static const int MAX_INPUTS = 4;
+static const int MAX_OUTPUTS = 4;
+
+struct _Tensor {
+  int dtype;
+  uint64_t addr;
+  int32_t dims;
+  int64_t nelems;
+  int64_t dim_size[MAX_DIM_SIZE];
+
+  void init(const Tensor& t) {
+    dtype = t.dtype();
+    addr = (uint64_t)DMAHelper::base(&t);
+    dims = t.dims();
+    nelems = t.NumElements();
+    for (int i = 0; i < dims; ++i) {
+      dim_size[i] = t.dim_size(i);
+    }
+  }
+};
+
+struct Args {
+  int ninputs;
+  int noutputs;
+  _Tensor input[MAX_INPUTS];
+  _Tensor output[MAX_OUTPUTS];
+};
+
+void setInputTensor(Args& args, int i, const Tensor& t) {
+  args.input[i].init(t);
+}
+
+void setOutputTensor(Args& args, int i, const Tensor& t) {
+  args.output[i].init(t);
+}
+
+void Call(OpKernelContext* context, const char* name, Args& args) {
+  VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+  Status s = vectx->Compute(name, (void*)&args, sizeof(args));
+  if (!s.ok())
+    context->SetStatus(s);
+}
+} // VEKernelHelper
+
+template <typename T>
+class AssignOpT<VEDevice, T> : public AssignOp {
+ public:
+  using AssignOp::AssignOp;
+
+  void Copy(OpKernelContext* context, Tensor* lhs, const Tensor& rhs) override {
+    VEKernelHelper::Args args;
+    args.ninputs = 1;
+    args.noutputs = 1;
+    VEKernelHelper::setInputTensor(args, 0, rhs);
+    VEKernelHelper::setOutputTensor(args, 0, *lhs);
+    VEKernelHelper::Call(context, "Assign", args);
+  }
+};
+
+#define REGISTER_VE_KERNELS(type)                                   \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("Assign").Device(DEVICE_VE).TypeConstraint<type>("T"),   \
+      AssignOpT<VEDevice, type>);
+
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+#endif  // TENSORFLOW_USE_VE
 
 #define REGISTER_KERNELS(type)                                        \
   REGISTER_KERNEL_BUILDER(                                            \

@@ -238,4 +238,18 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
 #undef REGISTER_GPU_KERNELS
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                            \
+  REGISTER_KERNEL_BUILDER(                                                  \
+      Name("VariableV2").Device(DEVICE_VE).TypeConstraint<type>("dtype"),   \
+      VariableOp);                                                          \
+  REGISTER_KERNEL_BUILDER(Name("IsVariableInitialized")                     \
+                              .Device(DEVICE_VE)                          \
+                              .TypeConstraint<type>("dtype")                \
+                              .HostMemory("is_initialized"),                \
+                          IsVariableInitializedOp);
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
+#endif // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

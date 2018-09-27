@@ -4268,7 +4268,8 @@ tf_kernel_library(
 tf_kernel_library(
     name = "dense_update_ops",
     prefix = "dense_update_ops",
-    deps = STATE_DEPS + [":dense_update_functor"],
+    deps = STATE_DEPS + [":dense_update_functor"]
+        + if_ve(["//tensorflow/core:core_cpu", "//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
