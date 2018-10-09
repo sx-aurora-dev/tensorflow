@@ -12,6 +12,8 @@
 #include <sys/types.h>
 #include <sys/syscall.h>
 
+#define LOCK_VEO
+
 extern "C" {
   extern void set_fake_tid(long) __attribute__((weak));
 }
@@ -284,6 +286,26 @@ class VEDeviceContextImpl : public VEDeviceContext {
     VEO* veo_;
 };
 
+#ifdef LOCK_VEO
+class VEDeviceContextImplLock : public VEDeviceContextImpl {
+  public:
+    VEDeviceContextImplLock(VEO* veo) : VEDeviceContextImpl(veo) {}
+
+    virtual void CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
+                                       Tensor* device_tensor,
+                                       StatusCallback done) const override;
+
+    virtual void CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
+                                       Device* device, Tensor* cpu_tensor,
+                                       StatusCallback done) override;
+
+    virtual Status Compute(const std::string& name, const void* arg, size_t len);
+
+  private:
+    mutable mutex lock_;
+};
+#endif
+
 class VEDevice : public LocalDevice {
   public:
     VEDevice(const SessionOptions& options, const string name,
@@ -328,7 +350,17 @@ VEDevice::~VEDevice() {
 
 Status VEDevice::Init(const SessionOptions& options, VEO* veo) {
   VLOG(2) << "VEDevice::Init";
+#ifdef LOCK_VEO
+  if (getenv("TF_NOLOCK_VEO")) {
+  VLOG(2) << "VEDevice::Init: VEO without lock is used";
+    device_contexts_.push_back(new VEDeviceContextImpl(veo));
+  } else {
+  VLOG(2) << "VEDevice::Init: VEO with lock is used";
+    device_contexts_.push_back(new VEDeviceContextImplLock(veo));
+  }
+#else
   device_contexts_.push_back(new VEDeviceContextImpl(veo));
+#endif
 
   VLOG(2) << "VEDevice::Init DeviceContext=" << device_contexts_.back();
 
@@ -474,6 +506,28 @@ Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, si
   VLOG(2) << "VEDeviceContextImpl::Compute: name=" << name;
   return veo_->compute(name, arg, len);
 }
+
+#ifdef LOCK_VEO
+void VEDeviceContextImplLock::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
+                                                Tensor* device_tensor,
+                                                StatusCallback done) const {
+  mutex_lock guard(lock_);
+  VEDeviceContextImpl::CopyCPUTensorToDevice(cpu_tensor, device, device_tensor, done);
+}
+
+void VEDeviceContextImplLock::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
+                                                Device* device, Tensor* cpu_tensor,
+                                                StatusCallback done) {
+  mutex_lock guard(lock_);
+  VEDeviceContextImpl::CopyDeviceTensorToCPU(device_tensor, edge_name, device, cpu_tensor, done);
+}
+
+Status VEDeviceContextImplLock::Compute(const std::string& name, const void* arg, size_t len)
+{
+  mutex_lock guard(lock_);
+  return VEDeviceContextImpl::Compute(name, arg, len);
+}
+#endif
 
 } // namespace tensorflow
 
