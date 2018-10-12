@@ -12,7 +12,8 @@
 #include <sys/types.h>
 #include <sys/syscall.h>
 
-#define LOCK_VEO
+#undef LOCK_VEO
+#undef LOCK_VEO2
 
 extern "C" {
   extern void set_fake_tid(long) __attribute__((weak));
@@ -97,6 +98,41 @@ class VEO {
 
     std::map<std::string, uint64_t> kernel_map_;
 };
+
+#ifdef LOCK_VEO2
+class VEOLock : public VEO {
+  public:
+    uint64_t alloc_mem(size_t size) {
+      mutex_lock guard(lock_);
+      return VEO::alloc_mem(size);
+    }
+
+    int free_mem(uint64_t addr) {
+      mutex_lock guard(lock_);
+      return VEO::free_mem(addr);
+    }
+
+    int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
+      mutex_lock guard(lock_);
+      return VEO::write_mem(ve_addr, vh_buff, len);
+    }
+
+    int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
+      mutex_lock guard(lock_);
+      return VEO::read_mem(vh_buff, ve_addr, len);
+    }
+
+    Status compute(const std::string& name, const void* arg, size_t len) {
+      mutex_lock guard(lock_);
+      VLOG(2) << "VEO::compute: name=" << name;
+      return VEO::copute(name, arg, len);
+    }
+
+  private:
+    mutex_lock lock_;
+};
+#endif
+
 
 Status veo_sym_call(struct veo_proc_handle* proc,
                     struct veo_thr_ctxt* ctx,
@@ -410,7 +446,15 @@ class VEOFactory {
       mutex_lock guard(lock_);
 
       if (!veo_) {
+#ifdef LOCK_VEO2
+        if (getenv("TF_NOLOCK_VEO2")) {
+          veo_ = new VEO;
+        } else {
+          veo_ = new VEOLock;
+        }
+#else
         veo_ = new VEO;
+#endif
         Status s = veo_->init(nodeid);
         if (!s.ok())
           return s;
