@@ -13,7 +13,7 @@
 #include <sys/syscall.h>
 
 #undef LOCK_VEO
-#undef LOCK_VEO2
+#define LOCK_VEO2
 
 extern "C" {
   extern void set_fake_tid(long) __attribute__((weak));
@@ -34,7 +34,7 @@ class VEO {
     VEO() {}
     virtual ~VEO();
 
-    uint64_t alloc_mem(size_t size) {
+    virtual uint64_t alloc_mem(size_t size) {
       VLOG(2) << "VEO::alloc_mem: tid=" << syscall(SYS_gettid);
       VLOG(2) << "VEO::alloc_mem: proc_=" << proc_ << " size=" << size;
       uint64_t addr;
@@ -48,19 +48,19 @@ class VEO {
       return addr;
     }
 
-    int free_mem(uint64_t addr) {
+    virtual int free_mem(uint64_t addr) {
       return veo_free_mem(proc_, addr);
     }
 
-    int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
+    virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
       return veo_write_mem(proc_, ve_addr, vh_buff, len);
     }
 
-    int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
+    virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
       return veo_read_mem(proc_, vh_buff, ve_addr, len);
     }
 
-    Status compute(const std::string& name, const void* arg, size_t len) {
+    virtual Status compute(const std::string& name, const void* arg, size_t len) {
       VLOG(2) << "VEO::compute: name=" << name;
       auto it = kernel_map_.find(name);
       if (it == kernel_map_.end())
@@ -72,7 +72,7 @@ class VEO {
       veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
       veo_args_set_i64(a.args, 1, len);
 
-      int req_id = veo_call_async(ctx_, sym, a.args);
+      uint64_t req_id = veo_call_async(ctx_, sym, a.args);
       VLOG(2) << "VEO::compute: return from veo_call_async. req_id=" << req_id;
       if (req_id == VEO_REQUEST_ID_INVALID)
         return errors::Internal("Failed to call kernel");
@@ -103,6 +103,7 @@ class VEO {
 class VEOLock : public VEO {
   public:
     uint64_t alloc_mem(size_t size) {
+      VLOG(2) << "VEOLock::alloc_mem: this=" << this;
       mutex_lock guard(lock_);
       return VEO::alloc_mem(size);
     }
@@ -123,13 +124,13 @@ class VEOLock : public VEO {
     }
 
     Status compute(const std::string& name, const void* arg, size_t len) {
+      VLOG(2) << "VEOLock::compute: this=" << this;
       mutex_lock guard(lock_);
-      VLOG(2) << "VEO::compute: name=" << name;
-      return VEO::copute(name, arg, len);
+      return VEO::compute(name, arg, len);
     }
 
   private:
-    mutex_lock lock_;
+    mutex lock_;
 };
 #endif
 
@@ -149,7 +150,7 @@ Status veo_sym_call(struct veo_proc_handle* proc,
   if (!args.args)
     return errors::Internal("Failed to allocate arguments");
 
-  int req_id = veo_call_async(ctx, sym, args.args);
+  uint64_t req_id = veo_call_async(ctx, sym, args.args);
   //VLOG(2) << "VEO::load_kernel_syms: VEO request ID = " << req_id;
   if (req_id == VEO_REQUEST_ID_INVALID) {
     return errors::Internal("Failed to call VE");
@@ -190,7 +191,7 @@ Status load_kernel_syms(struct veo_proc_handle* proc,
   if (ret != 0)
     return errors::Internal("Failed to read mem");
 
-  for (int i = 0; i < num_kernels; ++i) {
+  for (uint64_t i = 0; i < num_kernels; ++i) {
     uint64_t sym = veo_get_sym(proc, lib_id, table[i].func);
     VLOG(2) << "VEO::load_kernel_syms:"
       << " name=" << table[i].name
@@ -223,7 +224,7 @@ Status VEO::init(int nodeid) {
 
   VLOG(2) << "VEO::init: pid=" << proc_pid_ << " tid=" << syscall(SYS_gettid);
 
-  uint64_t lib_id = NULL ;
+  uint64_t lib_id = 0UL;
   if( filename != NULL ) {
     lib_id = veo_load_library(proc_, filename);
     VLOG(2) << "VEO::init: lib_id=" << lib_id;
@@ -351,8 +352,8 @@ class VEDevice : public LocalDevice {
                   Device::BuildDeviceAttributes(name, "VE",
                                                 Bytes(256 << 20),
                                                 DeviceLocality())),
-      cpu_allocator_(cpu_allocator),
-      ve_allocator_(ve_allocator) {}
+      ve_allocator_(ve_allocator),
+      cpu_allocator_(cpu_allocator) {}
 
     ~VEDevice() override;
 
@@ -448,8 +449,10 @@ class VEOFactory {
       if (!veo_) {
 #ifdef LOCK_VEO2
         if (getenv("TF_NOLOCK_VEO2")) {
+          VLOG(2) << "VEOFactory: create VEO";
           veo_ = new VEO;
         } else {
+          VLOG(2) << "VEOFactory: create VEOLock";
           veo_ = new VEOLock;
         }
 #else
