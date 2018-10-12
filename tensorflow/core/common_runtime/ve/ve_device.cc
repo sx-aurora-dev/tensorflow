@@ -34,7 +34,7 @@ class VEO {
     VEO() {}
     virtual ~VEO();
 
-    uint64_t alloc_mem(size_t size) {
+    virtual uint64_t alloc_mem(size_t size) {
       VLOG(2) << "VEO::alloc_mem: tid=" << syscall(SYS_gettid);
       VLOG(2) << "VEO::alloc_mem: proc_=" << proc_ << " size=" << size;
       uint64_t addr;
@@ -48,19 +48,19 @@ class VEO {
       return addr;
     }
 
-    int free_mem(uint64_t addr) {
+    virtual int free_mem(uint64_t addr) {
       return veo_free_mem(proc_, addr);
     }
 
-    int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
+    virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
       return veo_write_mem(proc_, ve_addr, vh_buff, len);
     }
 
-    int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
+    virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
       return veo_read_mem(proc_, vh_buff, ve_addr, len);
     }
 
-    Status compute(const std::string& name, const void* arg, size_t len) {
+    virtual Status compute(const std::string& name, const void* arg, size_t len) {
       VLOG(2) << "VEO::compute: name=" << name;
       auto it = kernel_map_.find(name);
       if (it == kernel_map_.end())
@@ -103,6 +103,7 @@ class VEO {
 class VEOLock : public VEO {
   public:
     uint64_t alloc_mem(size_t size) {
+      VLOG(2) << "VEOLock::alloc_mem: this=" << this;
       mutex_lock guard(lock_);
       return VEO::alloc_mem(size);
     }
@@ -123,6 +124,7 @@ class VEOLock : public VEO {
     }
 
     Status compute(const std::string& name, const void* arg, size_t len) {
+      VLOG(2) << "VEOLock::compute: this=" << this;
       mutex_lock guard(lock_);
       return VEO::compute(name, arg, len);
     }
