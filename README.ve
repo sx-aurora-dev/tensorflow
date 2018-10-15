@@ -92,7 +92,7 @@ Work in the virtualenv.
 % cd ../../lbvetfkernel
 % mkdir build
 % cd build
-% cmake3 -DVEDNN_PATH=../../vednn/src ../../libvetfkernel
+% cmake3 -DVEDNN_PATH=../../vednn/build ../../libvetfkernel
 % make
 % cd ../../samples
 % ./mk_veorun.sh
