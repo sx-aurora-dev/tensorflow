@@ -85,8 +85,10 @@ Work in the virtualenv.
 % git clone <url of vednn> vednn
 % git clone <url of libvetfkernel> libvetfkernel
 % git clone <url of sampels> samples
-% cd vednn/src
-% make
+% cd vednn
+% mkdir build
+% cmake3 ..
+% make & make install
 % cd ../../lbvetfkernel
 % mkdir build
 % cd build
