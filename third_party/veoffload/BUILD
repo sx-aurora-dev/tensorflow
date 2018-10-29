@@ -12,6 +12,6 @@ cc_library(
   name = "veoffload",
   #srcs = ["libveo.so"],
   includes = ["include"],
-  linkopts = ["-L/opt/nec/ve/veos/lib64", "-lveo"],
+  linkopts = ["-Wl,-rpath=/opt/nec/ve/veos/lib64", "-L/opt/nec/ve/veos/lib64", "-lveo"],
   visibility = ["//visibility:public"],
 )
