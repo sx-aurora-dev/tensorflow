@@ -75,14 +75,10 @@ class VEO {
     }
 
     virtual uint64_t get_sym(uint64_t lib_id, const char* name) {
-      return veo_get_sym(proc_, 0, "vetfkl_entry");
+      return veo_get_sym(proc_, 0, name);
     }
 
-    virtual Status call(uint64_t sym, const void* arg, size_t len) {
-      Args a;
-      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
-      veo_args_set_i64(a.args, 1, len);
-
+    virtual Status call(uint64_t sym, const Args& a) {
       uint64_t req_id = veo_call_async(ctx_, sym, a.args);
       VLOG(2) << "VEO::compute: return from veo_call_async. req_id=" << req_id;
       if (req_id == VEO_REQUEST_ID_INVALID)
@@ -91,13 +87,33 @@ class VEO {
       VLOG(2) << "VEO::compute: call veo_wait_result for req_id=" << req_id;
       uint64_t retval;
       int ret = veo_call_wait_result(ctx_, req_id, &retval);
-      VLOG(2) << "VEO::compute: return from veo_wait_result. req_id=" << req_id << " ret=" << ret << " retval=" << retval;
+      VLOG(2) << "VEO::compute: return from veo_wait_result."
+        << " req_id=" << req_id << " ret=" << ret << " retval=" << retval;
       if (ret != 0)
         return errors::Internal("Failed to wait kernel result");
       if (retval != 0)
         return errors::Internal("Failed in the kernel");
 
       return Status::OK();
+    }
+
+    virtual Status call(uint64_t sym, const void* arg, size_t len) {
+      Args a;
+      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
+      veo_args_set_i64(a.args, 1, len);
+
+      return call(sym, a);
+    }
+
+    virtual Status call(uint64_t sym, const void* arg_in, size_t len_in, 
+                        const void* arg_out, size_t len_out) {
+      Args a;
+      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg_in, len_in);
+      veo_args_set_i64(a.args, 1, len_in);
+      veo_args_set_stack(a.args, VEO_INTENT_OUT, 2, (char*)arg_out, len_out);
+      veo_args_set_i64(a.args, 3, len_out);
+
+      return call(sym, a);
     }
 
   private:
@@ -199,8 +215,14 @@ class VEOAsync : public VEO
       Status s = VEO::init(nodeid);
       if (!s.ok())
         return s;
+#if 1
+      sym_ = VEO::get_sym(0, "vetfkl_entry_prof");
+#else
       sym_ = VEO::get_sym(0, "vetfkl_entry");
+#endif
       VLOG(2) << "VEOAsync: sym_=" << std::hex << sym_;
+      if (sym_ == 0)
+        return errors::Internal("Failed to get symbol for vetfkl_entry");
       return Status::OK();
     }
 
@@ -222,6 +244,10 @@ class VEOAsync : public VEO
 
       mutex_lock guard(lock_);
 
+#if 1
+      kernel_names_.push_back(name);
+#endif
+
       if (stack_.push(sym, arg, len) != 0)
         return errors::Internal("Failed to push kernel");
       return Status::OK();
@@ -234,13 +260,39 @@ class VEOAsync : public VEO
 
       size_t len = stack_.size();
 
-      VLOG(2) << "VEOAsync::sync: num_kernels=" << stack_.num_kernels() << " len=" << len;
+      VLOG(2) << "VEOAsync::sync: num_kernels=" << stack_.num_kernels()
+        << " len=" << len;
+
       if (stack_.num_kernels() > 0) {
 
-        void* buf = stack_.buf();
-        *reinterpret_cast<int32_t*>(buf) = stack_.num_kernels();
+        int32_t n = stack_.num_kernels();
 
-        Status s = VEO::call(sym_, buf, len);
+        void* buf = stack_.buf();
+        *reinterpret_cast<int32_t*>(buf) = n;
+
+#if 1
+        size_t len_out = sizeof(double) + sizeof(uint64_t) * n;
+        std::vector<char> tmp(len_out);
+        void* buf_out = tmp.data();
+#else
+        size_t len_out = 0;
+        void* buf_out = nullptr;
+#endif
+
+        Status s = VEO::call(sym_, buf, len, buf_out, len_out);
+        //Status s = VEO::call(sym_, buf, len);
+#if 1
+        if (buf_out) {
+          double hz = *reinterpret_cast<double*>(buf_out);
+          uint64_t* pcyc = reinterpret_cast<uint64_t*>(
+              reinterpret_cast<uintptr_t>(buf_out) + sizeof(double));
+          for (int i = 0; i < n; ++i) {
+            VLOG(2) << "VEOAsync::sync: name " << kernel_names_[i]
+              << " time " << pcyc[i] * 1e6 / hz << " us";
+          }
+        }
+        kernel_names_.clear();
+#endif
         stack_.clear();
         return s;
       }
@@ -249,6 +301,9 @@ class VEOAsync : public VEO
     }
 
     mutex lock_;
+#if 1
+    std::vector<std::string> kernel_names_;
+#endif
     KernelStack stack_;
     uint64_t sym_;
 };
