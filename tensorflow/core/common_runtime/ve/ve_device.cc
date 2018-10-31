@@ -29,8 +29,43 @@ class VEO {
       ~Args() { veo_args_free(args); }
     };
 
-    VEO() {}
+    VEO() : cb_(nullptr) {}
     virtual ~VEO();
+
+    typedef void (*cb_t)(int nodeid,
+                         const std::vector<std::string>& kernel_names,
+                         const void* buf,
+                         void* data);
+
+    bool isTracerEnabled() const { return cb_ != nullptr; }
+
+    void setTraceCallback(cb_t cb, void* data) {
+      VLOG(2) << "VEO::setTraceCallback: cb="
+        << reinterpret_cast<void*>(cb) << " data=" << data;
+      cb_ = cb;
+      cb_data_ = data;
+    }
+
+    virtual Status get_timestamp(uint64_t* ts, double* resolution) {
+      struct {
+        uint64_t ts;
+        double resolution;
+      } tmp;
+      size_t len = sizeof(tmp);
+
+      Args a;
+      veo_args_set_stack(a.args, VEO_INTENT_OUT, 0, (char*)&tmp, len);
+      veo_args_set_i64(a.args, 1, len);
+
+      Status s = call(sym_get_timestamp_, a);
+      if (s.ok()) {
+        *ts = tmp.ts;
+        *resolution = tmp.resolution;
+        fprintf(stderr, "VEO::get_timestamp: resolution=%lf\n", *resolution);
+      }
+
+      return s;
+    }
 
     virtual uint64_t alloc_mem(size_t size) {
       VLOG(2) << "VEO::alloc_mem: tid=" << syscall(SYS_gettid);
@@ -65,6 +100,7 @@ class VEO {
     }
 
     virtual Status init(int nodeid);
+    virtual Status sync() { return Status::OK(); }
 
   protected:
     uint64_t find_kernel_sym(std::string const& name) {
@@ -75,19 +111,19 @@ class VEO {
     }
 
     virtual uint64_t get_sym(uint64_t lib_id, const char* name) {
-      return veo_get_sym(proc_, 0, name);
+      return veo_get_sym(proc_, lib_id, name);
     }
 
     virtual Status call(uint64_t sym, const Args& a) {
       uint64_t req_id = veo_call_async(ctx_, sym, a.args);
-      VLOG(2) << "VEO::compute: return from veo_call_async. req_id=" << req_id;
+      VLOG(2) << "VEO::call: return from veo_call_async. req_id=" << req_id;
       if (req_id == VEO_REQUEST_ID_INVALID)
         return errors::Internal("Failed to call kernel");
 
-      VLOG(2) << "VEO::compute: call veo_wait_result for req_id=" << req_id;
+      VLOG(2) << "VEO::call: call veo_wait_result for req_id=" << req_id;
       uint64_t retval;
       int ret = veo_call_wait_result(ctx_, req_id, &retval);
-      VLOG(2) << "VEO::compute: return from veo_wait_result."
+      VLOG(2) << "VEO::call: return from veo_wait_result."
         << " req_id=" << req_id << " ret=" << ret << " retval=" << retval;
       if (ret != 0)
         return errors::Internal("Failed to wait kernel result");
@@ -116,11 +152,22 @@ class VEO {
       return call(sym, a);
     }
 
+    void callbackTracer(const std::vector<std::string>& kernel_names,
+                        const void* buf)
+    {
+      VLOG(2) << "VEO::callbackTracer: cb_=" << cb_;
+      if (cb_)
+        cb_(0, kernel_names, buf, cb_data_);
+    }
+
   private:
     pid_t proc_pid_;
     struct veo_proc_handle* proc_;
     struct veo_thr_ctxt *ctx_;
     std::map<std::string, uint64_t> kernel_map_;
+    uint64_t sym_get_timestamp_;
+    cb_t cb_;
+    void* cb_data_;
 };
 
 #ifdef LOCK_VEO2
@@ -163,7 +210,8 @@ class KernelStack
   public:
     KernelStack(size_t size) : buf_size_(size), num_kernels_(0) {
       buf_ = reinterpret_cast<void*>(new char[buf_size_]);
-      curr_ = reinterpret_cast<uintptr_t>(buf_) + sizeof(int32_t); // reserve int32_t to store num_kernels
+      curr_ = reinterpret_cast<uintptr_t>(buf_)
+        + sizeof(int32_t); // reserve int32_t to store num_kernels
       top_ = curr_ + buf_size_;
     }
 
@@ -179,6 +227,7 @@ class KernelStack
 
       ++num_kernels_;
 
+      // push to stack
       *reinterpret_cast<uint64_t*>(curr_) = sym;
       curr_ += sizeof(uint64_t);
       *reinterpret_cast<size_t*>(curr_) = len;
@@ -215,26 +264,25 @@ class VEOAsync : public VEO
       Status s = VEO::init(nodeid);
       if (!s.ok())
         return s;
-#if 1
-      sym_ = VEO::get_sym(0, "vetfkl_entry_prof");
-#else
-      sym_ = VEO::get_sym(0, "vetfkl_entry");
-#endif
-      VLOG(2) << "VEOAsync: sym_=" << std::hex << sym_;
-      if (sym_ == 0)
+      sym_prof_ = VEO::get_sym(0, "vetfkl_entry_prof");
+      sym_noprof_ = VEO::get_sym(0, "vetfkl_entry");
+
+      VLOG(2) << "VEOAsync: sym_prof=" << std::hex << sym_prof_;
+      VLOG(2) << "VEOAsync: sym_noprof=" << std::hex << sym_noprof_;
+      if (sym_prof_ == 0 || sym_noprof_ == 0)
         return errors::Internal("Failed to get symbol for vetfkl_entry");
       return Status::OK();
     }
 
     virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
       mutex_lock guard(lock_);
-      sync();
+      sync_nolock();
       return VEO::write_mem(ve_addr, vh_buff, len);
     }
 
     virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
       mutex_lock guard(lock_);
-      sync();
+      sync_nolock();
       return VEO::read_mem(vh_buff, ve_addr, len);
     }
 
@@ -244,68 +292,70 @@ class VEOAsync : public VEO
 
       mutex_lock guard(lock_);
 
-#if 1
-      kernel_names_.push_back(name);
-#endif
+      if (isTracerEnabled())
+        kernel_names_.push_back(name);
 
       if (stack_.push(sym, arg, len) != 0)
         return errors::Internal("Failed to push kernel");
       return Status::OK();
     }
 
+    Status sync() {
+      mutex_lock guard(lock_);
+      return sync_nolock();
+    }
+
   private:
     // with holding lock
-    Status sync() {
-      VLOG(2) << "VEOAsync::sync";
+    Status sync_nolock() {
+      int32_t n = stack_.num_kernels();
+      VLOG(2) << "VEOAsync::sync: num_kernels=" << n;
+
+      if (n == 0)
+        return Status::OK();
 
       size_t len = stack_.size();
+      void* buf = stack_.buf();
+      *reinterpret_cast<int32_t*>(buf) = n;
 
-      VLOG(2) << "VEOAsync::sync: num_kernels=" << stack_.num_kernels()
-        << " len=" << len;
+      Status s;
 
-      if (stack_.num_kernels() > 0) {
-
-        int32_t n = stack_.num_kernels();
-
-        void* buf = stack_.buf();
-        *reinterpret_cast<int32_t*>(buf) = n;
-
-#if 1
-        size_t len_out = sizeof(double) + sizeof(uint64_t) * n;
+      if (isTracerEnabled()) {
+        size_t len_out = sizeof(double) + sizeof(uint64_t) * n * 2;
         std::vector<char> tmp(len_out);
         void* buf_out = tmp.data();
-#else
-        size_t len_out = 0;
-        void* buf_out = nullptr;
-#endif
 
-        Status s = VEO::call(sym_, buf, len, buf_out, len_out);
-        //Status s = VEO::call(sym_, buf, len);
-#if 1
-        if (buf_out) {
+        s = VEO::call(sym_prof_, buf, len, buf_out, len_out);
+
+        if (s.ok()) {
+          callbackTracer(kernel_names_, buf_out);
+
+#if 0
           double hz = *reinterpret_cast<double*>(buf_out);
           uint64_t* pcyc = reinterpret_cast<uint64_t*>(
               reinterpret_cast<uintptr_t>(buf_out) + sizeof(double));
           for (int i = 0; i < n; ++i) {
             VLOG(2) << "VEOAsync::sync: name " << kernel_names_[i]
-              << " time " << pcyc[i] * 1e6 / hz << " us";
+              << " time " << (pcyc[2*i+1]-pcyc[2*i]) * 1e6 / hz << " us";
           }
-        }
-        kernel_names_.clear();
 #endif
-        stack_.clear();
-        return s;
+        }
+
+        kernel_names_.clear();
+      } else {
+        s = VEO::call(sym_noprof_, buf, len);
       }
 
-      return Status::OK();
+      stack_.clear();
+
+      return s;
     }
 
     mutex lock_;
-#if 1
     std::vector<std::string> kernel_names_;
-#endif
     KernelStack stack_;
-    uint64_t sym_;
+    uint64_t sym_prof_;
+    uint64_t sym_noprof_;
 };
 #endif
 
@@ -410,6 +460,10 @@ Status VEO::init(int nodeid) {
   VLOG(2) << "VEO::init: ctx_=" << ctx_;
   if (!ctx_)
     return errors::Internal("Failed to open VEO context");
+
+  sym_get_timestamp_ = veo_get_sym(proc_, lib_id, "vetfkl_get_timestamp");
+  if (sym_get_timestamp_ == 0)
+    return errors::Internal("Failed to veo_get_sym for vetfkl_get_timestamp");
 
   return load_kernel_syms(proc_, ctx_, lib_id, kernel_map_);
 }
@@ -532,7 +586,7 @@ class VEDevice : public LocalDevice {
     ~VEDevice() override;
 
     Status Init(const SessionOptions& options, VEO* veo);
-    Status Sync() override { return Status::OK(); }
+    Status Sync() override;
 
     Allocator* GetAllocator(AllocatorAttributes attr) override {
       if (attr.on_host())
@@ -563,10 +617,10 @@ Status VEDevice::Init(const SessionOptions& options, VEO* veo) {
   VLOG(2) << "VEDevice::Init";
 #ifdef LOCK_VEO
   if (getenv("TF_NOLOCK_VEO")) {
-  VLOG(2) << "VEDevice::Init: VEO without lock is used";
+    VLOG(2) << "VEDevice::Init: VEO without lock is used";
     device_contexts_.push_back(new VEDeviceContextImpl(veo));
   } else {
-  VLOG(2) << "VEDevice::Init: VEO with lock is used";
+    VLOG(2) << "VEDevice::Init: VEO with lock is used";
     device_contexts_.push_back(new VEDeviceContextImplLock(veo));
   }
 #else
@@ -622,7 +676,7 @@ class VEOFactory {
 
       if (!veo_) {
 #if defined(VEO_ASYNC)
-          veo_ = new VEOAsync;
+        veo_ = new VEOAsync;
 #elif defined(LOCK_VEO2)
         if (getenv("TF_NOLOCK_VEO2")) {
           VLOG(2) << "VEOFactory: create VEO";
@@ -655,6 +709,21 @@ class VEOFactory {
     VEOFactory() = default;
     TF_DISALLOW_COPY_AND_ASSIGN(VEOFactory);
 };
+
+Status VEDevice::Sync() {
+  VLOG(2) << "VEDevice::Sync";
+#if 1
+  VEO* veo = NULL;
+  int nodeid = 0; // FIXME
+  Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
+  if (!s.ok())
+    return s;
+
+  return veo->sync();
+#else
+  return Status::OK();
+#endif
+}
 
 class VEDeviceFactory : public DeviceFactory {
   Status CreateDevices(const SessionOptions& options, const string& name_prefix,
@@ -732,15 +801,15 @@ Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, si
 
 #ifdef LOCK_VEO
 void VEDeviceContextImplLock::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
-                                                Tensor* device_tensor,
-                                                StatusCallback done) const {
+                                                    Tensor* device_tensor,
+                                                    StatusCallback done) const {
   mutex_lock guard(lock_);
   VEDeviceContextImpl::CopyCPUTensorToDevice(cpu_tensor, device, device_tensor, done);
 }
 
 void VEDeviceContextImplLock::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
-                                                Device* device, Tensor* cpu_tensor,
-                                                StatusCallback done) {
+                                                    Device* device, Tensor* cpu_tensor,
+                                                    StatusCallback done) {
   mutex_lock guard(lock_);
   VEDeviceContextImpl::CopyDeviceTensorToCPU(device_tensor, edge_name, device, cpu_tensor, done);
 }
@@ -751,6 +820,28 @@ Status VEDeviceContextImplLock::Compute(const std::string& name, const void* arg
   return VEDeviceContextImpl::Compute(name, arg, len);
 }
 #endif
+
+Status ve_get_timestamp(int nodeid, uint64_t* ts, double* resolution)
+{
+  VEO* veo = NULL;
+  Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
+  if (!s.ok())
+    return s;
+
+  return veo->get_timestamp(ts, resolution);
+}
+
+Status ve_set_trace_callback(int nodeid, VEO::cb_t cb, void* data)
+{
+  VLOG(2) << __FUNCTION__ << ": cb=" << reinterpret_cast<void*>(cb)
+    << " data=" << data;
+  VEO* veo = NULL;
+  Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
+  if (s.ok())
+    veo->setTraceCallback(cb, data);
+
+  return s;
+}
 
 } // namespace tensorflow
 

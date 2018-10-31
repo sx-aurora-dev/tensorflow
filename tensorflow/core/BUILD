@@ -2812,13 +2812,15 @@ tf_cuda_library(
 
 cc_library(
     name = "ve_runtime",
-    hdrs = ["common_runtime/ve/ve_device.h"],
+    hdrs = ["common_runtime/ve/ve_device.h",
+    "common_runtime/ve/ve_tracer.h"],
     alwayslink = 1,
 )
 
 cc_library(
     name = "ve_runtime_impl",
-    srcs = ["common_runtime/ve/ve_device.cc"],
+    srcs = ["common_runtime/ve/ve_device.cc",
+    "common_runtime/ve/ve_tracer.cc"],
     deps = [
         ":core_cpu_impl",
         ":ve_runtime",

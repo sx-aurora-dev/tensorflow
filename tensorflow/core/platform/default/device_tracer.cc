@@ -644,10 +644,88 @@ std::unique_ptr<DeviceTracer> CreateDeviceTracer() {
 
 #else  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+
+#if 0
+#include <stdlib.h>
+#include <memory>
+
+#include "tensorflow/core/common_runtime/step_stats_collector.h"
+#include "tensorflow/core/framework/step_stats.pb.h"
+#if 0
+#include "tensorflow/core/lib/core/errors.h"
+#endif
+#include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/lib/strings/stringprintf.h"
+#include "tensorflow/core/platform/env.h"
+#if 0
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/mem.h"
+#include "tensorflow/core/platform/mutex.h"
+#include "tensorflow/core/platform/tracing.h"
+#endif
+
+
+namespace tensorflow {
+
+namespace {
+
+class DeviceTracerImpl : public DeviceTracer {
+  public:
+    Status Start() override;
+    Status Stop() override;
+    Status Collect(StepStatsCollector *collector) override;
+
+  private:
+    int64 start_;
+};
+
+Status DeviceTracerImpl::Start() { 
+  start_ = Env::Default()->NowMicros();
+  return Status::OK(); 
+}
+Status DeviceTracerImpl::Stop() {
+  return Status::OK(); 
+}
+
+Status DeviceTracerImpl::Collect(StepStatsCollector *collector) {
+#if 0
+  NodeExecStats *ns = new NodeExecStats;
+  ns->set_all_start_micros(0);
+  ns->set_op_start_rel_micros(0);
+  auto elapsed_us = 10;
+  ns->set_op_end_rel_micros(elapsed_us);
+  ns->set_all_end_rel_micros(elapsed_us);
+  ns->set_node_name("hoge");
+
+  const string prefix = "";
+  const int id = 0;
+  const string stream_device =
+      strings::StrCat(prefix, "/device:VE:", id, "/stream:");
+  collector->Save(strings::StrCat(stream_device, "all"), ns);
+#endif
+
+  return Status::OK();
+}
+
+} // namespace
+
+std::unique_ptr<DeviceTracer> CreateDeviceTracer() {
+  std::unique_ptr<DeviceTracer> tracer(new DeviceTracerImpl());
+  return tracer;
+}
+
+}  // namespace tensorflow
+#endif
+
+#else // TENSORFLOW_USE_VE
+
 namespace tensorflow {
 
 std::unique_ptr<DeviceTracer> CreateDeviceTracer() { return nullptr; }
 
 }  // namespace tensorflow
+
+#endif // TENSORFLOW_USE_VE
 
 #endif  // GOOGLE_CUDA
