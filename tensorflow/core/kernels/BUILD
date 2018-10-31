@@ -3495,7 +3495,8 @@ tf_kernel_library(
     deps = NN_DEPS + if_cuda([
         ":reduction_ops",
         "@cub_archive//:cub",
-    ]),
+    ])
+    + if_ve(["//tensorflow/core:ve_runtime",]) ,
 )
 
 tf_kernel_library(
