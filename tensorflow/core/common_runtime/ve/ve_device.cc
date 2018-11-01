@@ -61,7 +61,6 @@ class VEO {
       if (s.ok()) {
         *ts = tmp.ts;
         *resolution = tmp.resolution;
-        fprintf(stderr, "VEO::get_timestamp: resolution=%lf\n", *resolution);
       }
 
       return s;
@@ -155,7 +154,7 @@ class VEO {
     void callbackTracer(const std::vector<std::string>& kernel_names,
                         const void* buf)
     {
-      VLOG(2) << "VEO::callbackTracer: cb_=" << cb_;
+      VLOG(2) << "VEO::callbackTracer: cb_=" << reinterpret_cast<void*>(cb_);
       if (cb_)
         cb_(0, kernel_names, buf, cb_data_);
     }
@@ -216,8 +215,8 @@ class KernelStack
     }
 
     int push(uint64_t sym, const void* arg, size_t len) {
-      VLOG(2) << "KernelStack::push: len=" << len << " size=" << size()
-        << " curr_=" << curr_ << " buf_=" << buf_;
+      VLOG(2) << "KernelStack::push: num_kernels=" << num_kernels_
+        << " len=" << len << " size=" << size();
 
       size_t sz = sizeof(uint64_t) + sizeof(size_t) + len;
       if (curr_ + sz >= top_) {
@@ -287,10 +286,12 @@ class VEOAsync : public VEO
     }
 
     virtual Status compute(const std::string& name, const void* arg, size_t len) {
-      VLOG(2) << "VEOAsync::compute: name=" << name << " len=" << len;
+      mutex_lock guard(lock_);
+
+      VLOG(2) << "VEOAsync::compute: num_kernels=" << stack_.num_kernels()
+        << " name=" << name << " len=" << len;
       uint64_t sym = VEO::find_kernel_sym(name);
 
-      mutex_lock guard(lock_);
 
       if (isTracerEnabled())
         kernel_names_.push_back(name);
@@ -330,12 +331,12 @@ class VEOAsync : public VEO
         if (s.ok()) {
           callbackTracer(kernel_names_, buf_out);
 
-#if 0
+#if 1
           double hz = *reinterpret_cast<double*>(buf_out);
           uint64_t* pcyc = reinterpret_cast<uint64_t*>(
               reinterpret_cast<uintptr_t>(buf_out) + sizeof(double));
           for (int i = 0; i < n; ++i) {
-            VLOG(2) << "VEOAsync::sync: name " << kernel_names_[i]
+            VLOG(2) << "VEOAsync::sync: i=" << i << " name " << kernel_names_[i]
               << " time " << (pcyc[2*i+1]-pcyc[2*i]) * 1e6 / hz << " us";
           }
 #endif
