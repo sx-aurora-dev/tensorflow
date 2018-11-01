@@ -111,7 +111,7 @@ REGISTER_KERNEL_BUILDER(
     SoftmaxOp<SYCLDevice, double>);
 #endif  // TENSORFLOW_USE_SYCL
 
-#ifdef TENSORFLOW_USE_VE
+#if 0 //def TENSORFLOW_USE_VE
 
 template <typename T>
 class SoftmaxOp<VEDevice, T> : public OpKernel {
