@@ -83,17 +83,17 @@ Work in the virtualenv.
 ~~~
 % cd <working directory>
 % git clone <url of vednn> vednn
-% git clone <url of libvetfkernel> libvetfkernel
+% git clone <url of vetfkernel> vetfkernel
 % git clone <url of sampels> samples
 % cd vednn
 % mkdir build
 % cd build
 % cmake3 ..
 % make & make install
-% cd ../../lbvetfkernel
+% cd ../../vetfkernel
 % mkdir build
 % cd build
-% cmake3 -DVEDNN_PATH=../../vednn/build ../../libvetfkernel
+% cmake3 -DVEDNN_PATH=../../vednn/build ../../vetfkernel
 % make
 % cd ../../samples
 % ./mk_veorun.sh
