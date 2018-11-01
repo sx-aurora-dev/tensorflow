@@ -753,7 +753,7 @@ class VEBinaryOp : public BinaryOpShared {
 
 
       VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args));
+      Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args), this);
       if (!s.ok())
         context->SetStatus(s);
 

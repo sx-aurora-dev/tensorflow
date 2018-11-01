@@ -57,7 +57,7 @@ class VEO {
       veo_args_set_stack(a.args, VEO_INTENT_OUT, 0, (char*)&tmp, len);
       veo_args_set_i64(a.args, 1, len);
 
-      Status s = call(sym_get_timestamp_, a);
+      Status s = call_and_wait(sym_get_timestamp_, a);
       if (s.ok()) {
         *ts = tmp.ts;
         *resolution = tmp.resolution;
@@ -92,10 +92,11 @@ class VEO {
       return veo_read_mem(proc_, vh_buff, ve_addr, len);
     }
 
-    virtual Status compute(const std::string& name, const void* arg, size_t len) {
+    virtual Status compute(const std::string& name, const void* arg, size_t len,
+                           const OpKernel* op) {
       VLOG(2) << "VEO::compute: name=" << name;
       uint64_t sym = find_kernel_sym(name);
-      return call(sym, arg, len);
+      return call_and_wait(sym, arg, len);
     }
 
     virtual Status init(int nodeid);
@@ -113,7 +114,29 @@ class VEO {
       return veo_get_sym(proc_, lib_id, name);
     }
 
-    virtual Status call(uint64_t sym, const Args& a) {
+    virtual uint64_t call(uint64_t sym, const Args& a) {
+      uint64_t req_id = veo_call_async(ctx_, sym, a.args);
+      VLOG(2) << "VEO::call: return from veo_call_async. req_id=" << req_id;
+
+      return req_id;
+    }
+
+    virtual Status wait(uint64_t req_id) {
+      VLOG(2) << "VEO::call: call veo_wait_result for req_id=" << req_id;
+      uint64_t retval;
+      int ret = veo_call_wait_result(ctx_, req_id, &retval);
+      VLOG(2) << "VEO::call: return from veo_wait_result."
+        << " req_id=" << req_id << " ret=" << ret << " retval=" << retval;
+      if (ret != 0)
+        return errors::Internal("Failed to wait kernel result");
+      if (retval != 0)
+        return errors::Internal("Failed in the kernel");
+
+      return Status::OK();
+    }
+
+    virtual Status call_and_wait(uint64_t sym, const Args& a) {
+#if 0
       uint64_t req_id = veo_call_async(ctx_, sym, a.args);
       VLOG(2) << "VEO::call: return from veo_call_async. req_id=" << req_id;
       if (req_id == VEO_REQUEST_ID_INVALID)
@@ -130,17 +153,23 @@ class VEO {
         return errors::Internal("Failed in the kernel");
 
       return Status::OK();
+#else
+      uint64_t req_id = call(sym, a);
+      if (req_id == VEO_REQUEST_ID_INVALID)
+        return errors::Internal("Failed to call kernel");
+      return wait(req_id);
+#endif
     }
 
-    virtual Status call(uint64_t sym, const void* arg, size_t len) {
+    virtual Status call_and_wait(uint64_t sym, const void* arg, size_t len) {
       Args a;
       veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
       veo_args_set_i64(a.args, 1, len);
 
-      return call(sym, a);
+      return call_and_wait(sym, a);
     }
 
-    virtual Status call(uint64_t sym, const void* arg_in, size_t len_in, 
+    virtual Status call_and_wait(uint64_t sym, const void* arg_in, size_t len_in, 
                         const void* arg_out, size_t len_out) {
       Args a;
       veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg_in, len_in);
@@ -148,7 +177,7 @@ class VEO {
       veo_args_set_stack(a.args, VEO_INTENT_OUT, 2, (char*)arg_out, len_out);
       veo_args_set_i64(a.args, 3, len_out);
 
-      return call(sym, a);
+      return call_and_wait(sym, a);
     }
 
     void callbackTracer(const std::vector<std::string>& kernel_names,
@@ -193,10 +222,11 @@ class VEOLock : public VEO {
       return VEO::read_mem(vh_buff, ve_addr, len);
     }
 
-    Status compute(const std::string& name, const void* arg, size_t len) {
+    Status compute(const std::string& name, const void* arg, size_t len,
+                   const OpKernel* op) {
       VLOG(2) << "VEOLock::compute: this=" << this;
       mutex_lock guard(lock_);
-      return VEO::compute(name, arg, len);
+      return VEO::compute(name, arg, len, op);
     }
 
   private:
@@ -285,16 +315,20 @@ class VEOAsync : public VEO
       return VEO::read_mem(vh_buff, ve_addr, len);
     }
 
-    virtual Status compute(const std::string& name, const void* arg, size_t len) {
+    virtual Status compute(const std::string& name, const void* arg, size_t len,
+                           const OpKernel* op) {
       mutex_lock guard(lock_);
 
       VLOG(2) << "VEOAsync::compute: num_kernels=" << stack_.num_kernels()
         << " name=" << name << " len=" << len;
       uint64_t sym = VEO::find_kernel_sym(name);
 
-
-      if (isTracerEnabled())
-        kernel_names_.push_back(name);
+      if (isTracerEnabled()) {
+        if (op)
+          annotation_.push_back(strings::StrCat(op->name(), ":", op->type_string()));
+        else
+          annotation_.push_back(name);
+      }
 
       if (stack_.push(sym, arg, len) != 0)
         return errors::Internal("Failed to push kernel");
@@ -326,25 +360,25 @@ class VEOAsync : public VEO
         std::vector<char> tmp(len_out);
         void* buf_out = tmp.data();
 
-        s = VEO::call(sym_prof_, buf, len, buf_out, len_out);
+        s = VEO::call_and_wait(sym_prof_, buf, len, buf_out, len_out);
 
         if (s.ok()) {
-          callbackTracer(kernel_names_, buf_out);
+          callbackTracer(annotation_, buf_out);
 
 #if 1
           double hz = *reinterpret_cast<double*>(buf_out);
           uint64_t* pcyc = reinterpret_cast<uint64_t*>(
               reinterpret_cast<uintptr_t>(buf_out) + sizeof(double));
           for (int i = 0; i < n; ++i) {
-            VLOG(2) << "VEOAsync::sync: i=" << i << " name " << kernel_names_[i]
+            VLOG(2) << "VEOAsync::sync: i=" << i << " " << annotation_[i]
               << " time " << (pcyc[2*i+1]-pcyc[2*i]) * 1e6 / hz << " us";
           }
 #endif
         }
 
-        kernel_names_.clear();
+        annotation_.clear();
       } else {
-        s = VEO::call(sym_noprof_, buf, len);
+        s = VEO::call_and_wait(sym_noprof_, buf, len);
       }
 
       stack_.clear();
@@ -353,7 +387,7 @@ class VEOAsync : public VEO
     }
 
     mutex lock_;
-    std::vector<std::string> kernel_names_;
+    std::vector<std::string> annotation_;
     KernelStack stack_;
     uint64_t sym_prof_;
     uint64_t sym_noprof_;
@@ -546,7 +580,8 @@ class VEDeviceContextImpl : public VEDeviceContext {
                                        Device* device, Tensor* cpu_tensor,
                                        StatusCallback done) override;
 
-    virtual Status Compute(const std::string& name, const void* arg, size_t len);
+    virtual Status Compute(const std::string& name, const void* arg, size_t len,
+                           const OpKernel* op);
 
   private:
     VEO* veo_;
@@ -565,7 +600,8 @@ class VEDeviceContextImplLock : public VEDeviceContextImpl {
                                        Device* device, Tensor* cpu_tensor,
                                        StatusCallback done) override;
 
-    virtual Status Compute(const std::string& name, const void* arg, size_t len);
+    virtual Status Compute(const std::string& name, const void* arg, size_t len,
+                           const OpKernel* op);
 
   private:
     mutable mutex lock_;
@@ -794,10 +830,11 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
   done(Status::OK());
 }
 
-Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len)
+Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len,
+                                    const OpKernel* op)
 {
   VLOG(2) << "VEDeviceContextImpl::Compute: name=" << name;
-  return veo_->compute(name, arg, len);
+  return veo_->compute(name, arg, len, op);
 }
 
 #ifdef LOCK_VEO
@@ -815,10 +852,11 @@ void VEDeviceContextImplLock::CopyDeviceTensorToCPU(const Tensor* device_tensor,
   VEDeviceContextImpl::CopyDeviceTensorToCPU(device_tensor, edge_name, device, cpu_tensor, done);
 }
 
-Status VEDeviceContextImplLock::Compute(const std::string& name, const void* arg, size_t len)
+Status VEDeviceContextImplLock::Compute(const std::string& name, const void* arg, size_t len,
+                                        const OpKernel* op)
 {
   mutex_lock guard(lock_);
-  return VEDeviceContextImpl::Compute(name, arg, len);
+  return VEDeviceContextImpl::Compute(name, arg, len, op);
 }
 #endif
 
