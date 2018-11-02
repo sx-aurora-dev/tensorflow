@@ -24,27 +24,21 @@ class VEO {
   public:
     struct Args {
       struct veo_args* args; // FIXME: private
-      Args(bool do_alloc = true)  {
-        if (do_alloc)
-          args = veo_args_alloc();
-        else
-          args = NULL;
+      Args() { args = veo_args_alloc(); }
+      Args(const void* p, size_t len) {
+        args = veo_args_alloc();
+        set(p, len);
       }
-      ~Args() { 
-        if (args)
-          veo_args_free(args); 
+      Args(const void* pIn, size_t lenIn, void* pOut, size_t lenOut) {
+        args = veo_args_alloc();
+        set(pIn, lenIn, pOut, lenOut);
       }
+      ~Args() { veo_args_free(args); }
       void set(const void* p, size_t len) {
-        if (!args)
-          args = veo_args_alloc();
-        // FIXME check args
         veo_args_set_stack(args, VEO_INTENT_IN, 0, (char*)p, len);
         veo_args_set_i64(args, 1, len);
       }
       void set(const void* pIn, size_t lenIn, void* pOut, size_t lenOut) {
-        if (!args)
-          args = veo_args_alloc();
-        // FIXME check args
         veo_args_set_stack(args, VEO_INTENT_IN, 0, (char*)pIn, lenIn);
         veo_args_set_i64(args, 1, lenIn);
         veo_args_set_stack(args, VEO_INTENT_OUT, 2, (char*)pOut, lenOut);
@@ -169,47 +163,6 @@ class VEO {
         return errors::Internal("Failed to call kernel");
       return wait(req_id);
     }
-
-#if 0
-    virtual uint64_t call(uint64_t sym, const void* arg, size_t len) {
-      VLOG(2) << "VEO::call: arg=" << arg << " len=" << len;
-      Args a;
-      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
-      veo_args_set_i64(a.args, 1, len);
-
-      return call(sym, a);
-    }
-
-    virtual uint64_t call(uint64_t sym, const void* arg_in, size_t len_in, 
-                          const void* arg_out, size_t len_out) {
-      Args a;
-      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg_in, len_in);
-      veo_args_set_i64(a.args, 1, len_in);
-      veo_args_set_stack(a.args, VEO_INTENT_OUT, 2, (char*)arg_out, len_out);
-      veo_args_set_i64(a.args, 3, len_out);
-
-      return call(sym, a);
-    }
-
-    virtual Status call_and_wait(uint64_t sym, const void* arg, size_t len) {
-      Args a;
-      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
-      veo_args_set_i64(a.args, 1, len);
-
-      return call_and_wait(sym, a);
-    }
-
-    virtual Status call_and_wait(uint64_t sym, const void* arg_in, size_t len_in, 
-                        const void* arg_out, size_t len_out) {
-      Args a;
-      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg_in, len_in);
-      veo_args_set_i64(a.args, 1, len_in);
-      veo_args_set_stack(a.args, VEO_INTENT_OUT, 2, (char*)arg_out, len_out);
-      veo_args_set_i64(a.args, 3, len_out);
-
-      return call_and_wait(sym, a);
-    }
-#endif
 
     void callbackTracer(const std::vector<std::string>& kernel_names,
                         const void* buf)
@@ -434,7 +387,7 @@ class VEOAsync : public VEOLock
 
       uint64_t req_id;
       char* buf_out = nullptr;
-      Args args(false); // args might have to be alive untill wait
+      Args args;
       size_t len = stack->size();
       void* buf = stack->buf();
       *reinterpret_cast<int32_t*>(buf) = n;
