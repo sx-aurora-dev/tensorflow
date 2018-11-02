@@ -81,7 +81,7 @@ void VEDeviceTracer::callback(int nodeid,
     uint64_t t1 = pcyc[i*2+1];
 #if 0
     VLOG(2) << "VEDeviceTracer::callback: kernel=" 
-      << kernel_names[i] << " time=" << (t1-t0)*1e6/hz << " us";
+      << kernel_names[i] << " t0=" << t0 << " t1=" << t1;
 #endif
 
     stats_.push_back(KernelStats{nodeid, kernel_names[i], t0, t1});
