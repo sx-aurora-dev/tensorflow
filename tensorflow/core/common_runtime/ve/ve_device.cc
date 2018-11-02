@@ -385,41 +385,36 @@ class VEOAsync : public VEOLock
 
       // here, curren thread is only one holder of the stack
 
-      uint64_t req_id;
-      char* buf_out = nullptr;
       Args args;
       size_t len = stack->size();
       void* buf = stack->buf();
       *reinterpret_cast<int32_t*>(buf) = n;
+      Status s;
 
       if (isTracerEnabled()) {
         size_t len_out = sizeof(double) + sizeof(uint64_t) * n * 2;
-        buf_out = new char[len_out];
-        args.set(buf, len, buf_out, len_out);
-        req_id = call(sym_prof_, args);
+        std::vector<char> buf_out(len_out);
+        args.set(buf, len, buf_out.data(), len_out);
+        s = call_and_wait(sym_prof_, args);
+
+        if (s.ok()) {
+          callbackTracer(stack->annotations(), buf_out.data());
+
+#if 0
+          double hz = *reinterpret_cast<double*>(buf_out);
+          uint64_t* pcyc = reinterpret_cast<uint64_t*>(
+              reinterpret_cast<uintptr_t>(buf_out) + sizeof(double));
+          for (int i = 0; i < n; ++i) {
+            VLOG(2) << "VEOAsync::sync: i=" << i << " t0=" << pcyc[2*i]
+              << " t1=" << pcyc[2*i+1];
+            VLOG(2) << "VEOAsync::sync: i=" << i << " " << stack->annotations()[i]
+              << " time " << (pcyc[2*i+1]-pcyc[2*i]) * 1e6 / hz << " us";
+          }
+#endif
+        }
       } else {
         args.set(buf, len);
-        req_id = call(sym_noprof_, args);
-      }
-
-      Status s = wait(req_id);
-
-      if (isTracerEnabled() && s.ok()) {
-        callbackTracer(stack->annotations(), buf_out);
-
-#if 1
-        double hz = *reinterpret_cast<double*>(buf_out);
-        uint64_t* pcyc = reinterpret_cast<uint64_t*>(
-            reinterpret_cast<uintptr_t>(buf_out) + sizeof(double));
-        for (int i = 0; i < n; ++i) {
-          VLOG(2) << "VEOAsync::sync: i=" << i << " t0=" << pcyc[2*i]
-            << " t1=" << pcyc[2*i+1];
-          VLOG(2) << "VEOAsync::sync: i=" << i << " " << stack->annotations()[i]
-            << " time " << (pcyc[2*i+1]-pcyc[2*i]) * 1e6 / hz << " us";
-        }
-#endif
-
-        delete[] buf_out;
+        s = call_and_wait(sym_noprof_, args);
       }
 
       stack->clear();
