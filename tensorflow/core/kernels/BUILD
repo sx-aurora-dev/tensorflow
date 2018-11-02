@@ -771,7 +771,7 @@ tf_kernel_library(
 tf_kernel_library(
     name = "pack_op",
     prefix = "pack_op",
-    deps = ARRAY_DEPS,
+    deps = ARRAY_DEPS + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -2944,7 +2944,8 @@ tf_kernel_library(
     name = "reduction_ops",
     gpu_srcs = ["reduction_gpu_kernels.cu.h"],
     prefix = "reduction_ops",
-    deps = MATH_DEPS + [":transpose_functor"] + if_cuda(["@cub_archive//:cub"]),
+    deps = MATH_DEPS + [":transpose_functor"] + if_cuda(["@cub_archive//:cub"])
+           + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
