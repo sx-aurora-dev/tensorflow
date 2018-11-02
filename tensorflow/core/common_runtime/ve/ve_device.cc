@@ -24,9 +24,33 @@ namespace {
 class VEO {
   public:
     struct Args {
-      struct veo_args* args;
-      Args() : args(veo_args_alloc()) { }
-      ~Args() { veo_args_free(args); }
+      struct veo_args* args; // FIXME: private
+      Args(bool do_alloc = true)  {
+        if (do_alloc)
+          args = veo_args_alloc();
+        else
+          args = NULL;
+      }
+      ~Args() { 
+        if (args)
+          veo_args_free(args); 
+      }
+      void set(const void* p, size_t len) {
+        if (!args)
+          args = veo_args_alloc();
+        // FIXME check args
+        veo_args_set_stack(args, VEO_INTENT_IN, 0, (char*)p, len);
+        veo_args_set_i64(args, 1, len);
+      }
+      void set(const void* pIn, size_t lenIn, void* pOut, size_t lenOut) {
+        if (!args)
+          args = veo_args_alloc();
+        // FIXME check args
+        veo_args_set_stack(args, VEO_INTENT_IN, 0, (char*)pIn, lenIn);
+        veo_args_set_i64(args, 1, lenIn);
+        veo_args_set_stack(args, VEO_INTENT_IN, 2, (char*)pOut, lenOut);
+        veo_args_set_i64(args, 3, lenOut);
+      }
     };
 
     VEO() : cb_(nullptr) {}
@@ -161,6 +185,26 @@ class VEO {
 #endif
     }
 
+    virtual uint64_t call(uint64_t sym, const void* arg, size_t len) {
+      VLOG(2) << "VEO::call: arg=" << arg << " len=" << len;
+      Args a;
+      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
+      veo_args_set_i64(a.args, 1, len);
+
+      return call(sym, a);
+    }
+
+    virtual uint64_t call(uint64_t sym, const void* arg_in, size_t len_in, 
+                          const void* arg_out, size_t len_out) {
+      Args a;
+      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg_in, len_in);
+      veo_args_set_i64(a.args, 1, len_in);
+      veo_args_set_stack(a.args, VEO_INTENT_OUT, 2, (char*)arg_out, len_out);
+      veo_args_set_i64(a.args, 3, len_out);
+
+      return call(sym, a);
+    }
+
     virtual Status call_and_wait(uint64_t sym, const void* arg, size_t len) {
       Args a;
       veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
@@ -169,6 +213,7 @@ class VEO {
       return call_and_wait(sym, a);
     }
 
+#if 1
     virtual Status call_and_wait(uint64_t sym, const void* arg_in, size_t len_in, 
                         const void* arg_out, size_t len_out) {
       Args a;
@@ -179,6 +224,7 @@ class VEO {
 
       return call_and_wait(sym, a);
     }
+#endif
 
     void callbackTracer(const std::vector<std::string>& kernel_names,
                         const void* buf)
@@ -201,28 +247,28 @@ class VEO {
 #ifdef LOCK_VEO2
 class VEOLock : public VEO {
   public:
-    uint64_t alloc_mem(size_t size) {
+    virtual uint64_t alloc_mem(size_t size) {
       VLOG(2) << "VEOLock::alloc_mem: this=" << this;
       mutex_lock guard(lock_);
       return VEO::alloc_mem(size);
     }
 
-    int free_mem(uint64_t addr) {
+    virtual int free_mem(uint64_t addr) {
       mutex_lock guard(lock_);
       return VEO::free_mem(addr);
     }
 
-    int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
+    virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
       mutex_lock guard(lock_);
       return VEO::write_mem(ve_addr, vh_buff, len);
     }
 
-    int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
+    virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
       mutex_lock guard(lock_);
       return VEO::read_mem(vh_buff, ve_addr, len);
     }
 
-    Status compute(const std::string& name, const void* arg, size_t len,
+    virtual Status compute(const std::string& name, const void* arg, size_t len,
                    const OpKernel* op) {
       VLOG(2) << "VEOLock::compute: this=" << this;
       mutex_lock guard(lock_);
@@ -244,9 +290,12 @@ class KernelStack
       top_ = curr_ + buf_size_;
     }
 
-    int push(uint64_t sym, const void* arg, size_t len) {
+    int push(uint64_t sym, const void* arg, size_t len, 
+             const std::string& annotation) {
+#if 0
       VLOG(2) << "KernelStack::push: num_kernels=" << num_kernels_
         << " len=" << len << " size=" << size();
+#endif
 
       size_t sz = sizeof(uint64_t) + sizeof(size_t) + len;
       if (curr_ + sz >= top_) {
@@ -264,6 +313,8 @@ class KernelStack
       memcpy(reinterpret_cast<void*>(curr_), arg, len);
       curr_ += len;
 
+      annotations_.push_back(annotation); // FIXME: don't store when !isTracerEnabled
+
       return 0;
     }
 
@@ -273,7 +324,9 @@ class KernelStack
     void clear() {
       curr_ = reinterpret_cast<uintptr_t>(buf_) + sizeof(int32_t);
       num_kernels_ = 0;
+      annotations_.clear();
     }
+    const std::vector<std::string>& annotations() const { return annotations_; }
 
   private:
     size_t buf_size_;
@@ -281,13 +334,22 @@ class KernelStack
     void* buf_;
     uintptr_t top_;
     uintptr_t curr_;
+    std::vector<std::string> annotations_;
 };
 
 #ifdef VEO_ASYNC
 class VEOAsync : public VEO
 {
   public:
-    VEOAsync() : stack_(10*1024*1024) {}
+    VEOAsync() 
+      : stack_size_(10*1024*1024) {
+#if 0
+        for (int i = 0; i < 9; ++i) {
+          stack_pool_.push_back(new KernelStack(stack_size_));
+        }
+#endif
+        currStack_ = new KernelStack(stack_size_);
+      }
 
     Status init(int nodeid) {
       Status s = VEO::init(nodeid);
@@ -303,46 +365,183 @@ class VEOAsync : public VEO
       return Status::OK();
     }
 
+    virtual uint64_t alloc_mem(size_t size) {
+      mutex_lock guard(lock_veo_);
+      return VEO::alloc_mem(size);
+    }
+
+    virtual int free_mem(uint64_t addr) {
+      mutex_lock guard(lock_veo_);
+      return VEO::free_mem(addr);
+    }
+
     virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
-      mutex_lock guard(lock_);
-      sync_nolock();
+      sync();
+      mutex_lock guard(lock_veo_);
       return VEO::write_mem(ve_addr, vh_buff, len);
     }
 
     virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
-      mutex_lock guard(lock_);
-      sync_nolock();
+      sync();
+      mutex_lock guard(lock_veo_);
       return VEO::read_mem(vh_buff, ve_addr, len);
     }
 
     virtual Status compute(const std::string& name, const void* arg, size_t len,
                            const OpKernel* op) {
-      mutex_lock guard(lock_);
+      mutex_lock guard(lock_stack_);
 
-      VLOG(2) << "VEOAsync::compute: num_kernels=" << stack_.num_kernels()
+#if 1
+      VLOG(2) << "VEOAsync::compute: this=" << this
+        << " currStack_=" << currStack_
+        << " num_kernels=" << currStack_->num_kernels()
         << " name=" << name << " len=" << len;
+#endif
       uint64_t sym = VEO::find_kernel_sym(name);
 
+      std::string annotation;
       if (isTracerEnabled()) {
         if (op)
-          annotation_.push_back(strings::StrCat(op->name(), ":", op->type_string()));
+          annotation = strings::StrCat(op->name(), ":", op->type_string());
         else
-          annotation_.push_back(name);
+          annotation = name;
       }
 
-      if (stack_.push(sym, arg, len) != 0)
+      if (currStack_->push(sym, arg, len, annotation) != 0)
         return errors::Internal("Failed to push kernel");
       return Status::OK();
     }
 
     Status sync() {
-      mutex_lock guard(lock_);
-      return sync_nolock();
+      return sync_();
     }
 
   private:
-    // with holding lock
-    Status sync_nolock() {
+
+#if 0
+    KernelStack* swap() {
+      mutex_lock guard_stack(lock_stack_);
+
+      int32_t n = currStack_->num_kernels();
+      VLOG(2) << "VEOAsync::sync: num_kernels=" << n;
+
+      if (n == 0)
+        return nullptr;
+
+      KernelStack* stack = currStack_;
+      if (stack_pool_.size() > 0) {
+        currStack_ = stack_pool_.back();
+        stack_pool_.pop_back();
+      } else {
+        currStack_ = new KernelStack(stack_size_);
+      }
+
+      return stack;
+    }
+#endif
+
+#if 1
+    Status sync_() {
+#if 1
+      mutex_lock guard_sync(lock_sync_);
+      //mutex_lock guard_stack(lock_stack_);
+#endif
+
+      int32_t n;
+      KernelStack* stack;
+
+#if 1
+      {
+        mutex_lock guard_stack(lock_stack_);
+
+        n = currStack_->num_kernels();
+        //VLOG(2) << "VEOAsync::sync: num_kernels=" << n;
+
+        if (n == 0)
+          return Status::OK();
+
+        stack = currStack_;
+        if (stack_pool_.size() > 0) {
+          currStack_ = stack_pool_.back();
+          stack_pool_.pop_back();
+        } else {
+          currStack_ = new KernelStack(stack_size_);
+        }
+
+        VLOG(2) << "VEOAsync::sync: this=" << this << " stack=" << stack
+          << " num_kernels=" << n
+          << " currStack_=" << currStack_;
+      }
+#else
+      stack = swap();
+      if (!stack)
+        return Status::OK();
+      n = stack->num_kernels();
+#endif
+
+      // here, curren thread is only one holder of the stack
+
+      uint64_t req_id;
+      char* buf_out = nullptr;
+      Args args(false); // args might have to be alive untill wait
+      size_t len = stack->size();
+      void* buf = stack->buf();
+      *reinterpret_cast<int32_t*>(buf) = n;
+
+#if 1
+      //VLOG(2) << "VEOAsync::sync_: before lock";
+      mutex_lock guard_veo(lock_veo_);
+      //VLOG(2) << "VEOAsync::sync_: after lock";
+#endif
+
+      if (isTracerEnabled()) {
+        size_t len_out = sizeof(double) + sizeof(uint64_t) * n * 2;
+        buf_out = new char[len_out];
+        args.set(buf, len, buf_out, len_out);
+        req_id = VEO::call(sym_prof_, args);
+      } else {
+        args.set(buf, len);
+        req_id = VEO::call(sym_noprof_, args);
+      }
+
+      Status s = VEO::wait(req_id);
+
+      if (isTracerEnabled() && s.ok()) {
+        callbackTracer(stack->annotations(), buf_out);
+
+#if 1
+        double hz = *reinterpret_cast<double*>(buf_out);
+        uint64_t* pcyc = reinterpret_cast<uint64_t*>(
+            reinterpret_cast<uintptr_t>(buf_out) + sizeof(double));
+        for (int i = 0; i < n; ++i) {
+          VLOG(2) << "VEOAsync::sync: i=" << i << " " << stack->annotations()[i]
+            << " time " << (pcyc[2*i+1]-pcyc[2*i]) * 1e6 / hz << " us";
+        }
+
+#endif
+        delete[] buf_out;
+      }
+
+      stack->clear();
+
+#if 0
+      {
+        mutex_lock guard_stack2(lock_stack_);
+        stack_pool_.push_back(stack);
+      }
+#endif
+
+      VLOG(2) << "VEOAsync::sync: done stack=" << stack
+        << " currStack_=" << currStack_;
+      return s;
+    }
+#endif
+
+#if 0
+    Status sync_() {
+      mutex_lock guard_stack(lock_stack_);
+      mutex_lock guard_veo(lock_veo_);
+
       int32_t n = stack_.num_kernels();
       VLOG(2) << "VEOAsync::sync: num_kernels=" << n;
 
@@ -360,7 +559,12 @@ class VEOAsync : public VEO
         std::vector<char> tmp(len_out);
         void* buf_out = tmp.data();
 
+#if 0
         s = VEO::call_and_wait(sym_prof_, buf, len, buf_out, len_out);
+#else
+        uint64_t req_id = VEO::call(sym_prof_, buf, len, buf_out, len_out);
+        s = VEO::wait(req_id);
+#endif
 
         if (s.ok()) {
           callbackTracer(annotation_, buf_out);
@@ -378,17 +582,33 @@ class VEOAsync : public VEO
 
         annotation_.clear();
       } else {
+#if 0
         s = VEO::call_and_wait(sym_noprof_, buf, len);
+#else
+        Args a;
+        veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)buf, len);
+        veo_args_set_i64(a.args, 1, len);
+        uint64_t req_id = VEO::call(sym_noprof_, a);
+        s = VEO::wait(req_id);
+#endif
       }
 
       stack_.clear();
 
       return s;
     }
+#endif
 
-    mutex lock_;
-    std::vector<std::string> annotation_;
-    KernelStack stack_;
+    mutex lock_veo_;
+    mutex lock_stack_;
+    mutex lock_sync_;
+
+    std::vector<KernelStack*> stack_pool_;
+    KernelStack* currStack_;
+    size_t stack_size_;
+
+    //std::vector<std::string> annotation_;
+    //KernelStack stack_;
     uint64_t sym_prof_;
     uint64_t sym_noprof_;
 };
