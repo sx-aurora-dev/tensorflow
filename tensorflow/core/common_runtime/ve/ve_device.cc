@@ -243,7 +243,7 @@ class KernelStack
     }
 
     int push(uint64_t sym, const void* arg, size_t len, 
-             const std::string& annotation) {
+             const std::string* annotation) {
 #if 0
       VLOG(2) << "KernelStack::push: num_kernels=" << num_kernels_
         << " len=" << len << " size=" << size();
@@ -257,7 +257,7 @@ class KernelStack
 
       ++num_kernels_;
 
-      // push to stack
+      // copy to buf
       *reinterpret_cast<uint64_t*>(curr_) = sym;
       curr_ += sizeof(uint64_t);
       *reinterpret_cast<size_t*>(curr_) = len;
@@ -265,7 +265,8 @@ class KernelStack
       memcpy(reinterpret_cast<void*>(curr_), arg, len);
       curr_ += len;
 
-      annotations_.push_back(annotation); // FIXME: don't store when !isTracerEnabled
+      if (annotation)
+        annotations_.push_back(*annotation);
 
       return 0;
     }
@@ -334,7 +335,7 @@ class VEOAsync : public VEOLock
                            const OpKernel* op) override {
       mutex_lock guard(lock_stack_);
 
-#if 1
+#if 0
       VLOG(2) << "VEOAsync::compute: this=" << this
         << " currStack_=" << currStack_
         << " num_kernels=" << currStack_->num_kernels()
@@ -342,50 +343,57 @@ class VEOAsync : public VEOLock
 #endif
       uint64_t sym = find_kernel_sym(name);
 
-      std::string annotation;
+      int ret;
       if (isTracerEnabled()) {
+        std::string annotation;
         if (op)
           annotation = strings::StrCat(op->name(), ":", op->type_string());
         else
           annotation = name;
+        ret = currStack_->push(sym, arg, len, &annotation); 
+      } else {
+        ret = currStack_->push(sym, arg, len, nullptr); 
       }
 
-      if (currStack_->push(sym, arg, len, annotation) != 0)
+      if (ret != 0)
         return errors::Internal("Failed to push kernel");
+
       return Status::OK();
     }
 
     Status sync() override {
+      // Only one thread can sync at once.
       mutex_lock guard_sync(lock_sync_);
 
-      int32_t n;
-      KernelStack* stack;
+      if (currStack_->num_kernels() == 0)
+        return Status::OK();
+
+      KernelStack* stack = currStack_;
+      KernelStack* nextStack;
+      if (stack_pool_.size() > 0) {
+          nextStack = stack_pool_.back();
+          stack_pool_.pop_back();
+      } else {
+        nextStack = new KernelStack(stack_size_);
+      }
 
       {
         mutex_lock guard_stack(lock_stack_);
 
-        n = currStack_->num_kernels();
-        //VLOG(2) << "VEOAsync::sync: num_kernels=" << n;
-
-        if (n == 0)
-          return Status::OK();
-
-        stack = currStack_;
-        if (stack_pool_.size() > 0) {
-          currStack_ = stack_pool_.back();
-          stack_pool_.pop_back();
-        } else {
-          currStack_ = new KernelStack(stack_size_);
-        }
-
+        currStack_ = nextStack;
+#if 0
         VLOG(2) << "VEOAsync::sync: this=" << this << " stack=" << stack
           << " num_kernels=" << n
           << " currStack_=" << currStack_;
+#endif
       }
 
       // here, curren thread is only one holder of the stack
 
-      Args args;
+      // Set n again because new kernel might be pushed to the stack.
+      int32_t n = stack->num_kernels();
+      VLOG(2) << "VEOAsync::sync: num_kernels=" << n;
+
       size_t len = stack->size();
       void* buf = stack->buf();
       *reinterpret_cast<int32_t*>(buf) = n;
@@ -394,7 +402,7 @@ class VEOAsync : public VEOLock
       if (isTracerEnabled()) {
         size_t len_out = sizeof(double) + sizeof(uint64_t) * n * 2;
         std::vector<char> buf_out(len_out);
-        args.set(buf, len, buf_out.data(), len_out);
+        Args args(buf, len, buf_out.data(), len_out);
         s = call_and_wait(sym_prof_, args);
 
         if (s.ok()) {
@@ -413,19 +421,17 @@ class VEOAsync : public VEOLock
 #endif
         }
       } else {
-        args.set(buf, len);
+        Args args(buf, len);
         s = call_and_wait(sym_noprof_, args);
       }
 
       stack->clear();
+      stack_pool_.push_back(stack);
 
-      {
-        mutex_lock guard_stack2(lock_stack_);
-        stack_pool_.push_back(stack);
-      }
-
+#if 0
       VLOG(2) << "VEOAsync::sync: done ok=" << s.ok() << " stack=" << stack
         << " currStack_=" << currStack_;
+#endif
       return s;
     }
 
@@ -800,7 +806,6 @@ class VEOFactory {
 
 Status VEDevice::Sync() {
   VLOG(2) << "VEDevice::Sync";
-#if 1
   VEO* veo = NULL;
   int nodeid = 0; // FIXME
   Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
@@ -808,9 +813,6 @@ Status VEDevice::Sync() {
     return s;
 
   return veo->sync();
-#else
-  return Status::OK();
-#endif
 }
 
 class VEDeviceFactory : public DeviceFactory {
