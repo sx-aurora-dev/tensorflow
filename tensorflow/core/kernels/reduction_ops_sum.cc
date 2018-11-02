@@ -15,11 +15,6 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/reduction_ops_common.h"
 
-#ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
-#endif
-
 namespace tensorflow {
 
 #define REGISTER_CPU_KERNELS(type)                                             \

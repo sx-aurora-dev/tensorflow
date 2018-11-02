@@ -345,10 +345,39 @@ class VEReductionOp : public OpKernel {
       // with identity elements.  Example: tf.reduce_sum(tf.zeros((0, 3)), [0]).
       // Eigen sometimes crashes in this case, so we do it manually.
       Functor::FillIdentity(d, tmp_out.flat<T>(), reducer);
+#endif
     } else if ((helper.ndims() == 1) && helper.reduce_first_axis()) {
       // Reduce to a scalar.
+#if 0
       Functor::Reduce(ctx, helper.out<T, 0>(&tmp_out), helper.in<T, 1>(data),
                       constants.kZero, reducer);
+#else
+
+      struct {
+        int dtype;
+        int ndims;
+        uint64_t in;
+        uint64_t out;
+        int64_t dim_size[2];
+        int axis;
+      } args;
+
+      // use d2a1 function
+
+      args.dtype = data.dtype();
+      args.ndims = 2 ;
+      args.in = (uint64_t)DMAHelper::base(&data);
+      args.out = (uint64_t)DMAHelper::base(&tmp_out);
+      args.dim_size[0] = 1 ;
+      args.dim_size[1] = helper.data_reshape().dim_size(0);
+      args.axis = 1;
+
+      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute(name_, (void*)&args, sizeof(args));
+      if (!s.ok())
+        ctx->SetStatus(s);
+#endif
+#if 0
     } else if ((helper.ndims() == 2) && helper.reduce_first_axis()) {
       // Can be viewed as a reduction of a matrix along 1st dimension.
       Functor::Reduce(ctx, helper.out<T, 1>(&tmp_out), helper.in<T, 2>(data),
