@@ -45,13 +45,11 @@ from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import variable_scope
-from tensorflow.python.ops.distributions import distribution as ds
 from tensorflow.python.ops.losses import losses
 from tensorflow.python.summary import summary
 from tensorflow.python.training import session_run_hook
 from tensorflow.python.training import sync_replicas_optimizer
 from tensorflow.python.training import training_util
-
 
 __all__ = [
     'gan_model',
@@ -61,6 +59,7 @@ __all__ = [
     'stargan_model',
     'gan_loss',
     'cyclegan_loss',
+    'stargan_loss',
     'gan_train_ops',
     'gan_train',
     'get_sequential_train_hooks',
@@ -646,8 +645,9 @@ def gan_loss(
         type(model))
 
   # Optionally create pooled model.
-  pooled_model = (_tensor_pool_adjusted_model(model, tensor_pool_fn) if
-                  tensor_pool_fn else model)
+  pooled_model = (
+      _tensor_pool_adjusted_model(model, tensor_pool_fn)
+      if tensor_pool_fn else model)
 
   # Create standard losses.
   gen_loss = generator_loss_fn(model, add_summaries=add_summaries)
@@ -665,9 +665,10 @@ def gan_loss(
   if _use_aux_loss(mutual_information_penalty_weight):
     gen_info_loss = tfgan_losses.mutual_information_penalty(
         model, add_summaries=add_summaries)
-    dis_info_loss = (gen_info_loss if tensor_pool_fn is None else
-                     tfgan_losses.mutual_information_penalty(
-                         pooled_model, add_summaries=add_summaries))
+    dis_info_loss = (
+        gen_info_loss
+        if tensor_pool_fn is None else tfgan_losses.mutual_information_penalty(
+            pooled_model, add_summaries=add_summaries))
     gen_loss += mutual_information_penalty_weight * gen_info_loss
     dis_loss += mutual_information_penalty_weight * dis_info_loss
   if _use_aux_loss(aux_cond_generator_weight):
@@ -1262,10 +1263,6 @@ def _validate_distributions(distributions_l, noise_l):
   if not isinstance(distributions_l, (tuple, list)):
     raise ValueError('`predicted_distributions` must be a list. Instead, found '
                      '%s.' % type(distributions_l))
-  for dist in distributions_l:
-    if not isinstance(dist, ds.Distribution):
-      raise ValueError('Every element in `predicted_distributions` must be a '
-                       '`tf.Distribution`. Instead, found %s.' % type(dist))
   if len(distributions_l) != len(noise_l):
     raise ValueError('Length of `predicted_distributions` %i must be the same '
                      'as the length of structured noise %i.' %

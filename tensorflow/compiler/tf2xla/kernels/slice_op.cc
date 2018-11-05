@@ -15,6 +15,7 @@ limitations under the License.
 
 // XLA-specific Slice Op.
 
+#include "absl/types/span.h"
 #include "tensorflow/compiler/tf2xla/type_util.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
@@ -25,7 +26,6 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/kernels/ops_util.h"
 #include "tensorflow/core/lib/core/status.h"
-#include "tensorflow/core/lib/gtl/array_slice.h"
 #include "tensorflow/core/platform/mem.h"
 
 namespace tensorflow {
@@ -111,9 +111,10 @@ class SliceOp : public XlaOpKernel {
   }
 };
 
-REGISTER_XLA_OP(
-    Name("Slice").CompileTimeConstInput("begin").CompileTimeConstInput("size"),
-    SliceOp);
+REGISTER_XLA_OP(Name("Slice")
+                    .CompileTimeConstantInput("begin")
+                    .CompileTimeConstantInput("size"),
+                SliceOp);
 
 }  // namespace
 }  // namespace tensorflow

@@ -238,7 +238,7 @@ Status ConjugateTransposeCpuOp::DoTranspose(OpKernelContext* ctx,
                                             perm, out);
 }
 
-#if defined(INTEL_MKL) && !defined(DO_NOT_USE_ML)
+#if defined(INTEL_MKL) && defined(ENABLE_MKL)
 #define REGISTER(T)                                   \
   REGISTER_KERNEL_BUILDER(Name("Transpose")           \
                               .Device(DEVICE_CPU)     \
@@ -250,11 +250,8 @@ Status ConjugateTransposeCpuOp::DoTranspose(OpKernelContext* ctx,
                               .TypeConstraint<T>("T") \
                               .HostMemory("perm"),    \
                           MklConjugateTransposeCpuOp);
-TF_CALL_ALL_TYPES(REGISTER);
-#undef REGISTER
 
-#else  // INTEL_MKL
-
+#else  // INTEL_MKL && ENABLE_MKL
 #define REGISTER(T)                                   \
   REGISTER_KERNEL_BUILDER(Name("Transpose")           \
                               .Device(DEVICE_CPU)     \
@@ -266,9 +263,10 @@ TF_CALL_ALL_TYPES(REGISTER);
                               .TypeConstraint<T>("T") \
                               .HostMemory("perm"),    \
                           ConjugateTransposeCpuOp);
+#endif  // INTEL_MKL && ENABLE_MKL
+
 TF_CALL_ALL_TYPES(REGISTER)
 #undef REGISTER
-#endif  // INTEL_MKL
 
 #if GOOGLE_CUDA
 Status TransposeGpuOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
