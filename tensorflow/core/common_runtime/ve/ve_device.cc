@@ -1,6 +1,6 @@
 #include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/common_runtime/local_device.h"
-#include "tensorflow/core/common_runtime/visitable_allocator.h"
+//#include "tensorflow/core/common_runtime/visitable_allocator.h"
 #include "tensorflow/core/common_runtime/process_state.h"
 #include "tensorflow/core/common_runtime/bfc_allocator.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
@@ -567,7 +567,7 @@ VEO::~VEO() {
 
 class VEMemAllocator : public SubAllocator {
   public:
-    VEMemAllocator(VEO* veo) : veo_(veo) {}
+    VEMemAllocator(VEO* veo) : SubAllocator({}, {}), veo_(veo) {}
     ~VEMemAllocator();
     void* Alloc(size_t alignments, size_t num_bytes);
     void Free(void* ptr, size_t num_bytes);
