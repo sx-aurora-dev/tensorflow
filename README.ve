@@ -1,20 +1,33 @@
-## setup
+# Tensroflow for VE
 
-### RHEL 7.3
+We have tested on CentOS 7.4.
 
-Add repositories.
+## Setup
 
-~~
-% yum install centos-release-scl
-~~
+### Download and install veoffload.
 
-Install packages like below.
+There are some version of veoffload. The other version may not work for
+tensorflow-ve even it is later than below.
 
-~~
-% yum install devtoolset-4-libstdc++-devel-5.3.1-6.1.el7.x86_64 \
-  devtoolset-4-gcc-c++-5.3.1-6.1.el7.x86_64 \
-  devtoolset-4-gcc-5.3.1-6.1.el7.x86_64 \
-  devtoolset-4-runtime-4.1-3.sc1.el7.x86_64 \
+- https://github.com/SX-Aurora/veoffload/releases/download/1.2.2e/veoffload-1.2.2e-1.el7.centos.x86_64.rpm
+- https://github.com/SX-Aurora/veoffload-veorun/releases/download/1.2.2a/veoffload-veorun-1.2.2a-1.el7.centos.x86_64.rpm
+
+### Create virtualenv with python 3.5
+
+Add SCL repository.
+
+~~~
+% yum install centos-releas-scl
+~~~
+
+If this does not work, you can download and install:
+- http://mirror.centos.org/centos/7/extras/x86_64/Packages/centos-release-scl-2-2.el7.centos.noarch.rpm
+- http://mirror.centos.org/centos/7/extras/x86_64/Packages/centos-release-scl-rh-2-2.el7.centos.noarch.rpm
+
+Install python 3.5.
+
+~~~
+% yum install \
   rh-python35-python-pip-7.1.0-2.el7.noarch \
   rh-python35-python-libs-3.5.1-11.el7.x86_64 \
   rh-python35-python-setuptools-18.0.1-2.el7.noarch \
@@ -22,58 +35,71 @@ Install packages like below.
   rh-python35-runtime-2.0-2.el7.x86_64 \
   rh-python35-python-3.5.1-11.el7.x86_64 \
   rh-python35-python-virtualenv-13.1.2-2.el7.noarch
-~~
+~~~
 
-Creating virtualenv and install some packages:
+Create virtualenv and update packages.
 
-~~
+~~~
 $ scl enable rh-python35 bash
 $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
 (tmp)$ pip install -U six numpy wheel
+~~~
+
+### Build source code
+
+Install devtoolset.
+
+~~
+% yum install devtoolset-4-libstdc++-devel-5.3.1-6.1.el7.x86_64 \
+  devtoolset-4-gcc-c++-5.3.1-6.1.el7.x86_64 \
+  devtoolset-4-gcc-5.3.1-6.1.el7.x86_64 \
+  devtoolset-4-runtime-4.1-3.sc1.el7.x86_64 \
 ~~
 
-## Build & Install
-
-Work in the virtualenv.
+Work in the virtualenv as below
 
 ~~~
 $ scl enable rh-python35 devtoolset-4 bash
 $ source ~/.virtualenvs/tmp/bin/activate
 ~~~
 
+You can check version as below.
+
 ~~~
-$ python --version
+(tmp)$ python --version
 Python 3.5.1
-$ gcc --version
+(tmp)$ gcc --version
 gcc (GCC) 5.3.1 20160406 (Red Hat 5.3.1-6)
 Copyright (C) 2015 Free Software Foundation, Inc.
 This is free software; see the source for copying conditions.  There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 ~~~
 
-### Build tensorflow
+Build tensorflow.
 
 ~~~
-% ./configure
-% bazel build --config=ve --config=opt --copt=-mavx512f //tensorflow/tools/pip_package:build_pip_package
-% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
+(tmp)% ./configure # answer N for all questions
+(tmp)% bazel build --config=ve --config=opt //tensorflow/tools/pip_package:build_pip_package
+(tmp)% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
 ~~~
 
-you can see tensorflow package in current direcotry.
+You can see tensorflow package in current direcotry.
 
-### Build keras
-
-~~~
-% python setup.py bdist_wheel
-~~~
-
-### Install
+Build keras.
 
 ~~~
-% pip install -U <tensorflow package for ve>
-% pip install -U <keras package for ve>
+(tmp)% python setup.py bdist_wheel
+~~~
+
+You can find package in dist directory.
+
+### Install packages 
+
+~~~
+(tmp)% pip install -U tensorflow_ve-1.12.0rc0-cp35-cp35m-linux_x86_64.whl
+(tmp)% pip install -U Keras-2.2.4-py3-none-any.whl
 ~~~
 
 ## Run samples
@@ -81,21 +107,21 @@ you can see tensorflow package in current direcotry.
 Work in the virtualenv.
 
 ~~~
-% cd <working directory>
-% git clone <url of vednn> vednn
-% git clone <url of vetfkernel> vetfkernel
-% git clone <url of sampels> samples
-% cd vednn
-% mkdir build
-% cd build
-% cmake3 ..
-% make & make install
-% cd ../../vetfkernel
-% mkdir build
-% cd build
-% cmake3 -DVEDNN_PATH=../../vednn/build ../../vetfkernel
-% make
-% cd ../../samples
-% ./mk_veorun.sh
-% ./run.sh keras.sample.py
+(tmp)% cd <working directory>
+(tmp)% git clone <url of vednn> vednn
+(tmp)% git clone <url of vetfkernel> vetfkernel
+(tmp)% git clone <url of sampels> samples
+(tmp)% cd vednn
+(tmp)% mkdir build
+(tmp)% cd build
+(tmp)% cmake3 ..
+(tmp)% make & make install
+(tmp)% cd ../../vetfkernel
+(tmp)% mkdir build
+(tmp)% cd build
+(tmp)% cmake3 -DVEDNN_PATH=../../vednn/build ../../vetfkernel
+(tmp)% make
+(tmp)% cd ../../samples
+(tmp)% ./mk_veorun.sh
+(tmp)% ./run.sh keras.sample.py
 ~~~
