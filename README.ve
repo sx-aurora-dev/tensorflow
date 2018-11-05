@@ -12,6 +12,18 @@ tensorflow-ve even it is later than below.
 - https://github.com/SX-Aurora/veoffload/releases/download/1.2.2e/veoffload-1.2.2e-1.el7.centos.x86_64.rpm
 - https://github.com/SX-Aurora/veoffload-veorun/releases/download/1.2.2a/veoffload-veorun-1.2.2a-1.el7.centos.x86_64.rpm
 
+### Install bazel
+
+Download and install repo.
+
+https://copr.fedorainfracloud.org/coprs/vbatts/bazel/repo/epel-7/vbatts-bazel-epel-7.repo
+
+Install bazel.
+
+~~~
+% yum install bazel
+~~~
+
 ### Create virtualenv with python 3.5
 
 Add SCL repository.
