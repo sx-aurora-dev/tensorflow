@@ -31,4 +31,6 @@ REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_SYCL), IdentityNOp);
 
 REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_GPU), IdentityNOp);
 
+REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_VE), IdentityNOp);
+
 }  // namespace tensorflow

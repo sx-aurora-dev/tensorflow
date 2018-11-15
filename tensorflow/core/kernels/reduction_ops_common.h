@@ -359,7 +359,7 @@ class VEReductionOp : public OpKernel {
         int ndims;
         uint64_t in;
         uint64_t out;
-        int64_t dim_size[2];
+        int64_t dim_size[3];
         int axis;
       } args;
 
@@ -371,6 +371,7 @@ class VEReductionOp : public OpKernel {
       args.out = (uint64_t)DMAHelper::base(&tmp_out);
       args.dim_size[0] = 1 ;
       args.dim_size[1] = helper.data_reshape().dim_size(0);
+      args.dim_size[2] = 0 ;
       args.axis = 1;
 
       VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
@@ -383,19 +384,18 @@ class VEReductionOp : public OpKernel {
       // Can be viewed as a reduction of a matrix along 1st dimension.
       Functor::Reduce(ctx, helper.out<T, 1>(&tmp_out), helper.in<T, 2>(data),
                       constants.kZero, reducer);
-#endif
     } else if ((helper.ndims() == 2) && !helper.reduce_first_axis()) {
       // Can be viewed as a reduction of a matrix along 2nd dimension.
-#if 0
       Functor::Reduce(ctx, helper.out<T, 1>(&tmp_out), helper.in<T, 2>(data),
                       constants.kOne, reducer);
 #else
+    } else if (helper.ndims() == 2) {
       struct {
         int dtype;
         int ndims;
         uint64_t in;
         uint64_t out;
-        int64_t dim_size[2];
+        int64_t dim_size[3];
         int axis;
       } args;
 
@@ -405,7 +405,8 @@ class VEReductionOp : public OpKernel {
       args.out = (uint64_t)DMAHelper::base(&tmp_out);
       args.dim_size[0] = helper.data_reshape().dim_size(0);
       args.dim_size[1] = helper.data_reshape().dim_size(1);
-      args.axis = 1;
+      args.dim_size[2] = 0 ;
+      args.axis = helper.reduce_first_axis() ? 0 : 1;
 
       VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
       Status s = vectx->Compute(name_, (void*)&args, sizeof(args));
@@ -422,6 +423,30 @@ class VEReductionOp : public OpKernel {
       // Can be viewed as a reduction of a 3D tensor along 2nd dimension.
       Functor::Reduce(ctx, helper.out<T, 2>(&tmp_out), helper.in<T, 3>(data),
                       constants.kOne, reducer);
+#else
+    } else if (helper.ndims() == 3) {
+      struct {
+        int dtype;
+        int ndims;
+        uint64_t in;
+        uint64_t out;
+        int64_t dim_size[3];
+        int axis;
+      } args;
+
+      args.dtype = data.dtype();
+      args.ndims = helper.ndims();
+      args.in = (uint64_t)DMAHelper::base(&data);
+      args.out = (uint64_t)DMAHelper::base(&tmp_out);
+      args.dim_size[0] = helper.data_reshape().dim_size(0);
+      args.dim_size[1] = helper.data_reshape().dim_size(1);
+      args.dim_size[2] = helper.data_reshape().dim_size(2);
+      args.axis = helper.reduce_first_axis() ? 0 : 1;
+
+      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute(name_, (void*)&args, sizeof(args));
+      if (!s.ok())
+        ctx->SetStatus(s);
 #endif
     } else {
 #if 0
