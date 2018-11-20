@@ -120,20 +120,13 @@ Work in the virtualenv.
 
 ~~~
 (tmp)% cd <working directory>
-(tmp)% git clone <url of vednn> vednn
 (tmp)% git clone <url of vetfkernel> vetfkernel
+(tmp)% git clone <url of vednn> vetfkernel/libs/vednn
 (tmp)% git clone <url of sampels> samples
-(tmp)% cd vednn
+(tmp)% cd vetfkernel
 (tmp)% mkdir build
-(tmp)% cd build
-(tmp)% cmake3 ..
-(tmp)% make & make install
-(tmp)% cd ../../vetfkernel
-(tmp)% mkdir build
-(tmp)% cd build
-(tmp)% cmake3 -DVEDNN_PATH=../../vednn/build ../../vetfkernel
-(tmp)% make
-(tmp)% cd ../../samples
-(tmp)% ./mk_veorun.sh
+(tmp)% (cd build && cmake3 .. && make)
+(tmp)% cd ../samples
+(tmp)% ln -s ../vetfkernel/build/veorun_tf veorun_tf
 (tmp)% ./run.sh keras.sample.py
 ~~~
