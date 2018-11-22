@@ -339,7 +339,7 @@ class ColocationGraph {
     {
       string tmp;
       for (auto& deviceType : new_root_member.supported_device_types)
-        tmp += " " + string(deviceType.type());
+        tmp += " " + string(deviceType.first.type());
       VLOG(2) << __FUNCTION__ << ": new_root=" << new_root
         << " old_root=" << old_root << ": " << tmp;
     }
@@ -486,7 +486,7 @@ class ColocationGraph {
       {
         string tmp;
         for (auto& deviceType : members_[node_root].supported_device_types)
-          tmp += " " + string(deviceType.type());
+          tmp += " " + string(deviceType.first.type());
 
         VLOG(2) << __FUNCTION__ << ": "
           << NodeToString(*node)
@@ -707,7 +707,7 @@ class ColocationGraph {
     {
       string tmp;
       for (auto& deviceType : member->supported_device_types)
-        tmp += " " + string(deviceType.type());
+        tmp += " " + string(deviceType.first.type());
       VLOG(2) << __FUNCTION__ << ": "
         << "node[id=" << node.id()
         << ",name=" << node.name()
