@@ -655,7 +655,7 @@ ARRAY_DEPS = [
     "//tensorflow/core:proto_text",
     "//tensorflow/core:protos_all_cc",
     "//third_party/eigen3",
-] + if_sycl(["//tensorflow/core:sycl_runtime"])
+] + if_sycl(["//tensorflow/core:sycl_runtime"]) + if_ve(["//tensorflow/core:ve_runtime"])
 
 cc_library(
     name = "array_not_windows",
@@ -858,7 +858,7 @@ tf_kernel_library(
 tf_kernel_library(
     name = "pack_op",
     prefix = "pack_op",
-    deps = ARRAY_DEPS + if_ve(["//tensorflow/core:ve_runtime"]),
+    deps = ARRAY_DEPS,
 )
 
 tf_kernel_library(
