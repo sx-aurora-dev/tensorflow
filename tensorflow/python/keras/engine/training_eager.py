@@ -19,13 +19,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
 import copy
-import threading
 
 import numpy as np
 
 from tensorflow.python.data.ops import iterator_ops
-from tensorflow.python.eager import function as eager_function
 from tensorflow.python.eager.backprop import GradientTape
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
@@ -37,10 +36,6 @@ from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.utils import generic_utils
 from tensorflow.python.ops import math_ops
 from tensorflow.python.platform import tf_logging as logging
-
-
-# A lock for assigning polymorphic functions to models in a thread-safe way
-_graph_function_building_lock = threading.Lock()
 
 
 def _eager_loss_fn(outputs, targets, loss_fn, output_name):
@@ -171,56 +166,6 @@ def _model_loss(model,
   return outs, total_loss, loss_metrics, aggregated_loss_metrics, masks
 
 
-def _maybe_build_graph_functions(model):
-  """Constructs polymorphic functions to use for fit, evaluate and predict."""
-  # We lock this function to ensure thread-safety in case users are
-  # hypothetically trying to call '.predict' on a model in multiple threads
-  # at once when the graph functions were never previously built.
-  with _graph_function_building_lock:
-    if not model._built_graph_functions:
-      model._eager_process_single_batch_graph_function = eager_function.defun(
-          _process_single_batch
-      )
-      model._eager_model_loss_graph_function = eager_function.defun(_model_loss)
-      model._eager_call_graph_function = eager_function.defun(model.call)
-      model._built_graph_functions = True
-
-
-def _maybe_graph_function_model_loss(model,
-                                     inputs,
-                                     targets,
-                                     output_loss_metrics=None,
-                                     sample_weights=None,
-                                     training=False):
-  """Compute model loss, using defun if the model supports it."""
-  if model._can_use_graph_functions:
-    _maybe_build_graph_functions(model)
-    return model._eager_model_loss_graph_function(
-        model,
-        inputs,
-        targets,
-        output_loss_metrics=output_loss_metrics,
-        sample_weights=sample_weights,
-        training=training)
-  else:
-    return _model_loss(
-        model,
-        inputs,
-        targets,
-        output_loss_metrics=output_loss_metrics,
-        sample_weights=sample_weights,
-        training=training)
-
-
-def _maybe_graph_function_model_call(model, *args, **kwargs):
-  """Compute model loss, using defun if the model supports it."""
-  if model._can_use_graph_functions:
-    _maybe_build_graph_functions(model)
-    return model._eager_call_graph_function(*args, **kwargs)
-  else:
-    return model.call(*args, **kwargs)
-
-
 def iterator_fit_loop(model,
                       inputs,
                       class_weight,
@@ -271,7 +216,7 @@ def iterator_fit_loop(model,
   assert isinstance(inputs, iterator_ops.EagerIterator)
 
   # make sure either x,y or x,y,sample_weights is provided
-  if (not isinstance(inputs.output_shapes, (list, tuple)) or
+  if (not isinstance(inputs.output_shapes, collections.Sequence) or
       len(inputs.output_shapes) not in (2, 3)):
     raise ValueError('Please provide either inputs and targets '
                      'or inputs, targets, and sample_weights')
@@ -310,16 +255,25 @@ def iterator_fit_loop(model,
           if val is not None else None for val in sample_weights
       ]
 
-    # Set stateful_metrics in callbacks. We do not do this before the
-    # `steps_per_epoch` loop because model will be compiled only in the first
-    # iteration of this loop in the deferred build scenario.
+    # Train model.
+    outs, loss, _, aggregated_loss_metrics, masks = _process_single_batch(
+        model,
+        x,
+        y,
+        output_loss_metrics=output_loss_metrics,
+        sample_weights=sample_weights,
+        training=True)
+    outs = generic_utils.to_list(outs)
+
     if step_index == 0:
+      # Set stateful_metrics in callbacks. We do not do this before the
+      # `steps_per_epoch` loop because model will be compiled only in the first
+      # iteration of this loop in the deferred build scenario.
       for cbk in callbacks:
         if (isinstance(cbk, cbks.BaseLogger) or
             isinstance(cbk, cbks.ProgbarLogger)):
           cbk.stateful_metrics = model.metrics_names[1:]  # Exclude `loss`
 
-    if step_index == 0 and not callbacks.params['metrics']:
       callback_metrics = copy.copy(model.metrics_names)
       if do_validation:
         callback_metrics += ['val_' + n for n in model.metrics_names]
@@ -332,17 +286,6 @@ def iterator_fit_loop(model,
           'metrics': callback_metrics or [],
           'validation_steps': validation_steps
       })
-
-    # Train model.
-    outs, loss, _, aggregated_loss_metrics, masks = \
-      _maybe_graph_function_process_single_batch(
-          model,
-          x,
-          y,
-          output_loss_metrics=output_loss_metrics,
-          sample_weights=sample_weights,
-          training=True)
-    outs = generic_utils.to_list(outs)
 
     # Calculate metrics.
     for l, o in zip(model.metrics_names, outs):
@@ -398,7 +341,7 @@ def iterator_test_loop(model, inputs, steps, verbose=0):
   """
   assert isinstance(inputs, iterator_ops.EagerIterator)
   # make sure either x,y or x,y,sample_weights is provided
-  if (not isinstance(inputs.output_shapes, (list, tuple)) or
+  if (not isinstance(inputs.output_shapes, collections.Sequence) or
       len(inputs.output_shapes) < 2 or len(inputs.output_shapes) > 3):
     raise ValueError('Please provide either inputs and targets'
                      'or inputs, targets, and sample_weights')
@@ -449,21 +392,20 @@ def iterator_test_loop(model, inputs, steps, verbose=0):
       # Get stateful metrics indices. We do not do this before the `steps` loop
       # because model will be compiled only in the first iteration of this loop
       # in the deferred build scenario.
-      if hasattr(model, 'metrics'):
-        for m in model.stateful_metric_functions:
+      if hasattr(model, '_compile_metrics'):
+        for m in model.metrics:
           m.reset_states()
       for m in output_loss_metrics:
         m.reset_states()
 
     # Calculate model output, loss values.
-    loss_outs, loss, _, aggregated_loss_metrics, masks = \
-      _maybe_graph_function_model_loss(
-          model,
-          x,
-          y,
-          output_loss_metrics=output_loss_metrics,
-          sample_weights=sample_weights,
-          training=False)
+    loss_outs, loss, _, aggregated_loss_metrics, masks = _model_loss(
+        model,
+        x,
+        y,
+        output_loss_metrics=output_loss_metrics,
+        sample_weights=sample_weights,
+        training=False)
     metrics_results = _eager_metrics_fn(
         model, loss_outs, y, sample_weights=sample_weights, masks=masks)
     batch_outs = []
@@ -520,7 +462,7 @@ def iterator_predict_loop(model, inputs, steps, verbose=0):
   """
   assert isinstance(inputs, iterator_ops.EagerIterator)
   if not isinstance(inputs.output_shapes,
-                    (list, tuple)) or len(inputs.output_shapes) > 3:
+                    collections.Sequence) or len(inputs.output_shapes) > 3:
     raise ValueError(
         'Please provide data as a list or tuple of 1, 2, or 3 elements '
         ' - `(input)`, or `(input, target)`, or `(input, target,'
@@ -553,9 +495,9 @@ def iterator_predict_loop(model, inputs, steps, verbose=0):
       x = x[0]
 
     if model._expects_training_arg:
-      batch_outs = _maybe_graph_function_model_call(model, x, training=False)
+      batch_outs = model.call(x, training=False)
     else:
-      batch_outs = _maybe_graph_function_model_call(model, x)
+      batch_outs = model.call(x)
     if not isinstance(batch_outs, list):
       batch_outs = [batch_outs]
 
@@ -630,32 +572,6 @@ def _process_single_batch(model,
     return outs, loss, loss_metrics, aggregated_loss_metrics, masks
 
 
-def _maybe_graph_function_process_single_batch(model,
-                                               inputs,
-                                               targets,
-                                               output_loss_metrics=None,
-                                               sample_weights=None,
-                                               training=False):
-  """Process a single batch, using defun if the model supports it."""
-  if model._can_use_graph_functions:
-    _maybe_build_graph_functions(model)
-    return model._eager_process_single_batch_graph_function(
-        model,
-        inputs,
-        targets,
-        output_loss_metrics=output_loss_metrics,
-        sample_weights=sample_weights,
-        training=training)
-  else:
-    return _process_single_batch(
-        model,
-        inputs,
-        targets,
-        output_loss_metrics=output_loss_metrics,
-        sample_weights=sample_weights,
-        training=training)
-
-
 def train_on_batch(model, inputs, targets, sample_weights=None):
   """Calculates the loss and gradient updates for one input batch.
 
@@ -668,25 +584,25 @@ def train_on_batch(model, inputs, targets, sample_weights=None):
   Returns:
       total loss and the loss associated with each output.
   """
-  if len(inputs) and tensor_util.is_tensor(inputs[0]):
-    inputs = training_utils.cast_if_floating_dtype(inputs)
-    targets = training_utils.cast_if_floating_dtype(targets)
-  else:
-    inputs = [
-        ops.convert_to_tensor(val, dtype=backend.floatx()) for val in inputs
-    ]
-    targets = [
-        ops.convert_to_tensor(val, dtype=backend.floatx()) for val in targets
-    ]
+  if isinstance(inputs, collections.Sequence):
+    if len(inputs) and tensor_util.is_tensor(inputs[0]):
+      inputs = training_utils.cast_if_floating_dtype(inputs)
+      targets = training_utils.cast_if_floating_dtype(targets)
+    else:
+      inputs = [
+          ops.convert_to_tensor(val, dtype=backend.floatx()) for val in inputs
+      ]
+      targets = [
+          ops.convert_to_tensor(val, dtype=backend.floatx()) for val in targets
+      ]
   if sample_weights:
     sample_weights = [
         ops.convert_to_tensor(val, dtype=backend.floatx())
         if val is not None else None for val in sample_weights
     ]
 
-  outs, loss, loss_metrics, _, masks = \
-    _maybe_graph_function_process_single_batch(
-        model, inputs, targets, sample_weights=sample_weights, training=True)
+  outs, loss, loss_metrics, _, masks = _process_single_batch(
+      model, inputs, targets, sample_weights=sample_weights, training=True)
   if not isinstance(outs, list):
     outs = [outs]
   metrics_results = _eager_metrics_fn(
@@ -716,22 +632,23 @@ def test_on_batch(model, inputs, targets, sample_weights=None):
   Returns:
       total loss, loss and metrics associated with each output.
   """
-  if len(inputs) and tensor_util.is_tensor(inputs[0]):
-    inputs = training_utils.cast_if_floating_dtype(inputs)
-    targets = training_utils.cast_if_floating_dtype(targets)
-  else:
-    inputs = [
-        ops.convert_to_tensor(val, dtype=backend.floatx()) for val in inputs
-    ]
-    targets = [
-        ops.convert_to_tensor(val, dtype=backend.floatx()) for val in targets
-    ]
+  if isinstance(inputs, collections.Sequence):
+    if len(inputs) and tensor_util.is_tensor(inputs[0]):
+      inputs = training_utils.cast_if_floating_dtype(inputs)
+      targets = training_utils.cast_if_floating_dtype(targets)
+    else:
+      inputs = [
+          ops.convert_to_tensor(val, dtype=backend.floatx()) for val in inputs
+      ]
+      targets = [
+          ops.convert_to_tensor(val, dtype=backend.floatx()) for val in targets
+      ]
   if sample_weights:
     sample_weights = [
         ops.convert_to_tensor(val, dtype=backend.floatx())
         if val is not None else None for val in sample_weights
     ]
-  outs, loss, loss_metrics, _, masks = _maybe_graph_function_model_loss(
+  outs, loss, loss_metrics, _, masks = _model_loss(
       model, inputs, targets, sample_weights=sample_weights, training=False)
   if not isinstance(outs, list):
     outs = [outs]
@@ -835,7 +752,7 @@ def fit_loop(model,
     for epoch in range(initial_epoch, epochs):
       if model._is_compiled:  # Model may not be compiled the first time.
         # Reset stateful metrics
-        for m in model.stateful_metric_functions:
+        for m in model.metrics:
           m.reset_states()
 
       for m in output_loss_metrics:

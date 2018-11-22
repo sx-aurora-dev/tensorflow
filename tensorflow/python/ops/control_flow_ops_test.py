@@ -155,9 +155,9 @@ class WithDependenciesTestCase(test_util.TensorFlowTestCase):
           constant_op.constant(7))
       with self.cached_session():
         variables.global_variables_initializer().run()
-        self.assertEquals(0, counter.eval())
-        self.assertEquals(7, const_with_dep.eval())
-        self.assertEquals(1, counter.eval())
+        self.assertEquals(0, self.evaluate(counter))
+        self.assertEquals(7, self.evaluate(const_with_dep))
+        self.assertEquals(1, self.evaluate(counter))
 
   def testListDependencies(self):
     with ops.Graph().as_default():
@@ -169,9 +169,9 @@ class WithDependenciesTestCase(test_util.TensorFlowTestCase):
           constant_op.constant(7))
       with self.cached_session():
         variables.global_variables_initializer().run()
-        self.assertEquals(0, counter.eval())
-        self.assertEquals(7, const_with_dep.eval())
-        self.assertEquals(1, counter.eval())
+        self.assertEquals(0, self.evaluate(counter))
+        self.assertEquals(7, self.evaluate(const_with_dep))
+        self.assertEquals(1, self.evaluate(counter))
 
 
 class SwitchTestCase(test_util.TensorFlowTestCase):
@@ -233,7 +233,7 @@ class SwitchTestCase(test_util.TensorFlowTestCase):
                        constant_op.constant(0.0)])
       with self.cached_session() as sess:
         sess.run(variables.global_variables_initializer())
-        self.assertAllEqual(10.0, cost.eval())
+        self.assertAllEqual(10.0, self.evaluate(cost))
 
   def doTestIndexedSlicesGradientInCondInWhileLoop(self, use_resource=False):
     with ops.Graph().as_default():
@@ -946,6 +946,16 @@ class CaseTest(test_util.TensorFlowTestCase):
       self.assertEqual(sess.run(output, feed_dict={x: 1}), 2)
       with self.assertRaisesRegexp(errors.InvalidArgumentError, "Input error:"):
         sess.run(output, feed_dict={x: 4})
+
+  @test_util.run_in_graph_and_eager_modes
+  def testCase_dict(self):
+    x = constant_op.constant(2)
+    conditions = {
+        math_ops.equal(x, 1): lambda: constant_op.constant(2),
+        math_ops.equal(x, 2): lambda: constant_op.constant(4)
+    }
+    output = control_flow_ops.case(conditions, exclusive=True)
+    self.assertEqual(4, self.evaluate(output))
 
 
 class WhileLoopTestCase(test_util.TensorFlowTestCase):

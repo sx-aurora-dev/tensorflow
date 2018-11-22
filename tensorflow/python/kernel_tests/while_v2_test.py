@@ -20,14 +20,15 @@ from __future__ import print_function
 
 from absl.testing import parameterized
 
+from tensorflow.core.protobuf import config_pb2
 from tensorflow.core.protobuf import rewriter_config_pb2
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import meta_graph
 from tensorflow.python.framework import ops
+from tensorflow.python.framework import test_util
 from tensorflow.python.grappler import tf_optimizer
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import functional_ops
 from tensorflow.python.ops import gradients_impl
 from tensorflow.python.ops import list_ops
@@ -135,10 +136,12 @@ class WhileV2Test(test.TestCase, parameterized.TestCase):
 
     def GetOptimizedGraph():
       mg = meta_graph.create_meta_graph_def(graph=ops.get_default_graph())
-      rewriter_config = rewriter_config_pb2.RewriterConfig(
-          constant_folding=rewriter_config_pb2.RewriterConfig.OFF,
-          memory_optimization=rewriter_config_pb2.RewriterConfig.MANUAL)
-      return tf_optimizer.OptimizeGraph(rewriter_config, mg)
+      config = config_pb2.ConfigProto()
+      config.graph_options.rewrite_options.CopyFrom(
+          rewriter_config_pb2.RewriterConfig(
+              constant_folding=rewriter_config_pb2.RewriterConfig.OFF,
+              memory_optimization=rewriter_config_pb2.RewriterConfig.MANUAL))
+      return tf_optimizer.OptimizeGraph(config, mg)
 
     g = GetOptimizedGraph()
     self.assertEqual(len([n for n in g.node if n.op == "Enter"]), 1)
@@ -262,7 +265,7 @@ class WhileV2Test(test.TestCase, parameterized.TestCase):
 
     # Gradient pass.
     grad = gradients_impl.gradients(ret[1], y)
-    grad_while_op = grad[0].op
+    grad_while_op = grad[0].op.inputs[0].op
     # Get the TensorList output of gradient While op containing the accumulated
     # values of grad_y.
     # grad_while_op.inputs:
@@ -305,9 +308,8 @@ class WhileV2Test(test.TestCase, parameterized.TestCase):
         self.assertRegexpMatches(
             while2_op.get_attr("body").name, r"foo_while_1_body_\d*")
 
+  @test_util.enable_control_flow_v2
   def testWhileAndTensorArray(self):
-    old_enable_while_v2 = control_flow_ops.ENABLE_WHILE_V2
-    control_flow_ops.ENABLE_WHILE_V2 = True
     with self.cached_session() as sess:
       param = constant_op.constant(2.0)
       y0 = constant_op.constant([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], name="elems")
@@ -316,7 +318,6 @@ class WhileV2Test(test.TestCase, parameterized.TestCase):
       self.assertAllClose([2.0, 4.0, 6.0, 8.0, 10.0, 12.0], sess.run(r))
       r = gradients_impl.gradients(r, param)[0]
       self.assertAllClose(21.0, sess.run(r))
-    control_flow_ops.ENABLE_WHILE_V2 = old_enable_while_v2
 
   def testNestedWhile(self):
     # Compute sum of geometric progression: n^0 + n^1 + ... + n^m

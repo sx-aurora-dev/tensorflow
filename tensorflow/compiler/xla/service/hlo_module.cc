@@ -240,8 +240,10 @@ HloModuleProto HloModule::ToProto() const {
     *proto.mutable_schedule() = schedule().ToProto().ValueOrDie();
   }
   *proto.mutable_host_program_shape() =
-      entry_computation_layout().ComputeProgramShape();
+      entry_computation_layout().ComputeProgramShape().ToProto();
   *proto.mutable_input_output_alias() = input_output_alias_config().ToProto();
+  *proto.mutable_dynamic_parameter_binding() =
+      dynamic_parameter_binding().ToProto();
   return proto;
 }
 
@@ -325,6 +327,10 @@ StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
 
   // Because we didn't uniquify the names or the ids, double-check that the
   // instruction and computation names and ids are unique from the proto.
+  TF_ASSIGN_OR_RETURN(module->dynamic_parameter_binding_,
+                      DynamicParameterBinding::CreateFromProto(
+                          proto.dynamic_parameter_binding()));
+
   absl::flat_hash_set<string> computation_names;
   absl::flat_hash_set<string> instruction_names;
   absl::flat_hash_set<int> computation_ids;
@@ -365,7 +371,7 @@ StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromProto(
       << "No program shape found in the proto";
   const auto& program_shape = module.host_program_shape();
 
-  HloModuleConfig module_config(program_shape);
+  HloModuleConfig module_config(ProgramShape{program_shape});
   module_config.set_debug_options(debug_options);
 
   // The module config is constructed with default layouts regardless of what is
@@ -559,7 +565,8 @@ std::unique_ptr<HloModule> HloModule::Clone(const string& suffix) const {
 std::unique_ptr<HloModule> HloModule::Clone(const HloModuleConfig& config,
                                             const string& suffix) const {
   VLOG(1) << "Cloning module :" << name_ << " --> " << suffix << "\n";
-  auto module = absl::make_unique<HloModule>(name_ + "-" + suffix, config);
+  auto module = absl::make_unique<HloModule>(
+      absl::StrCat(name_, suffix.empty() ? "" : "-", suffix), config);
 
   HloCloneContext context(module.get(), suffix);
   auto cloned_computation = entry_computation_->Clone(suffix, &context);

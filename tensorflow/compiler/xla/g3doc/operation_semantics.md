@@ -13,6 +13,22 @@ arbitrary-dimensional array. For convenience, special cases have more specific
 and familiar names; for example a *vector* is a 1-dimensional array and a
 *matrix* is a 2-dimensional array.
 
+## AfterAll
+
+See also
+[`XlaBuilder::AfterAll`](https://www.tensorflow.org/code/tensorflow/compiler/xla/client/xla_builder.h).
+
+AfterAll takes a variadic number of tokens and produces a single token. Tokens
+are primitive types which can be threaded between side-effecting operations to
+enforce ordering. `AfterAll` can be used as a join of tokens for ordering a
+operation after a set operations.
+
+<b> `AfterAll(operands)` </b>
+
+Arguments  | Type    | Semantics
+---------- | ------- | -------------------------
+`operands` | `XlaOp` | variadic number of tokens
+
 ## AllToAll
 
 See also
@@ -1338,6 +1354,22 @@ the semantics for `tf.gather_nd`.
 `slice_sizes` for this case is `[1,11]`.  Intuitively this means that every
 index `X` in the gather indices array picks an entire row and the result is the
 concatenation of all these rows.
+
+## GetDimensionSize
+
+See also
+[`XlaBuilder::GetDimensionSize`](https://www.tensorflow.org/code/tensorflow/compiler/xla/client/xla_builder.h).
+
+Returns the size of the given dimension of the operand. The operand must be
+array shaped.
+
+<b> `GetDimensionSize(operand, dimension)` </b>
+
+| Arguments   | Type    | Semantics                                           |
+| ----------- | ------- | --------------------------------------------------- |
+| `operand`   | `XlaOp` | n dimensional input array                           |
+| `dimension` | `int64` | A value in the interval `[0, n)` that specifies the |
+:             :         : dimension                                           :
 
 ## GetTupleElement
 
