@@ -437,37 +437,43 @@ class _VariableStore(object):
           raise ValueError(
               "Partitioner must be callable, but received: %s" % partitioner)
         with ops.name_scope(None):
-          return self._get_partitioned_variable(name=name,
-                                                shape=shape,
-                                                dtype=dtype,
-                                                initializer=initializer,
-                                                regularizer=regularizer,
-                                                reuse=reuse,
-                                                trainable=trainable,
-                                                collections=collections,
-                                                caching_device=caching_device,
-                                                partitioner=partitioner,
-                                                validate_shape=validate_shape,
-                                                use_resource=use_resource,
-                                                constraint=constraint)
+          return self._get_partitioned_variable(
+              name=name,
+              shape=shape,
+              dtype=dtype,
+              initializer=initializer,
+              regularizer=regularizer,
+              reuse=reuse,
+              trainable=trainable,
+              collections=collections,
+              caching_device=caching_device,
+              partitioner=partitioner,
+              validate_shape=validate_shape,
+              use_resource=use_resource,
+              constraint=constraint,
+              synchronization=synchronization,
+              aggregation=aggregation)
 
       # Special case for partitioned variable to allow reuse without having to
       # specify partitioner.
       if (reuse is True and partitioner is None
           and name in self._partitioned_vars):
-        return self._get_partitioned_variable(name=name,
-                                              shape=shape,
-                                              dtype=dtype,
-                                              initializer=initializer,
-                                              regularizer=regularizer,
-                                              reuse=reuse,
-                                              trainable=trainable,
-                                              collections=collections,
-                                              caching_device=caching_device,
-                                              partitioner=None,
-                                              validate_shape=validate_shape,
-                                              use_resource=use_resource,
-                                              constraint=constraint)
+        return self._get_partitioned_variable(
+            name=name,
+            shape=shape,
+            dtype=dtype,
+            initializer=initializer,
+            regularizer=regularizer,
+            reuse=reuse,
+            trainable=trainable,
+            collections=collections,
+            caching_device=caching_device,
+            partitioner=None,
+            validate_shape=validate_shape,
+            use_resource=use_resource,
+            constraint=constraint,
+            synchronization=synchronization,
+            aggregation=aggregation)
 
       # Single variable case
       if "%s/part_0" % name in self._vars:
@@ -553,7 +559,9 @@ class _VariableStore(object):
                                 caching_device=None,
                                 validate_shape=True,
                                 use_resource=None,
-                                constraint=None):
+                                constraint=None,
+                                synchronization=VariableSynchronization.AUTO,
+                                aggregation=VariableAggregation.NONE):
     """Gets or creates a sharded variable list with these parameters.
 
     The `partitioner` must be a callable that accepts a fully defined
@@ -619,6 +627,15 @@ class _VariableStore(object):
         variable and return the Tensor for the projected value
         (which must have the same shape). Constraints are not safe to
         use when doing asynchronous distributed training.
+      synchronization: Indicates when a distributed a variable will be
+        aggregated. Accepted values are constants defined in the class
+        `tf.VariableSynchronization`. By default the synchronization is set to
+        `AUTO` and the current `DistributionStrategy` chooses
+        when to synchronize. If `synchronization` is set to `ON_READ`,
+        `trainable` must not be set to `True`.
+      aggregation: Indicates how a distributed variable will be aggregated.
+        Accepted values are constants defined in the class
+        `tf.VariableAggregation`.
 
     Returns:
       A `PartitionedVariable` object.
@@ -629,10 +646,6 @@ class _VariableStore(object):
         when violating reuse during variable creation, or if an existing
         sharded variable exists for the given name but with different sharding.
     """
-    if context.executing_eagerly():
-      raise NotImplementedError("Partitioned variables are not yet supported "
-                                "when eager execution is enabled.")
-
     initializing_from_value = initializer is not None and isinstance(
         initializer, ops.Tensor)
     reuse_without_partition = reuse and not partitioner
@@ -667,7 +680,7 @@ class _VariableStore(object):
             "Partitioner returned a partition list that does not match the "
             "Variable's rank: %s vs. %s" % (partitions, shape))
 
-      if any([p < 1 for p in partitions]):
+      if any(p < 1 for p in partitions):
         raise ValueError(
             "Partitioner returned zero partitions for some axes: %s" %
             partitions)
@@ -776,7 +789,9 @@ class _VariableStore(object):
             caching_device=caching_device,
             validate_shape=validate_shape,
             use_resource=use_resource,
-            constraint=constraint)
+            constraint=constraint,
+            synchronization=synchronization,
+            aggregation=aggregation)
 
       # pylint: disable=protected-access
       var._set_save_slice_info(variables.Variable.SaveSliceInfo(
@@ -784,15 +799,13 @@ class _VariableStore(object):
       vs.append(var)
       # pylint: enable=protected-access
 
-      # pylint: disable=protected-access
     partitioned_var = variables.PartitionedVariable(name=name,
                                                     shape=shape,
                                                     dtype=dtype,
                                                     variable_list=vs,
                                                     partitions=partitions)
-    # pylint: enable=protected-access
-
-    self._partitioned_vars[name] = partitioned_var
+    if not context.executing_eagerly() or self._store_eager_variables:
+      self._partitioned_vars[name] = partitioned_var
     return partitioned_var
 
   def _get_single_variable(self,
@@ -1061,9 +1074,6 @@ class VariableScope(object):
       if self._caching_device is not None:
         raise NotImplementedError("Caching devices is not yet supported "
                                   "when eager execution is enabled.")
-      if self._partitioner is not None:
-        raise NotImplementedError("Partitioned variables are not yet supported "
-                                  "when eager execution is enabled.")
       self._reuse = AUTO_REUSE
       self._use_resource = True
 
@@ -1143,9 +1153,6 @@ class VariableScope(object):
 
   def set_partitioner(self, partitioner):
     """Set partitioner for this scope."""
-    if partitioner and context.executing_eagerly():
-      raise NotImplementedError("Partitioned variables are not yet supported "
-                                "when eager execution is enabled.")
     self._partitioner = partitioner
 
   def set_custom_getter(self, custom_getter):
@@ -1254,11 +1261,10 @@ class VariableScope(object):
                                 partitioner=None,
                                 validate_shape=True,
                                 use_resource=None,
-                                constraint=None):
+                                constraint=None,
+                                synchronization=VariableSynchronization.AUTO,
+                                aggregation=VariableAggregation.NONE):
     """Gets an existing variable with this name or create a new one."""
-    if context.executing_eagerly():
-      raise NotImplementedError("Partitioned variables are not yet supported "
-                                "when eager execution is enabled.")
     if initializer is None:
       initializer = self._initializer
     if regularizer is None:
@@ -1300,11 +1306,21 @@ class VariableScope(object):
     with ops.name_scope(None):
       # pylint: disable=protected-access
       return var_store._get_partitioned_variable(
-          full_name, shape=shape, dtype=dtype, initializer=initializer,
-          regularizer=regularizer, reuse=self.reuse, trainable=trainable,
-          collections=collections, caching_device=caching_device,
-          partitioner=partitioner, validate_shape=validate_shape,
-          use_resource=use_resource, constraint=constraint)
+          full_name,
+          shape=shape,
+          dtype=dtype,
+          initializer=initializer,
+          regularizer=regularizer,
+          reuse=self.reuse,
+          trainable=trainable,
+          collections=collections,
+          caching_device=caching_device,
+          partitioner=partitioner,
+          validate_shape=validate_shape,
+          use_resource=use_resource,
+          constraint=constraint,
+          synchronization=synchronization,
+          aggregation=aggregation)
       # pylint: enable=protected-access
 
 
@@ -1661,7 +1677,9 @@ def _get_partitioned_variable(name,
                               partitioner=None,
                               validate_shape=True,
                               use_resource=None,
-                              constraint=None):
+                              constraint=None,
+                              synchronization=VariableSynchronization.AUTO,
+                              aggregation=VariableAggregation.NONE):
   """Gets or creates a sharded variable list with these parameters.
 
   The `partitioner` must be a callable that accepts a fully defined
@@ -1719,6 +1737,15 @@ def _get_partitioned_variable(name,
       variable and return the Tensor for the projected value
       (which must have the same shape). Constraints are not safe to
       use when doing asynchronous distributed training.
+    synchronization: Indicates when a distributed a variable will be
+      aggregated. Accepted values are constants defined in the class
+      `tf.VariableSynchronization`. By default the synchronization is set to
+      `AUTO` and the current `DistributionStrategy` chooses
+      when to synchronize. If `synchronization` is set to `ON_READ`,
+      `trainable` must not be set to `True`.
+    aggregation: Indicates how a distributed variable will be aggregated.
+      Accepted values are constants defined in the class
+      `tf.VariableAggregation`.
 
   Returns:
     A tuple `(shards, partitions)` where `shards` is the list of `Variable`
@@ -1740,11 +1767,21 @@ def _get_partitioned_variable(name,
         "If so, consider instead using get_variable with a non-empty "
         "partitioner parameter instead." % scope.custom_getter)
   return scope._get_partitioned_variable(
-      _get_default_variable_store(), name, shape=shape, dtype=dtype,
-      initializer=initializer, regularizer=regularizer, trainable=trainable,
-      collections=collections, caching_device=caching_device,
-      partitioner=partitioner, validate_shape=validate_shape,
-      use_resource=use_resource, constraint=constraint)
+      _get_default_variable_store(),
+      name,
+      shape=shape,
+      dtype=dtype,
+      initializer=initializer,
+      regularizer=regularizer,
+      trainable=trainable,
+      collections=collections,
+      caching_device=caching_device,
+      partitioner=partitioner,
+      validate_shape=validate_shape,
+      use_resource=use_resource,
+      constraint=constraint,
+      synchronization=synchronization,
+      aggregation=aggregation)
   # pylint: enable=protected-access
 
 
@@ -2194,8 +2231,8 @@ class variable_scope(object):
 
     try:
       return self._enter_scope_uncached()
-    except:
-      if not self._building_function:
+    except Exception:
+      if self._in_graph_mode and not self._building_function:
         if self._graph_context_manager is not None:
           self._graph_context_manager.__exit__(*sys.exc_info())
       raise

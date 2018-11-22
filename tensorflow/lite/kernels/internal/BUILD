@@ -234,8 +234,6 @@ cc_library(
 cc_library(
     name = "optimized",
     hdrs = [
-        "optimized/cblas_conv.h",
-        "optimized/cblas_reference.h",
         "optimized/eigen_spatial_convolutions.h",
         "optimized/eigen_tensor_reduced_instantiations_oss.h",
         "optimized/multithreaded_conv.h",
@@ -591,6 +589,7 @@ cc_test(
 cc_test(
     name = "depthwiseconv_quantized_test",
     srcs = ["depthwiseconv_quantized_test.cc"],
+    shard_count = 2,
     tags = [
         "no_oss",
         "tflite_not_portable_ios",

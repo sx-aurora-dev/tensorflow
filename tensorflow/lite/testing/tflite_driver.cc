@@ -16,8 +16,10 @@ limitations under the License.
 
 #include <iostream>
 
+#include "absl/strings/escaping.h"
 #include "tensorflow/lite/builtin_op_data.h"
 #include "tensorflow/lite/delegates/flex/delegate.h"
+#include "tensorflow/lite/string_util.h"
 #include "tensorflow/lite/testing/split.h"
 
 namespace tflite {
@@ -105,6 +107,7 @@ class TfLiteDriver::Expectation {
     if (tensor_size != num_elements_) {
       std::cerr << "Expected a tensor with " << num_elements_
                 << " elements, got " << tensor_size << std::endl;
+      std::cerr << "while checking tensor " << tensor.name << std::endl;
       return false;
     }
 
@@ -143,7 +146,12 @@ TfLiteDriver::TfLiteDriver(bool use_nnapi, const string& delegate_name)
   }
 }
 
-TfLiteDriver::~TfLiteDriver() {}
+TfLiteDriver::~TfLiteDriver() {
+  for (auto t : tensors_to_deallocate_) {
+    DeallocateStringTensor(t.second);
+  }
+  interpreter_.reset();
+}
 
 void TfLiteDriver::AllocateTensors() {
   if (must_allocate_tensors_) {
@@ -230,6 +238,15 @@ void TfLiteDriver::SetInput(int id, const string& csv_values) {
       const auto& values = testing::Split<bool>(csv_values, ",");
       if (!CheckSizes<bool>(tensor->bytes, values.size())) return;
       SetTensorData(values, &tensor->data);
+      break;
+    }
+    case kTfLiteString: {
+      string s = absl::HexStringToBytes(csv_values);
+
+      DeallocateStringTensor(tensors_to_deallocate_[id]);
+      AllocateStringTensor(id, s.size(), tensor);
+      memcpy(tensor->data.raw, s.data(), s.size());
+
       break;
     }
     default:

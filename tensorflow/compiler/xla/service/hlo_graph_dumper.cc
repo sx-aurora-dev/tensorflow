@@ -987,6 +987,7 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kTrace:
     case HloOpcode::kAfterAll:
+    case HloOpcode::kAddDependency:
     case HloOpcode::kTuple:
       return kWhite;
     case HloOpcode::kBroadcast:
@@ -1043,6 +1044,7 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
     case HloOpcode::kDomain:
     case HloOpcode::kFusion:
     case HloOpcode::kMap:
+    case HloOpcode::kGetDimensionSize:
       return kGray;
     case HloOpcode::kCrossReplicaSum:
     case HloOpcode::kAllToAll:

@@ -179,6 +179,7 @@ typedef enum {
   kTfLiteBool = 6,
   kTfLiteInt16 = 7,
   kTfLiteComplex64 = 8,
+  kTfLiteInt8 = 9,
 } TfLiteType;
 
 // Return the name of a given type, for error reporting purposes.
@@ -203,6 +204,7 @@ typedef union {
   bool* b;
   int16_t* i16;
   TfLiteComplex64* c64;
+  int8_t* int8;
 } TfLitePtrUnion;
 
 // Memory allocation strategies. kTfLiteMmapRo is for read-only memory-mapped
@@ -373,7 +375,7 @@ typedef struct TfLiteContext {
 
   // Replace ops with one or more stub delegate operations. This function
   // does not take ownership of `nodes_to_replace`.
-  TfLiteStatus (*ReplaceSubgraphsWithDelegateKernels)(
+  TfLiteStatus (*ReplaceNodeSubsetsWithDelegateKernels)(
       struct TfLiteContext*, TfLiteRegistration registration,
       const TfLiteIntArray* nodes_to_replace, TfLiteDelegate* delegate);
 
@@ -481,7 +483,7 @@ typedef struct _TfLiteDelegate {
 
   // Invoked by ModifyGraphWithDelegate. This prepare is called, giving the
   // delegate a view of the current graph through TfLiteContext*. It typically
-  // will look at the nodes and call ReplaceSubgraphsWithDelegateKernels()
+  // will look at the nodes and call ReplaceNodeSubsetsWithDelegateKernels()
   // to ask the TensorFlow lite runtime to create macro-nodes to represent
   // delegated subgraphs of the original graph.
   TfLiteStatus (*Prepare)(TfLiteContext* context, TfLiteDelegate* delegate);

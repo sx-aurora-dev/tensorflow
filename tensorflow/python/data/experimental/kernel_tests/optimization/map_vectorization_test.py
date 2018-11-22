@@ -34,6 +34,7 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import sparse_tensor
+from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import bitwise_ops
 from tensorflow.python.ops import check_ops
@@ -319,6 +320,7 @@ def _generate_optimization_test_cases():
   } for x in test_cases for num_parallel_calls in (None, 12)]
 
 
+@test_util.run_all_in_graph_and_eager_modes
 class MapVectorizationTest(test_base.DatasetTestBase, parameterized.TestCase):
 
   def _get_test_datasets(self,
@@ -366,7 +368,8 @@ class MapVectorizationTest(test_base.DatasetTestBase, parameterized.TestCase):
                                                      num_parallel_calls)
     self.assertDatasetsEqual(unoptimized, optimized)
 
-  def testOptimizationBadMapFn(self):
+  # TODO(b/117581999): Add eager coverage for the following tests.
+  def testSkipEagerOptimizationBadMapFn(self):
     # Test map functions that give an error
     def map_fn(x):
       # x has leading dimension 5, this will raise an error
@@ -394,7 +397,8 @@ class MapVectorizationTest(test_base.DatasetTestBase, parameterized.TestCase):
         base_dataset, map_fn, expect_optimized=True)
     self.assertDatasetsEqual(optimized, unoptimized)
 
-  def testOptimizationIgnoreStateful(self):
+  # TODO(b/117581999): Add eager coverage for the following tests.
+  def testSkipEagerOptimizationIgnoreStateful(self):
 
     def map_fn(x):
       with ops.control_dependencies([check_ops.assert_equal(x, 0)]):
@@ -420,7 +424,8 @@ class MapVectorizationTest(test_base.DatasetTestBase, parameterized.TestCase):
         base_dataset, map_fn, expect_optimized=False)
     self.assertDatasetsEqual(unoptimized, optimized)
 
-  def testOptimizationIgnoreRaggedMap(self):
+  # TODO(b/117581999): Add eager coverage for the following tests.
+  def testSkipEagerOptimizationIgnoreRaggedMap(self):
     # Don't optimize when the output of the map fn shapes are unknown.
     def map_fn(x):
       return array_ops.tile(x, x)
@@ -454,7 +459,7 @@ class MapVectorizationBenchmark(test.Benchmark):
     return median_time
 
   def _compare(self, input_dataset, map_fn, batch_size, input_size, str_id):
-    num_elems = int(np.sum([np.prod(x) for x in input_size]))
+    num_elems = sum(np.prod(x) for x in input_size)
     name_template = "{}__batch_size_{}_input_element_size_{}_{}"
     unoptimized = input_dataset.map(map_fn).batch(batch_size)
     unoptimized_op = unoptimized.make_one_shot_iterator().get_next()

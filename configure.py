@@ -43,7 +43,7 @@ _DEFAULT_CUDA_PATH_WIN = ('C:/Program Files/NVIDIA GPU Computing '
 _TF_OPENCL_VERSION = '1.2'
 _DEFAULT_COMPUTECPP_TOOLKIT_PATH = '/usr/local/computecpp'
 _DEFAULT_TRISYCL_INCLUDE_DIR = '/usr/local/triSYCL/include'
-_SUPPORTED_ANDROID_NDK_VERSIONS = [10, 11, 12, 13, 14, 15, 16]
+_SUPPORTED_ANDROID_NDK_VERSIONS = [10, 11, 12, 13, 14, 15, 16, 17, 18]
 
 _DEFAULT_PROMPT_ASK_ATTEMPTS = 10
 
@@ -859,7 +859,7 @@ def set_tf_cuda_version(environ_cp):
     cuda_toolkit_paths_full = [
         os.path.join(cuda_toolkit_path, x) for x in cuda_rt_lib_paths
     ]
-    if any([os.path.exists(x) for x in cuda_toolkit_paths_full]):
+    if any(os.path.exists(x) for x in cuda_toolkit_paths_full):
       break
 
     # Reset and retry
@@ -1555,6 +1555,9 @@ def main():
   check_bazel_version('0.15.0')
 
   reset_tf_configure_bazelrc()
+  # Explicitly import tools/bazel.rc, this is needed for Bazel 0.19.0 or later
+  write_to_bazelrc('import %workspace%/tools/bazel.rc')
+
   cleanup_makefile()
   setup_python(environ_cp)
 
@@ -1691,6 +1694,7 @@ def main():
   config_info_line('nohdfs', 'Disable HDFS support.')
   config_info_line('noignite', 'Disable Apacha Ignite support.')
   config_info_line('nokafka', 'Disable Apache Kafka support.')
+  config_info_line('nonccl', 'Disable NVIDIA NCCL support.')
 
 
 if __name__ == '__main__':
