@@ -3056,7 +3056,8 @@ tf_kernel_library(
     deps = MATH_DEPS + [
       "//tensorflow/core:bitwise_ops_op_lib",
       "//tensorflow/core:ve_runtime",
-    ],
+      "//tensorflow/core:ve_ops_common",
+    ]
 )
 
 tf_kernel_library(
@@ -4054,7 +4055,7 @@ tf_kernel_library(
     name = "random_op",
     prefix = "random_op",
     deps = RANDOM_OPS_DEPS + if_ve([
-      "//tensorflow/core:ve_runtime",
+      "//tensorflow/core:ve_ops_common",
     ]),
 )
 
@@ -4462,7 +4463,7 @@ tf_kernel_library(
     name = "dense_update_ops",
     prefix = "dense_update_ops",
     deps = STATE_DEPS + [":dense_update_functor"]
-        + if_ve(["//tensorflow/core:core_cpu", "//tensorflow/core:ve_runtime"]),
+        + if_ve(["//tensorflow/core:ve_ops_common"]),
 )
 
 tf_kernel_library(

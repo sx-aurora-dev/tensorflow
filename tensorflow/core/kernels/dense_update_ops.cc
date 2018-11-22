@@ -146,17 +146,7 @@ class VEAssignOpT : public AssignOp, public VEOpKernelHelper {
   using AssignOp::AssignOp;
 
   void Copy(OpKernelContext* context, Tensor* lhs, const Tensor& rhs) override {
-#if 0
-    Args args;
-    setInputTensor(args, 0, rhs);
-    setOutputTensor(args, 0, *lhs);
-    Call(context, "Assign", args);
-#else
-    Args<> args;
-    args.addTensor(rhs);
-    args.addTensor(*lhs);
-    Call(context, "Assign", args);
-#endif
+    Call(context, "Assign", rhs, *lhs);
   }
 };
 

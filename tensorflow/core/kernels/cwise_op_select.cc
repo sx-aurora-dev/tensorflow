@@ -208,7 +208,7 @@ class VESelectOp : public VEOpKernel {
       OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
               {"t", "e"}, "output", then->shape(), &output));
       if (output->NumElements() > 0) {
-        Args<> args;
+        ArgsImpl<> args;
         args.addTensor(*cond);
         args.addTensor(*then);
         args.addTensor(*else_);

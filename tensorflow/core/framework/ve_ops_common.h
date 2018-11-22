@@ -6,78 +6,27 @@
 #include "tensorflow/core/framework/tensor_types.h"
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
 
 namespace tensorflow {
 
 class VEOpKernelHelper {
-  private:
-    struct _Tensor {
-      int32_t dtype;
-      uint64_t addr;
-      int32_t dims;
-      int64_t nelems;
-      int64_t dim_size[1];
-
-      static size_t size(int dims_) {
-        return sizeof(_Tensor) + sizeof(int64_t) * (dims_ - 1);
-      }
-
-      size_t size() const {
-        return size(dims);
-        //return sizeof(_Tensor) + sizeof(int64_t) * (dims - 1);
-      }
-
-      Status init(const Tensor& t) {
-        dtype = t.dtype();
-        addr = (uint64_t)DMAHelper::base(&t);
-        dims = t.dims();
-        nelems = t.NumElements();
-        for (int i = 0; i < dims; ++i) {
-          dim_size[i] = t.dim_size(i);
-        }
-        return Status::OK();
-      }
-    } __attribute__((__packed__));
-
-
-    class ArgsBase {
-      public:
-        virtual const void* buf() const = 0;
-        virtual size_t size() const = 0;
-    };
-
   protected:
-    template<int MAX_BUF_SIZE = 1024>
-    class Args : public ArgsBase {
+    class Args {
       public:
-        Args() {
-          curr_ = reinterpret_cast<uintptr_t>(buf_) + sizeof(int64_t);
-          end_ = reinterpret_cast<uintptr_t>(buf_) + MAX_BUF_SIZE;
+        Args(void* buf, size_t size) : buf_(buf) {
+          curr_ = reinterpret_cast<uintptr_t>(buf_) + sizeof(Header);
+          end_ = reinterpret_cast<uintptr_t>(buf_) + size;
           pHeader_ = reinterpret_cast<Header*>(buf_);
           pHeader_->nTensors = 0;
         }
 
-        Status addTensor(const Tensor& t) {
-          _Tensor* p = reinterpret_cast<_Tensor*>(curr_);
-          size_t size = _Tensor::size(t.dims());
-          if (curr_ + size >= end_)
-            return errors::Internal("buffer is too small");
+        Status addTensor(const Tensor& t);
 
-          p->init(t);
-
-          curr_ += size;
-          ++pHeader_->nTensors;
-
-          return Status::OK();
-        }
-
-        const void* buf() const { return reinterpret_cast<const void*>(buf_); }
+        const void* buf() const { return buf_; }
         size_t size() const { return curr_ - reinterpret_cast<uintptr_t>(buf_); }
 
       private:
-        char buf_[MAX_BUF_SIZE];
+        void* buf_;
         uintptr_t curr_;
         uintptr_t end_;
         struct Header {
@@ -86,12 +35,36 @@ class VEOpKernelHelper {
         Header* pHeader_;
     };
 
+    template<int MAX_BUF_SIZE = 1024>
+      class ArgsImpl : public Args {
+        public:
+          ArgsImpl() : Args(buf_, MAX_BUF_SIZE) {}
+
+          // shortcuts
+          ArgsImpl(const Tensor& t0) : Args(buf_, MAX_BUF_SIZE) {
+            addTensor(t0);
+          }
+
+          ArgsImpl(const Tensor& t0, const Tensor& t1) : Args(buf_, MAX_BUF_SIZE) {
+            addTensor(t0);
+            addTensor(t1);
+          }
+
+        private:
+          char buf_[MAX_BUF_SIZE];
+      };
+
   public:
-    void Call(OpKernelContext* context, const std::string& name, ArgsBase& buf) {
-      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute(name.c_str(), buf.buf(), buf.size());
-      if (!s.ok())
-        context->SetStatus(s);
+    void Call(OpKernelContext* context, const std::string& name, const Args& buf);
+    // shortcuts
+    void Call(OpKernelContext* context, const std::string& name,
+              const Tensor& t0) {
+      Call(context, name, ArgsImpl<>(t0));
+    }
+    void Call(OpKernelContext* context, const std::string& name,
+              const Tensor& t0, const Tensor& t1)
+    {
+      Call(context, name, ArgsImpl<>(t0, t1));
     }
 };
 

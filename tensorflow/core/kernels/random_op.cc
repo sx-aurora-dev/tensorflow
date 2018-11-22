@@ -764,10 +764,7 @@ class VERandomUniformOp : public VEOpKernel {
       const Tensor& shape = ctx->input(0);
       Tensor* output;
       OP_REQUIRES_OK(ctx, AllocateOutputWithShape(ctx, shape, 0, &output));
-
-      Args<> args;
-      args.addTensor(*output);
-      Call(ctx, "RandomUniform", args);
+      Call(ctx, "RandomUniform", *output);
     }
 };
 

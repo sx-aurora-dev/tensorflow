@@ -916,8 +916,6 @@ tf_cuda_library(
         ],
     }) + if_mkl([
         "util/mkl_util.h",
-    ]) + if_ve([
-        "framework/ve_ops_common.h",
     ]),
     visibility = ["//visibility:public"],
     deps = [":framework_internal"],
@@ -2645,7 +2643,8 @@ tf_cuda_library(
     ] + if_static(
         extra_deps = ["@protobuf_archive//:protobuf"],
         otherwise = ["@protobuf_archive//:protobuf_headers"],
-    ) + mkl_deps(),
+    ) + mkl_deps()
+      + if_ve(["//tensorflow/core:core_cpu_impl", ":ve_runtime"]),
     alwayslink = 1,
 )
 
@@ -2951,8 +2950,10 @@ tf_cuda_library(
 
 cc_library(
     name = "ve_runtime",
-    hdrs = ["common_runtime/ve/ve_device.h",
-    "common_runtime/ve/ve_tracer.h"],
+    hdrs = [
+      "common_runtime/ve/ve_device.h",
+      "common_runtime/ve/ve_tracer.h"
+    ],
     alwayslink = 1,
 )
 
@@ -2967,6 +2968,11 @@ cc_library(
         "//tensorflow/core:stream_executor",
         ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "ve_ops_common",
+    hdrs = ["framework/ve_ops_common.h"],
 )
 
 tf_cuda_library(
