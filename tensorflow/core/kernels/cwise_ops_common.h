@@ -646,61 +646,6 @@ class VEUnaryOp : public OpKernel {
     std::string name_;
 };
 
-class VEOpKernel : public OpKernel {
-  protected:
-    static const int MAX_DIM_SIZE = 8;
-    static const int MAX_INPUTS = 4;
-    static const int MAX_OUTPUTS = 4;
-
-    struct _Tensor {
-      int dtype;
-      uint64_t addr;
-      int32_t dims;
-      int64_t nelems;
-      int64_t dim_size[MAX_DIM_SIZE];
-
-      void init(const Tensor& t) {
-        dtype = t.dtype();
-        addr = (uint64_t)DMAHelper::base(&t);
-        dims = t.dims();
-        nelems = t.NumElements();
-        for (int i = 0; i < dims; ++i) {
-          dim_size[i] = t.dim_size(i);
-        }
-      }
-    };
-
-    struct Args {
-      int ninputs;
-      int noutputs;
-      _Tensor input[MAX_INPUTS];
-      _Tensor output[MAX_OUTPUTS];
-    };
-
-  public:
-    explicit VEOpKernel(OpKernelConstruction* context, std::string name) 
-      : OpKernel(context), name_(name) {}
-
-    void setInputTensor(Args& args, int i, const Tensor& t) {
-      args.input[i].init(t);
-    }
-
-    void setOutputTensor(Args& args, int i, const Tensor& t) {
-      args.output[i].init(t);
-    }
-
-    void Call(OpKernelContext* context, Args& args) {
-      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args));
-      if (!s.ok())
-        context->SetStatus(s);
-    }
-
-  private:
-    std::string name_;
-};
-
-
 template <typename Tin, typename Tout>
 class VEBinaryOp : public BinaryOpShared {
   public:

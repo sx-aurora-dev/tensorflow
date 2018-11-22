@@ -24,6 +24,10 @@ limitations under the License.
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 #include "tensorflow/core/platform/prefetch.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -189,10 +193,9 @@ REGISTER_SELECT_SYCL(int64);
 #ifdef TENSORFLOW_USE_VE
 class VESelectOp : public VEOpKernel {
   public:
-    VESelectOp(OpKernelConstruction* context) : VEOpKernel(context, "Select") {}
+    VESelectOp(OpKernelConstruction* context) : VEOpKernel(context) {}
 
     void Compute(OpKernelContext* ctx) override {
-      Args args;
       const Tensor* cond;
       const Tensor* then;
       const Tensor* else_;
@@ -205,14 +208,13 @@ class VESelectOp : public VEOpKernel {
       OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
               {"t", "e"}, "output", then->shape(), &output));
       if (output->NumElements() > 0) {
-        args.ninputs = 3;
-        args.noutputs = 1;
-        setInputTensor(args, 0, *cond);
-        setInputTensor(args, 1, *then);
-        setInputTensor(args, 2, *else_);
-        setOutputTensor(args, 0, *output);
+        ArgsImpl<> args;
+        args.addTensor(*cond);
+        args.addTensor(*then);
+        args.addTensor(*else_);
+        args.addTensor(*output);
 
-        Call(ctx, args);
+        Call(ctx, "Select", args);
       }
     }
 };
