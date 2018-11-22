@@ -155,6 +155,7 @@ load(
     "if_mkl",
     "mkl_deps",
 )
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
 
 exports_files(["ops/ops.pbtxt"])
 
@@ -915,6 +916,8 @@ tf_cuda_library(
         ],
     }) + if_mkl([
         "util/mkl_util.h",
+    ]) + if_ve([
+        "framework/ve_ops_common.h",
     ]),
     visibility = ["//visibility:public"],
     deps = [":framework_internal"],
