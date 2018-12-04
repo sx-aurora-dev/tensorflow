@@ -23,7 +23,9 @@ import tempfile
 
 from tensorflow.python.data.experimental.ops import matching_files
 from tensorflow.python.data.kernel_tests import test_base
+from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.framework import errors
+from tensorflow.python.framework import test_util
 from tensorflow.python.platform import test
 from tensorflow.python.util import compat
 
@@ -40,6 +42,7 @@ class MatchingFilesTest(test_base.DatasetTestBase):
     for filename in filenames:
       open(os.path.join(self.tmp_dir, filename), 'a').close()
 
+  @test_util.run_deprecated_v1
   def testNonExistingDirectory(self):
     """Test the MatchingFiles dataset with a non-existing directory."""
 
@@ -47,20 +50,22 @@ class MatchingFilesTest(test_base.DatasetTestBase):
     dataset = matching_files.MatchingFilesDataset(
         os.path.join(self.tmp_dir, '*'))
     with self.cached_session() as sess:
-      next_element = dataset.make_one_shot_iterator().get_next()
+      next_element = dataset_ops.make_one_shot_iterator(dataset).get_next()
       with self.assertRaises(errors.NotFoundError):
         sess.run(next_element)
 
+  @test_util.run_deprecated_v1
   def testEmptyDirectory(self):
     """Test the MatchingFiles dataset with an empty directory."""
 
     dataset = matching_files.MatchingFilesDataset(
         os.path.join(self.tmp_dir, '*'))
     with self.cached_session() as sess:
-      next_element = dataset.make_one_shot_iterator().get_next()
+      next_element = dataset_ops.make_one_shot_iterator(dataset).get_next()
       with self.assertRaises(errors.NotFoundError):
         sess.run(next_element)
 
+  @test_util.run_deprecated_v1
   def testSimpleDirectory(self):
     """Test the MatchingFiles dataset with a simple directory."""
 
@@ -70,7 +75,7 @@ class MatchingFilesTest(test_base.DatasetTestBase):
     dataset = matching_files.MatchingFilesDataset(
         os.path.join(self.tmp_dir, '*'))
     with self.cached_session() as sess:
-      next_element = dataset.make_one_shot_iterator().get_next()
+      next_element = dataset_ops.make_one_shot_iterator(dataset).get_next()
 
       expected_filenames = []
       actual_filenames = []
@@ -83,6 +88,7 @@ class MatchingFilesTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         sess.run(next_element)
 
+  @test_util.run_deprecated_v1
   def testFileSuffixes(self):
     """Test the MatchingFiles dataset using the suffixes of filename."""
 
@@ -92,7 +98,7 @@ class MatchingFilesTest(test_base.DatasetTestBase):
     dataset = matching_files.MatchingFilesDataset(
         os.path.join(self.tmp_dir, '*.py'))
     with self.cached_session() as sess:
-      next_element = dataset.make_one_shot_iterator().get_next()
+      next_element = dataset_ops.make_one_shot_iterator(dataset).get_next()
       expected_filenames = []
       actual_filenames = []
       for filename in filenames[1:-1]:
@@ -104,6 +110,7 @@ class MatchingFilesTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         sess.run(next_element)
 
+  @test_util.run_deprecated_v1
   def testFileMiddles(self):
     """Test the MatchingFiles dataset using the middles of filename."""
 
@@ -113,7 +120,7 @@ class MatchingFilesTest(test_base.DatasetTestBase):
     dataset = matching_files.MatchingFilesDataset(
         os.path.join(self.tmp_dir, 'b*.py*'))
     with self.cached_session() as sess:
-      next_element = dataset.make_one_shot_iterator().get_next()
+      next_element = dataset_ops.make_one_shot_iterator(dataset).get_next()
       expected_filenames = []
       actual_filenames = []
       for filename in filenames[1:3]:
@@ -125,6 +132,7 @@ class MatchingFilesTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         sess.run(next_element)
 
+  @test_util.run_deprecated_v1
   def testNestedDirectories(self):
     """Test the MatchingFiles dataset with nested directories."""
 
@@ -149,7 +157,7 @@ class MatchingFilesTest(test_base.DatasetTestBase):
 
     dataset = matching_files.MatchingFilesDataset(patterns)
     with self.cached_session() as sess:
-      next_element = dataset.make_one_shot_iterator().get_next()
+      next_element = dataset_ops.make_one_shot_iterator(dataset).get_next()
       expected_filenames = [
           compat.as_bytes(filename)
           for filename in filenames

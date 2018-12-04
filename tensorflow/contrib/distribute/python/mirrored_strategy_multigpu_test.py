@@ -27,7 +27,10 @@ from tensorflow.contrib.distribute.python import combinations
 from tensorflow.contrib.distribute.python import mirrored_strategy
 from tensorflow.contrib.distribute.python import multi_worker_test_base
 from tensorflow.contrib.distribute.python import strategy_test_lib
+from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.data.ops import dataset_ops
+from tensorflow.python.distribute import device_util
+from tensorflow.python.distribute import distribution_strategy_context as ds_context
 from tensorflow.python.distribute import reduce_util
 from tensorflow.python.distribute import values
 from tensorflow.python.eager import backprop
@@ -35,6 +38,7 @@ from tensorflow.python.eager import context
 from tensorflow.python.eager import function
 from tensorflow.python.eager import test
 from tensorflow.python.framework import constant_op
+from tensorflow.python.framework import func_graph
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.keras.engine import training as keras_training
@@ -47,8 +51,6 @@ from tensorflow.python.ops import rnn_cell_impl
 from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variables
-from tensorflow.python.training import device_util
-from tensorflow.python.training import distribution_strategy_context as ds_context
 from tensorflow.python.training import gradient_descent
 from tensorflow.python.training import optimizer as optimizer_lib
 from tensorflow.python.training import server_lib
@@ -95,14 +97,9 @@ class MirroredTwoDeviceDistributionTest(strategy_test_lib.DistributionTestBase,
   def testReduceToCpu(self, distribution):
     with distribution.scope():
       result = distribution.extended.call_for_each_replica(_replica_id)
-      reduced = distribution.reduce(
-          reduce_util.ReduceOp.SUM,
-          result,
-          destinations="/device:CPU:0")
-      unwrapped = distribution.unwrap(reduced)
-      self.assertEqual(1, len(unwrapped))
+      reduced = distribution.reduce(reduce_util.ReduceOp.SUM, result)
       expected = sum(range(distribution.num_replicas_in_sync))
-      self.assertEqual(expected, self.evaluate(unwrapped[0]))
+      self.assertEqual(expected, self.evaluate(reduced))
 
   def testMakeInputFnIterator(self, distribution):
     dataset_fn = lambda: dataset_ops.Dataset.range(10)
@@ -134,29 +131,6 @@ def one_device_combinations():
 class MirroredOneDeviceDistributionTest(
     strategy_test_lib.DistributionTestBase,
     parameterized.TestCase):
-
-  @combinations.generate(combinations.combine(
-      distribution=[
-          combinations.NamedDistribution(
-              "Mirrored1CPU",
-              lambda: mirrored_strategy.MirroredStrategy(["/device:CPU:0"]),
-              required_gpus=1),
-          combinations.mirrored_strategy_with_one_gpu,
-          combinations.NamedDistribution(
-              "CoreMirrored1CPU",
-              lambda: mirrored_strategy.CoreMirroredStrategy(["/device:CPU:0"]),
-              required_gpus=1),
-          combinations.core_mirrored_strategy_with_one_gpu],
-      mode=["graph", "eager"]))
-  def testReduceToMultipleDestinations(self, distribution):
-    with distribution.scope():
-      reduced = distribution.extended.reduce_to(
-          reduce_util.ReduceOp.SUM,
-          1.0,
-          destinations=["/device:CPU:0", "/device:GPU:0"])
-      unwrapped = distribution.unwrap(reduced)
-      self.assertLen(unwrapped, 2)
-      self.assertEqual(1.0, self.evaluate(unwrapped[0]))
 
   @combinations.generate(one_device_combinations())
   def testMinimizeLoss(self, distribution):
@@ -217,6 +191,27 @@ class MirroredStrategyVariableCreatorStackTest(
     mode=["graph", "eager"]))
 class MirroredStrategyVariableCreationTest(test.TestCase):
 
+  # TODO(priyag): Modify more tests to use this helper and check more
+  # properties.
+  def _test_mv_properties(self, var, name):
+    self.assertIsInstance(var, values.MirroredVariable)
+    self.assertEqual(name, var.name)
+    for d in var.devices:
+      self.assertEqual(d, var.get(d).device)
+
+  def testVariableInFuncGraph(self, distribution):
+    def model_fn():
+      v = variable_scope.variable(2.0, name="bar")
+      ds_context.get_replica_context().merge_call(lambda _: _)
+      return v
+
+    with func_graph.FuncGraph("fg").as_default(), distribution.scope():
+      v1 = variable_scope.variable(1.0, name="foo")
+      v2 = distribution.extended.call_for_each_replica(model_fn)
+
+    self._test_mv_properties(v1, "foo:0")
+    self._test_mv_properties(v2, "bar:0")
+
   def testSingleVariable(self, distribution):
     def model_fn():
       # This variable should be created only once across the threads because of
@@ -228,8 +223,7 @@ class MirroredStrategyVariableCreationTest(test.TestCase):
 
     with distribution.scope():
       result = distribution.extended.call_for_each_replica(model_fn)
-      self.assertIsInstance(result, values.MirroredVariable)
-      self.assertEqual("foo:0", result.name)
+      self._test_mv_properties(result, "foo:0")
 
   def testUnnamedVariable(self, distribution):
     def model_fn():
@@ -239,9 +233,7 @@ class MirroredStrategyVariableCreationTest(test.TestCase):
 
     with distribution.scope():
       result = distribution.extended.call_for_each_replica(model_fn)
-      self.assertIsInstance(result, values.MirroredVariable)
-      # Default name of "Variable" will be used.
-      self.assertEqual("Variable:0", result.name)
+      self._test_mv_properties(result, "Variable:0")
 
   def testMultipleVariables(self, distribution):
     def model_fn():
@@ -254,8 +246,7 @@ class MirroredStrategyVariableCreationTest(test.TestCase):
     with distribution.scope():
       result = distribution.extended.call_for_each_replica(model_fn)
       for i, v in enumerate(result):
-        self.assertIsInstance(v, values.MirroredVariable)
-        self.assertEqual("foo" + str(i) + ":0", v.name)
+        self._test_mv_properties(v, "foo" + str(i) + ":0")
 
   def testMultipleVariablesWithSameCanonicalName(self, distribution):
     def model_fn():
@@ -784,21 +775,23 @@ class MirroredStrategyNameScopeTest(test.TestCase):
       self.assertEqual("c/replica_1:0", c1.name)
 
 
-@combinations.generate(combinations.combine(
-    distribution=[
-        combinations.NamedDistribution(
-            "Mirrored3Devices",
-            # pylint: disable=g-long-lambda
-            lambda: mirrored_strategy.MirroredStrategy(
-                ["/device:GPU:0", "/device:GPU:1", "/device:CPU:0"]),
-            required_gpus=2),
-        combinations.NamedDistribution(
-            "CoreMirrored3Devices",
-            # pylint: disable=g-long-lambda
-            lambda: mirrored_strategy.CoreMirroredStrategy(
-                ["/device:GPU:0", "/device:GPU:1", "/device:CPU:0"]),
-            required_gpus=2)],
-    mode=["graph", "eager"]))
+@combinations.generate(
+    combinations.combine(
+        distribution=[
+            combinations.NamedDistribution(
+                "Mirrored3Devices",
+                # pylint: disable=g-long-lambda
+                lambda: mirrored_strategy.MirroredStrategy(
+                    ["/device:GPU:0", "/device:GPU:1", "/device:CPU:0"]),
+                required_gpus=2),
+            combinations.NamedDistribution(
+                "CoreMirrored3Devices",
+                # pylint: disable=g-long-lambda
+                lambda: mirrored_strategy.CoreMirroredStrategy(
+                    ["/device:GPU:0", "/device:GPU:1", "/device:CPU:0"]),
+                required_gpus=2)
+        ],
+        mode=["graph", "eager"]))
 class MirroredThreeDeviceDistributionTest(
     strategy_test_lib.DistributionTestBase,
     parameterized.TestCase):
@@ -1310,14 +1303,14 @@ class MirroredStrategyDefunTest(test.TestCase):
             combinations.NamedDistribution(
                 "Mirrored",
                 # pylint: disable=g-long-lambda
-                lambda: mirrored_strategy.CoreMirroredStrategy(
-                    num_gpus_per_worker=context.num_gpus()),
+                lambda: mirrored_strategy.MirroredStrategy(num_gpus_per_worker=
+                                                           context.num_gpus()),
                 required_gpus=1),
             combinations.NamedDistribution(
                 "CoreMirrored",
                 # pylint: disable=g-long-lambda
                 lambda: mirrored_strategy.CoreMirroredStrategy(
-                    num_gpus_per_worker=context.num_gpus()),
+                    mirrored_strategy.all_local_devices()),
                 required_gpus=1)
         ],
         mode=["graph"]))
@@ -1372,6 +1365,15 @@ class MultiWorkerMirroredStrategyTest(
       self._test_input_fn_iterator(
           iterator, distribution.extended.worker_devices, expected_values, sess)
 
+  def testUpdateConfigProto(self, distribution):
+    distribution.configure(cluster_spec={"worker": ["fake1", "fake2"]})
+
+    config_proto = config_pb2.ConfigProto()
+    new_config = distribution.update_config_proto(config_proto)
+
+    # Verify isolate_session_state
+    self.assertTrue(new_config.isolate_session_state)
+
 
 class MultiWorkerMirroredStrategyTestWithChief(
     multi_worker_test_base.MultiWorkerTestBase,
@@ -1392,7 +1394,7 @@ class MultiWorkerMirroredStrategyTestWithChief(
 
   def testMinimizeLossGraphCoreMirroredStrategy(self):
     strategy = mirrored_strategy.CoreMirroredStrategy(
-        num_gpus_per_worker=context.num_gpus())
+        mirrored_strategy.all_local_devices())
     strategy.configure(cluster_spec=self._cluster_spec)
     self._test_minimize_loss_graph(strategy, learning_rate=0.05)
 

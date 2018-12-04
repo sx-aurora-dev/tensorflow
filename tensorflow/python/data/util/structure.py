@@ -144,6 +144,19 @@ class Structure(object):
     """
     return self._from_tensor_list(flat_value)
 
+  @abc.abstractmethod
+  def _batch(self, batch_size):
+    """Returns a structure representing a batch of objects with this structure.
+
+    Args:
+      batch_size: An `int` representing the number of elements in a batch,
+        or `None` if the batch size may vary.
+
+    Returns:
+      A `Structure` representing a batch of objects with this structure.
+    """
+    raise NotImplementedError("Structure._batch()")
+
   @staticmethod
   def from_value(value):
     """Returns a `Structure` that represents the given `value`.
@@ -316,15 +329,23 @@ class NestedStructure(Structure):
                        % (len(self._flat_types), len(flat_value)))
 
     flat_ret = []
-    for sub_value, structure in zip(flat_value, self._flat_nested_structure):
-      flat_ret.append(structure._from_tensor_list([sub_value]))
+    i = 0
+    for structure in self._flat_nested_structure:
+      num_flat_values = len(structure._flat_types)
+      sub_value = flat_value[i:i + num_flat_values]
+      flat_ret.append(structure._from_tensor_list(sub_value))
+      i += num_flat_values
 
     return nest.pack_sequence_as(self._nested_structure, flat_ret)
 
   def _from_compatible_tensor_list(self, flat_value):
     flat_ret = []
-    for sub_value, structure in zip(flat_value, self._flat_nested_structure):
-      flat_ret.append(structure._from_compatible_tensor_list([sub_value]))
+    i = 0
+    for structure in self._flat_nested_structure:
+      num_flat_values = len(structure._flat_types)
+      sub_value = flat_value[i:i + num_flat_values]
+      flat_ret.append(structure._from_compatible_tensor_list(sub_value))
+      i += num_flat_values
 
     return nest.pack_sequence_as(self._nested_structure, flat_ret)
 
@@ -346,6 +367,10 @@ class NestedStructure(Structure):
   def _to_legacy_output_classes(self):
     return nest.map_structure(
         lambda s: s._to_legacy_output_classes(), self._nested_structure)
+
+  def _batch(self, batch_size):
+    return NestedStructure(nest.map_structure(
+        lambda s: s._batch(batch_size), self._nested_structure))
 
 
 class TensorStructure(Structure):
@@ -405,6 +430,11 @@ class TensorStructure(Structure):
   def _to_legacy_output_classes(self):
     return ops.Tensor
 
+  def _batch(self, batch_size):
+    return TensorStructure(
+        self._dtype,
+        tensor_shape.TensorShape([batch_size]).concatenate(self._shape))
+
 
 class SparseTensorStructure(Structure):
   """Represents structural information about a `tf.SparseTensor`."""
@@ -462,3 +492,8 @@ class SparseTensorStructure(Structure):
 
   def _to_legacy_output_classes(self):
     return sparse_tensor_lib.SparseTensor
+
+  def _batch(self, batch_size):
+    return SparseTensorStructure(
+        self._dtype,
+        tensor_shape.TensorShape([batch_size]).concatenate(self._dense_shape))

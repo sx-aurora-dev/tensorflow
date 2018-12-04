@@ -31,6 +31,7 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors_impl
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
+from tensorflow.python.lib.io import file_io
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import gen_io_ops as io_ops
 from tensorflow.python.ops import init_ops
@@ -647,10 +648,12 @@ def _add_attributes_to_object_graph(
   return named_saveable_objects, feed_additions
 
 
-def _make_object_graph_proto(checkpointable_objects, node_ids, slot_variables):
+def _fill_object_graph_proto(checkpointable_objects, node_ids, slot_variables,
+                             object_graph_proto=None):
   """Name non-slot `Checkpointable`s and add them to `object_graph_proto`."""
-  object_graph_proto = (
-      checkpointable_object_graph_pb2.CheckpointableObjectGraph())
+  if object_graph_proto is None:
+    object_graph_proto = (
+        checkpointable_object_graph_pb2.CheckpointableObjectGraph())
   for checkpoint_id, checkpointable in enumerate(checkpointable_objects):
     assert node_ids[checkpointable] == checkpoint_id
     object_proto = object_graph_proto.nodes.add()
@@ -675,7 +678,7 @@ def _serialize_gathered_objects(
       checkpointable_objects=checkpointable_objects,
       node_ids=node_ids,
       object_names=object_names)
-  object_graph_proto = _make_object_graph_proto(
+  object_graph_proto = _fill_object_graph_proto(
       checkpointable_objects=checkpointable_objects,
       node_ids=node_ids,
       slot_variables=slot_variables)
@@ -763,12 +766,12 @@ def list_objects(root_checkpointable):
   return checkpointable_objects
 
 
-def make_object_graph_without_attributes(root_checkpointable):
-  """Construct a CheckpointableObjectGraph proto with no variable values."""
+def make_object_graph_without_attributes(root_checkpointable, proto=None):
+  """Fill an object graph proto, ignoring variable values."""
   checkpointable_objects, node_ids, slot_variables = _find_objects(
       root_checkpointable)
-  return _make_object_graph_proto(
-      checkpointable_objects, node_ids, slot_variables)
+  return _fill_object_graph_proto(
+      checkpointable_objects, node_ids, slot_variables, proto)
 
 
 def gather_initializers(root_checkpointable):
@@ -1458,6 +1461,7 @@ class CheckpointableSaver(object):
     elif session is None:
       session = ops.get_default_session()
 
+    file_io.recursive_create_dir(os.path.dirname(file_prefix))
     with ops.device("/cpu:0"):
       save_path = saver.save(
           sess=_SessionWithFeedDictAdditions(
@@ -1922,3 +1926,4 @@ class Checkpoint(tracking.Checkpointable):
     # initialization when executing eagerly.
     self._maybe_create_save_counter()
     return status
+
