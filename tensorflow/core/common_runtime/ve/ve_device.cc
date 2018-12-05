@@ -785,7 +785,7 @@ Status VEDevice::Sync() {
 
 class VEDeviceFactory : public DeviceFactory {
   Status CreateDevices(const SessionOptions& options, const string& name_prefix,
-                       std::vector<Device*>* devices) override {
+                       std::vector<std::unique_ptr<Device>>* devices) override {
     const string device_name = strings::StrCat(name_prefix, "/device:VE:0");
     VLOG(2) << "VEDeviceFactory::CreateDevices: " << device_name;
 
@@ -807,10 +807,11 @@ class VEDeviceFactory : public DeviceFactory {
 
     int numa_node = 0;
 
-    VEDevice* device = new VEDevice(options, device_name, ve_allocator,
+    std::unique_ptr<VEDevice> device 
+      = absl::make_unique<VEDevice>(options, device_name, ve_allocator,
                                     ProcessState::singleton()->GetCPUAllocator(numa_node));
     TF_RETURN_IF_ERROR(device->Init(options, veo));
-    devices->push_back(device);
+    devices->push_back(std::move(device));
     return Status::OK();
   }
 };
