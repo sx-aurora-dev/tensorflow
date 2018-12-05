@@ -189,9 +189,6 @@ cuda_py_test(
         "//tensorflow/python:resource_variable_ops",
     ],
     shard_count = 5,
-    tags = [
-        "no_windows",
-    ],
 )
 
 cuda_py_test(
@@ -214,9 +211,6 @@ cuda_py_test(
         "//tensorflow/python:resource_variable_ops",
     ],
     shard_count = 15,
-    tags = [
-        "no_windows",
-    ],
 )
 
 py_library(
@@ -258,6 +252,18 @@ py_library(
         ":context",
         "//tensorflow/python:pywrap_tensorflow",
         "//third_party/py/numpy",
+    ],
+)
+
+py_test(
+    name = "execution_callbacks_test",
+    srcs = ["execution_callbacks_test.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":execution_callbacks",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_ops",
+        "//tensorflow/python:math_ops",
     ],
 )
 

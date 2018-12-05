@@ -43,6 +43,7 @@ from tensorflow.python.ops.gen_math_ops import *
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.util import compat
 from tensorflow.python.util import deprecation
+from tensorflow.python.util import dispatch
 from tensorflow.python.util import nest
 from tensorflow.python.util.tf_export import tf_export
 
@@ -82,8 +83,6 @@ def argmax(input,
            output_type=dtypes.int64):
   axis = deprecation.deprecated_argument_lookup(
       "axis", axis, "dimension", dimension)
-  if axis is None:
-    axis = 0
   return argmax_v2(input, axis, output_type, name)
 
 
@@ -111,6 +110,8 @@ def argmax_v2(input,
   Returns:
     A `Tensor` of type `output_type`.
   """
+  if axis is None:
+    axis = 0
   return gen_math_ops.arg_max(input, axis, name=name, output_type=output_type)
 
 
@@ -127,8 +128,6 @@ def argmin(input,
            output_type=dtypes.int64):
   axis = deprecation.deprecated_argument_lookup(
       "axis", axis, "dimension", dimension)
-  if axis is None:
-    axis = 0
   return argmin_v2(input, axis, output_type, name)
 
 
@@ -156,6 +155,8 @@ def argmin_v2(input,
   Returns:
     A `Tensor` of type `output_type`.
   """
+  if axis is None:
+    axis = 0
   return gen_math_ops.arg_min(input, axis, name=name, output_type=output_type)
 
 
@@ -165,6 +166,7 @@ def argmin_v2(input,
 # pylint: disable=anomalous-backslash-in-string,protected-access
 # pylint: disable=g-docstring-has-escape
 @tf_export("math.abs", "abs")
+@dispatch.add_dispatch_support
 def abs(x, name=None):  # pylint: disable=redefined-builtin
   r"""Computes the absolute value of a tensor.
 
@@ -189,22 +191,10 @@ def abs(x, name=None):  # pylint: disable=redefined-builtin
       of type `float32` or `float64`, respectively.
   """
   with ops.name_scope(name, "Abs", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      if x.values.dtype.is_complex:
-        x_abs = gen_math_ops.complex_abs(
-            x.values, Tout=x.values.dtype.real_dtype, name=name)
-        return sparse_tensor.SparseTensor(
-            indices=x.indices, values=x_abs, dense_shape=x.dense_shape)
-      x_abs = gen_math_ops._abs(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_abs, dense_shape=x.dense_shape)
-    else:
-      x = ops.convert_to_tensor(x, name="x")
-      if x.dtype.is_complex:
-        return gen_math_ops.complex_abs(x, Tout=x.dtype.real_dtype, name=name)
-      return gen_math_ops._abs(x, name=name)
-
-
+    x = ops.convert_to_tensor(x, name="x")
+    if x.dtype.is_complex:
+      return gen_math_ops.complex_abs(x, Tout=x.dtype.real_dtype, name=name)
+    return gen_math_ops._abs(x, name=name)
 # pylint: enable=g-docstring-has-escape
 
 
@@ -291,31 +281,7 @@ _sub.__doc__ = (
     gen_math_ops.sub.__doc__ + ("" if _sub.__doc__ is None else _sub.__doc__))
 
 
-# pylint: disable=g-docstring-has-escape
-@tf_export("math.negative", "negative")
-def negative(x, name=None):
-  """Computes numerical negative value element-wise.
-
-  I.e., \\(y = -x\\).
-
-  Args:
-    x: A `Tensor` or `SparseTensor`. Must be one of the following types: `half`,
-      `float32`, `float64`, `int32`, `int64`, `complex64`, `complex128`.
-    name: A name for the operation (optional).
-
-  Returns:
-    A `Tensor` or `SparseTensor`, respectively. Has the same type as `x`.
-  """
-  with ops.name_scope(name, "Neg", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      x_neg = gen_math_ops.neg(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_neg, dense_shape=x.dense_shape)
-    else:
-      return gen_math_ops.neg(x, name=name)
-
-
-# pylint: enable=g-docstring-has-escape
+negative = gen_math_ops.neg
 
 
 # pylint: disable=g-docstring-has-escape
@@ -341,107 +307,8 @@ def _neg(x, name=None):
 # pylint: enable=g-docstring-has-escape
 
 
-@tf_export("math.sign", "sign")
-def sign(x, name=None):
-  """Returns an element-wise indication of the sign of a number.
-
-  `y = sign(x) = -1` if `x < 0`; 0 if `x == 0` or `tf.is_nan(x)`; 1 if `x > 0`.
-
-  Zero is returned for NaN inputs.
-
-  For complex numbers, `y = sign(x) = x / |x|` if `x != 0`, otherwise `y = 0`.
-
-  Args:
-    x: A `Tensor` or `SparseTensor`. Must be one of the following types: `half`,
-      `float32`, `float64`, `int32`, `int64`, `complex64`, `complex128`.
-    name: A name for the operation (optional).
-
-  Returns:
-    A `Tensor` or `SparseTensor`, respectively. Has the same type as `x`.
-
-  @compatibility(numpy)
-  Equivalent to numpy.sign except for the behavior for input values of NaN.
-  @end_compatibility
-  """
-  with ops.name_scope(name, "Sign", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      x_sign = gen_math_ops.sign(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_sign, dense_shape=x.dense_shape)
-    else:
-      return gen_math_ops.sign(x, name=name)
-
-
-@tf_export("math.square", "square")
-def square(x, name=None):
-  r"""Computes square of x element-wise.
-
-  I.e., \\(y = x * x = x^2\\).
-
-  Args:
-    x: A `Tensor` or `SparseTensor`. Must be one of the following types: `half`,
-      `float32`, `float64`, `int32`, `int64`, `complex64`, `complex128`.
-    name: A name for the operation (optional).
-
-  Returns:
-    A `Tensor` or `SparseTensor`. Has the same type as `x`.
-  """
-  with ops.name_scope(name, "Square", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      x_square = gen_math_ops.square(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_square, dense_shape=x.dense_shape)
-    else:
-      return gen_math_ops.square(x, name=name)
-
-
-@tf_export("math.sqrt", "sqrt")
-def sqrt(x, name=None):
-  r"""Computes square root of x element-wise.
-
-  I.e., \\(y = \sqrt{x} = x^{1/2}\\).
-
-  Args:
-    x: A `Tensor` or `SparseTensor`. Must be one of the following types: `half`,
-      `float32`, `float64`, `complex64`, `complex128`.
-    name: A name for the operation (optional).
-
-  Returns:
-    A `Tensor` or `SparseTensor`, respectively. Has the same type as `x`.
-  """
-  with ops.name_scope(name, "Sqrt", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      x_sqrt = gen_math_ops.sqrt(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_sqrt, dense_shape=x.dense_shape)
-    else:
-      return gen_math_ops.sqrt(x, name=name)
-
-
-@tf_export("math.erf", v1=["math.erf", "erf"])
-@deprecation.deprecated_endpoints("erf")
-def erf(x, name=None):
-  """Computes the Gauss error function of `x` element-wise.
-
-  Args:
-    x: A `Tensor` or `SparseTensor`. Must be one of the following types: `half`,
-      `float32`, `float64`.
-    name: A name for the operation (optional).
-
-  Returns:
-    A `Tensor` or `SparseTensor`, respectively. Has the same type as `x`.
-  """
-  with ops.name_scope(name, "Erf", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      x_erf = gen_math_ops.erf(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_erf, dense_shape=x.dense_shape)
-    else:
-      return gen_math_ops.erf(x, name=name)
-
-
-@tf_export("math.scalar_mul", "scalar_mul")
-def scalar_mul(scalar, x):
+@tf_export(v1=["math.scalar_mul", "scalar_mul"])
+def scalar_mul(scalar, x, name=None):
   """Multiplies a scalar times a `Tensor` or `IndexedSlices` object.
 
   Intended for use in gradient code which might deal with `IndexedSlices`
@@ -451,6 +318,7 @@ def scalar_mul(scalar, x):
   Args:
     scalar: A 0-D scalar `Tensor`. Must have known shape.
     x: A `Tensor` or `IndexedSlices` to be scaled.
+    name: A name for the operation (optional).
 
   Returns:
     `scalar * x` of the same type (`Tensor` or `IndexedSlices`) as `x`.
@@ -463,11 +331,19 @@ def scalar_mul(scalar, x):
   shape = scalar.get_shape()
   if shape.ndims == 0:
     if isinstance(x, ops.IndexedSlices):
-      return ops.IndexedSlices(scalar * x.values, x.indices, x.dense_shape)
+      return ops.IndexedSlices(gen_math_ops.mul(scalar, x.values, name),
+                               x.indices, x.dense_shape)
     else:
-      return scalar * x
+      return gen_math_ops.mul(scalar, x, name)
   else:
     raise ValueError("Only scalar multiply works, got shape %s" % shape)
+
+
+@tf_export("math.scalar_mul", "scalar_mul", v1=[])
+@_set_doc(scalar_mul.__doc__)
+def scalar_mul_v2(scalar, x, name=None):
+  with ops.name_scope(name, "scalar_mul", [x]) as name:
+    return scalar_mul(scalar, x, name)
 
 
 @tf_export("math.pow", "pow")
@@ -1512,8 +1388,6 @@ def count_nonzero(input_tensor,
       "axis", axis,
       "reduction_indices", reduction_indices
       )
-  if keepdims is None:
-    keepdims = False
 
   return count_nonzero_v2(input_tensor, axis, keepdims, dtype, name)
 
@@ -1571,6 +1445,8 @@ def count_nonzero_v2(input,  # pylint: disable=redefined-builtin
   Returns:
     The reduced tensor (number of nonzero values).
   """
+  if keepdims is None:
+    keepdims = False
   with ops.name_scope(name, "count_nonzero", [input]):
     input = ops.convert_to_tensor(input, name="input")
     # A scalar of 'zero' is enough as `not_equal` will broadcast.
@@ -1748,7 +1624,7 @@ def reduce_variance(input_tensor, axis=None, keepdims=False, name=None):
   name = name if name else "reduce_variance"
   with ops.name_scope(name):
     means = reduce_mean(input_tensor, axis=axis, keepdims=True)
-    squared_deviations = square(input_tensor - means)
+    squared_deviations = gen_math_ops.square(input_tensor - means)
     return reduce_mean(squared_deviations, axis=axis, keepdims=keepdims)
 
 
@@ -1795,7 +1671,7 @@ def reduce_std(input_tensor, axis=None, keepdims=False, name=None):
   name = name if name else "reduce_std"
   with ops.name_scope(name):
     variance = reduce_variance(input_tensor, axis=axis, keepdims=keepdims)
-    return sqrt(variance)
+    return gen_math_ops.sqrt(variance)
 
 
 @tf_export("math.reduce_prod", "reduce_prod", v1=[])
@@ -2906,34 +2782,13 @@ def log_sigmoid(x, name=None):
     return gen_math_ops.neg(gen_nn_ops.softplus(-x), name=name)
 
 
-@tf_export("math.tanh", "nn.tanh", "tanh")
-def tanh(x, name=None):
-  """Computes hyperbolic tangent of `x` element-wise.
-
-  Args:
-    x: A Tensor or SparseTensor with type `float16`, `float32`, `double`,
-      `complex64`, or `complex128`.
-    name: A name for the operation (optional).
-
-  Returns:
-    A Tensor or SparseTensor respectively with the same type as `x`.
-  """
-  with ops.name_scope(name, "Tanh", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      x_tanh = gen_math_ops.tanh(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_tanh, dense_shape=x.dense_shape)
-    else:
-      return gen_math_ops.tanh(x, name=name)
-
-
-@tf_export("math.bincount", v1=["math.bincount", "bincount"])
-@deprecation.deprecated_endpoints("bincount")
+@tf_export("math.bincount", v1=[])
 def bincount(arr,
              weights=None,
              minlength=None,
              maxlength=None,
-             dtype=dtypes.int32):
+             dtype=dtypes.int32,
+             name=None):
   """Counts the number of occurrences of each value in an integer array.
 
   If `minlength` and `maxlength` are not given, returns a vector with length
@@ -2945,34 +2800,70 @@ def bincount(arr,
   Args:
     arr: An int32 tensor of non-negative values.
     weights: If non-None, must be the same shape as arr. For each value in
-        `arr`, the bin will be incremented by the corresponding weight instead
-        of 1.
+      `arr`, the bin will be incremented by the corresponding weight instead of
+      1.
     minlength: If given, ensures the output has length at least `minlength`,
-        padding with zeros at the end if necessary.
+      padding with zeros at the end if necessary.
     maxlength: If given, skips values in `arr` that are equal or greater than
-        `maxlength`, ensuring that the output has length at most `maxlength`.
+      `maxlength`, ensuring that the output has length at most `maxlength`.
+    dtype: If `weights` is None, determines the type of the output bins.
+    name: A name scope for the associated operations (optional).
+
+  Returns:
+    A vector with the same dtype as `weights` or the given `dtype`. The bin
+    values.
+  """
+  name = "bincount" if name is None else name
+  with ops.name_scope(name):
+    arr = ops.convert_to_tensor(arr, name="arr", dtype=dtypes.int32)
+    array_is_nonempty = reduce_prod(array_ops.shape(arr)) > 0
+    output_size = cast(array_is_nonempty, dtypes.int32) * (reduce_max(arr) + 1)
+    if minlength is not None:
+      minlength = ops.convert_to_tensor(
+          minlength, name="minlength", dtype=dtypes.int32)
+      output_size = gen_math_ops.maximum(minlength, output_size)
+    if maxlength is not None:
+      maxlength = ops.convert_to_tensor(
+          maxlength, name="maxlength", dtype=dtypes.int32)
+      output_size = gen_math_ops.minimum(maxlength, output_size)
+    if weights is not None:
+      weights = ops.convert_to_tensor(weights, name="weights")
+      return gen_math_ops.unsorted_segment_sum(weights, arr, output_size)
+    weights = constant_op.constant([], dtype)
+    return gen_math_ops.bincount(arr, output_size, weights)
+
+
+@tf_export(v1=["math.bincount", "bincount"])
+@deprecation.deprecated_endpoints("bincount")
+def bincount_v1(arr,
+                weights=None,
+                minlength=None,
+                maxlength=None,
+                dtype=dtypes.int32):
+  """Counts the number of occurrences of each value in an integer array.
+
+  If `minlength` and `maxlength` are not given, returns a vector with length
+  `tf.reduce_max(arr) + 1` if `arr` is non-empty, and length 0 otherwise.
+  If `weights` are non-None, then index `i` of the output stores the sum of the
+  value in `weights` at each index where the corresponding value in `arr` is
+  `i`.
+
+  Args:
+    arr: An int32 tensor of non-negative values.
+    weights: If non-None, must be the same shape as arr. For each value in
+      `arr`, the bin will be incremented by the corresponding weight instead of
+      1.
+    minlength: If given, ensures the output has length at least `minlength`,
+      padding with zeros at the end if necessary.
+    maxlength: If given, skips values in `arr` that are equal or greater than
+      `maxlength`, ensuring that the output has length at most `maxlength`.
     dtype: If `weights` is None, determines the type of the output bins.
 
   Returns:
     A vector with the same dtype as `weights` or the given `dtype`. The bin
     values.
   """
-  arr = ops.convert_to_tensor(arr, name="arr", dtype=dtypes.int32)
-  array_is_nonempty = reduce_prod(array_ops.shape(arr)) > 0
-  output_size = cast(array_is_nonempty, dtypes.int32) * (reduce_max(arr) + 1)
-  if minlength is not None:
-    minlength = ops.convert_to_tensor(
-        minlength, name="minlength", dtype=dtypes.int32)
-    output_size = gen_math_ops.maximum(minlength, output_size)
-  if maxlength is not None:
-    maxlength = ops.convert_to_tensor(
-        maxlength, name="maxlength", dtype=dtypes.int32)
-    output_size = gen_math_ops.minimum(maxlength, output_size)
-  if weights is not None:
-    weights = ops.convert_to_tensor(weights, name="weights")
-    return gen_math_ops.unsorted_segment_sum(weights, arr, output_size)
-  weights = constant_op.constant([], dtype)
-  return gen_math_ops.bincount(arr, output_size, weights)
+  return bincount(arr, weights, minlength, maxlength, dtype)
 
 
 @tf_export("math.cumsum", "cumsum")
@@ -3717,63 +3608,3 @@ def polyval(coeffs, x, name=None):
     for c in coeffs[1:]:
       p = c + p * x
     return p
-
-
-@tf_export("math.bessel_i0e")
-def bessel_i0e(x, name=None):
-  """Computes the Bessel i0e function of `x` element-wise.
-
-  Exponentially scaled modified Bessel function of order 0 defined as
-  `bessel_i0e(x) = exp(-abs(x)) bessel_i0(x)`.
-
-  This function is faster and numerically stabler than `bessel_i0(x)`.
-
-  Args:
-    x: A `Tensor` or `SparseTensor`. Must be one of the following types: `half`,
-      `float32`, `float64`.
-    name: A name for the operation (optional).
-
-  Returns:
-    A `Tensor` or `SparseTensor`, respectively. Has the same type as `x`.
-
-  @compatibility(scipy)
-  Equivalent to scipy.special.i0e
-  @end_compatibility
-  """
-  with ops.name_scope(name, "bessel_i0e", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      x_i0e = gen_math_ops.bessel_i0e(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_i0e, dense_shape=x.dense_shape)
-    else:
-      return gen_math_ops.bessel_i0e(x, name=name)
-
-
-@tf_export("math.bessel_i1e")
-def bessel_i1e(x, name=None):
-  """Computes the Bessel i1e function of `x` element-wise.
-
-  Exponentially scaled modified Bessel function of order 1 defined as
-  `bessel_i1e(x) = exp(-abs(x)) bessel_i1(x)`.
-
-  This function is faster and numerically stabler than `bessel_i1(x)`.
-
-  Args:
-    x: A `Tensor` or `SparseTensor`. Must be one of the following types: `half`,
-      `float32`, `float64`.
-    name: A name for the operation (optional).
-
-  Returns:
-    A `Tensor` or `SparseTensor`, respectively. Has the same type as `x`.
-
-  @compatibility(scipy)
-  Equivalent to scipy.special.i1e
-  @end_compatibility
-  """
-  with ops.name_scope(name, "bessel_i1e", [x]) as name:
-    if isinstance(x, sparse_tensor.SparseTensor):
-      x_i1e = gen_math_ops.bessel_i1e(x.values, name=name)
-      return sparse_tensor.SparseTensor(
-          indices=x.indices, values=x_i1e, dense_shape=x.dense_shape)
-    else:
-      return gen_math_ops.bessel_i1e(x, name=name)

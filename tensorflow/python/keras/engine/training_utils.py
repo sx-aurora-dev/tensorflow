@@ -30,11 +30,13 @@ from tensorflow.python.data.ops import iterator_ops
 from tensorflow.python.eager import context
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import ops
+from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import tensor_util
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import losses
 from tensorflow.python.keras import metrics as metrics_module
 from tensorflow.python.keras.engine import base_layer
+from tensorflow.python.keras.utils.losses_utils import squeeze_or_expand_dimensions
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import weights_broadcast_ops
@@ -175,7 +177,7 @@ def convert_to_iterator(x=None,
   if shuffle:
     dataset = dataset.shuffle(buffer_size=10000)
   dataset = dataset.repeat(epochs)
-  iterator = dataset.make_one_shot_iterator()
+  iterator = dataset_ops.make_one_shot_iterator(dataset)
 
   return iterator, steps_per_epoch
 
@@ -632,15 +634,14 @@ def weighted_masked_objective(fn):
         weights = mask
       else:
         # Update dimensions of weights to match with mask if possible.
-        mask, _, weights = metrics_module.squeeze_or_expand_dimensions(
-            mask, None, weights)
+        mask, _, weights = squeeze_or_expand_dimensions(mask, None, weights)
         weights *= mask
 
     # Apply sample weighting.
     if weights is not None:
 
       # Update dimensions of weights to match with values if possible.
-      score_array, _, weights = metrics_module.squeeze_or_expand_dimensions(
+      score_array, _, weights = squeeze_or_expand_dimensions(
           score_array, None, weights)
       try:
         # Broadcast weights if possible.
@@ -838,10 +839,20 @@ def call_metric_function(metric_fn, y_true, y_pred, weights=None, mask=None):
     return metric_fn(y_true, y_pred, sample_weight=mask)
 
   # Update dimensions of weights to match with mask.
-  mask, _, weights = metrics_module.squeeze_or_expand_dimensions(
-      mask, None, weights)
+  mask, _, weights = squeeze_or_expand_dimensions(mask, None, weights)
   weights *= mask
   return metric_fn(y_true, y_pred, sample_weight=weights)
+
+
+def get_loss_function(loss):
+  """Returns the loss function corresponding to the given loss input."""
+  if loss is None or isinstance(loss, losses.Loss):
+    return loss
+
+  # TODO(psv): After we have added all V2 losses, update this function.
+  if loss in ['mse', 'MSE', 'mean_squared_error']:
+    return losses.MeanSquaredError()
+  return losses.get(loss)
 
 
 def validate_iterator_input(x, y, sample_weight, validation_split=None):
@@ -1110,3 +1121,54 @@ class ModelInputs(object):
   def as_list(self):
     """Returning the inputs as a list."""
     return self._flattened_inputs
+
+
+# Allow use of methods not exposed to the user.
+# pylint: disable=protected-access
+def get_input_shape_and_dtype(layer):
+  """Retrieves input shape and input dtype of layer if applicable.
+
+  Args:
+    layer: Layer (or model) instance.
+
+  Returns:
+    Tuple (input_shape, input_dtype). Both could be None if the layer
+      does not have a defined input shape.
+
+  Raises:
+    ValueError: in case an empty Sequential or Graph Network is passed.
+  """
+
+  def _is_graph_model(layer):
+    return ((hasattr(layer, '_is_graph_network') and layer._is_graph_network) or
+            layer.__class__.__name__ == 'Sequential')
+
+  # In case of nested models: recover the first layer
+  # of the deepest model to infer input shape and dtype.
+  # Subclassed Models may not have been built so can't be checked.
+  while _is_graph_model(layer):
+    if not layer.layers:
+      raise ValueError('An empty Model cannot be used as a Layer.')
+    layer = layer.layers[0]
+
+  if hasattr(layer, '_batch_input_shape'):
+    return layer._batch_input_shape, layer.dtype
+  return None, None
+
+
+# pylint: enable=protected-access
+
+
+def get_static_batch_size(layer):
+  """Gets the static batch size of a Layer.
+
+  Arguments:
+    layer: a `Layer` instance.
+
+  Returns:
+    The static batch size of a Layer.
+  """
+  batch_input_shape, _ = get_input_shape_and_dtype(layer)
+  if batch_input_shape is not None:
+    return tensor_shape.as_dimension(batch_input_shape[0]).value
+  return None

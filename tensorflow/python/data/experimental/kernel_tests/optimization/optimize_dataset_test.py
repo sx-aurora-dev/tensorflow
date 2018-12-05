@@ -45,26 +45,26 @@ class OptimizeDatasetTest(test_base.DatasetTestBase):
     input_t = array_ops.placeholder(dtypes.int32, (None, None, None))
     dataset = dataset_ops.Dataset.from_tensors(input_t)
     dataset = dataset_ops._OptimizeDataset(dataset, [])
-    iterator = dataset.make_initializable_iterator()
+    iterator = dataset_ops.make_initializable_iterator(dataset)
     init_op = iterator.initializer
     get_next = iterator.get_next()
 
     with self.cached_session() as sess:
       sess.run(init_op, {input_t: np.ones([512, 1024, 1025], np.int32)})
-      sess.run(get_next)
+      self.evaluate(get_next)
 
   # TODO(b/117581999): Add eager coverage for the following tests.
   def testSkipEagerOptimizationLargeInputFromTensorSlices(self):
     input_t = array_ops.placeholder(dtypes.int32, (None, None, None, None))
     dataset = dataset_ops.Dataset.from_tensor_slices(input_t)
     dataset = dataset_ops._OptimizeDataset(dataset, [])
-    iterator = dataset.make_initializable_iterator()
+    iterator = dataset_ops.make_initializable_iterator(dataset)
     init_op = iterator.initializer
     get_next = iterator.get_next()
 
     with self.cached_session() as sess:
       sess.run(init_op, {input_t: np.ones([1, 512, 1024, 1025], np.int32)})
-      sess.run(get_next)
+      self.evaluate(get_next)
 
   def testOptimizationNestedDataset(self):
 
@@ -79,6 +79,21 @@ class OptimizeDatasetTest(test_base.DatasetTestBase):
     dataset = dataset.flat_map(flat_map_fn)
     dataset = dataset_ops._OptimizeDataset(dataset, ["noop_elimination"])
     self.assertDatasetProduces(dataset, expected_output=[0])
+
+  def testOptimizationNestedDatasetWithModifiedRetval(self):
+
+    def flat_map_fn(_):
+      dataset = dataset_ops.Dataset.from_tensors(0)
+      dataset = dataset.apply(optimization.assert_next(["MapAndBatch"]))
+      # Should be fused by map and batch fusion
+      dataset = dataset.map(lambda x: x)
+      dataset = dataset.batch(1)
+      return dataset
+
+    dataset = dataset_ops.Dataset.range(1)
+    dataset = dataset.flat_map(flat_map_fn)
+    dataset = dataset_ops._OptimizeDataset(dataset, ["map_and_batch_fusion"])
+    self.assertDatasetProduces(dataset, expected_output=[[0]])
 
   def testOptimizationThreadPoolDataset(self):
     dataset = dataset_ops.Dataset.range(10).batch(10)

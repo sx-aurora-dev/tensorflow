@@ -41,6 +41,7 @@ from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops.gen_array_ops import *
 from tensorflow.python.ops.gen_array_ops import reverse_v2 as reverse  # pylint: disable=unused-import
 from tensorflow.python.util import deprecation
+from tensorflow.python.util import dispatch
 from tensorflow.python.util import nest
 from tensorflow.python.util.tf_export import tf_export
 # pylint: enable=wildcard-import
@@ -403,7 +404,7 @@ def size_internal(input, name=None, optimize=True, out_type=dtypes.int32):
       input, (sparse_tensor.SparseTensor, sparse_tensor.SparseTensorValue)):
     input = ops.convert_to_tensor(input)
     np_out_type = out_type.as_numpy_dtype
-    num_elements = np.prod(input._shape_tuple(), dtype=np_out_type)  # pylint: disable=protected-acces:
+    num_elements = np.prod(input._shape_tuple(), dtype=np_out_type)  # pylint: disable=protected-access
     return ops.convert_to_tensor(num_elements, dtype=out_type)
   with ops.name_scope(name, "Size", [input]) as name:
     if isinstance(input, (sparse_tensor.SparseTensor,
@@ -3216,7 +3217,7 @@ reverse_sequence_v2.__doc__ = deprecation.rewrite_argument_docstring(
 # pylint: enable=redefined-builtin
 
 
-@tf_export("gather")
+@tf_export(v1=["gather"])
 def gather(params, indices, validate_indices=None, name=None, axis=0):
   del validate_indices
   if axis != 0:
@@ -3232,10 +3233,18 @@ def gather(params, indices, validate_indices=None, name=None, axis=0):
     return gen_array_ops.gather_v2(params, indices, axis, name=name)
 
 
-gather.__doc__ = gen_array_ops.gather_v2.__doc__
+@tf_export("gather", v1=[])
+def gather_v2(params, indices, validate_indices=None, axis=0, name=None):
+  return gather(params, indices, validate_indices=validate_indices, name=name,
+                axis=axis)
+
+
+gather.__doc__ = gather_v2.__doc__ = gen_array_ops.gather_v2.__doc__
+
 
 
 @tf_export("batch_gather")
+@dispatch.add_dispatch_support
 def batch_gather(params, indices, name=None):
   """Gather slices from `params` according to `indices` with leading batch dims.
 

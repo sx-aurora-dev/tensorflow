@@ -71,7 +71,8 @@ StatusOr<Literal> TransferFromOutfeedLocalReplica(const Shape& shape,
 class LocalShapedBuffer {
  public:
   static StatusOr<LocalShapedBuffer*> FromLiteral(
-      const Literal& argument, const absl::optional<Shape>& shape_with_layout);
+      const Literal& argument, const absl::optional<Shape>& shape_with_layout,
+      int replica_number);
 
   LocalShapedBuffer(ScopedShapedBuffer shaped_buffer);
   StatusOr<Literal> ToLiteral() const;
@@ -172,8 +173,8 @@ class CompiledLocalComputation {
  public:
   CompiledLocalComputation(std::unique_ptr<LocalExecutable> executable);
 
-  StatusOr<LocalShapedBuffer*> Execute(
-      absl::Span<LocalShapedBuffer* const> argument_handles);
+  StatusOr<LocalShapedBufferTuple*> Execute(
+      absl::Span<const std::vector<LocalShapedBuffer*> > argument_handles);
 
  private:
   std::unique_ptr<LocalExecutable> executable_;
@@ -282,7 +283,8 @@ class LocalComputationBuilder {
   LocalOp Broadcast(const LocalOp& operand,
                     absl::Span<const int64> broadcast_sizes);
 
-  LocalOp BroadcastInDim(const LocalOp& operand, const Shape& shape,
+  LocalOp BroadcastInDim(const LocalOp& operand,
+                         absl::Span<const int64> out_dim_sizes,
                          absl::Span<const int64> broadcast_dimensions);
 
   LocalOp Pad(const LocalOp& operand, const LocalOp& padding_value,

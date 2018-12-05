@@ -28,6 +28,8 @@ from tensorflow.contrib.distribute.python import parameter_server_strategy
 from tensorflow.contrib.distribute.python import strategy_test_lib
 from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.data.ops import dataset_ops
+from tensorflow.python.distribute import device_util
+from tensorflow.python.distribute import distribution_strategy_context as ds_context
 from tensorflow.python.distribute import multi_worker_util
 from tensorflow.python.distribute import reduce_util
 from tensorflow.python.distribute import values
@@ -46,8 +48,6 @@ from tensorflow.python.ops import partitioned_variables
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
-from tensorflow.python.training import device_util
-from tensorflow.python.training import distribution_strategy_context as ds_context
 from tensorflow.python.training import training_util
 
 CHIEF = run_config.TaskType.CHIEF
@@ -481,7 +481,7 @@ class ParameterServerStrategyTestBase(
           before_list.append(fetched)
           with ops.control_dependencies([fetched]):
             # TODO(yuefengz): support non-Mirrored variable as destinations.
-            g = d.reduce(
+            g = d.extended.reduce_to(
                 reduce_util.ReduceOp.SUM, g, destinations=v)
             with ops.control_dependencies(
                 d.update(v, update, g, grouped=False)):
@@ -655,6 +655,33 @@ class ParameterServerStrategyTest(ParameterServerStrategyTestBase,
     strategy = parameter_server_strategy.ParameterServerStrategy(
         num_gpus_per_worker=context.num_gpus())
     self._test_global_step_update(strategy)
+
+  def testUpdateConfigProtoMultiWorker(self):
+    distribution = parameter_server_strategy.ParameterServerStrategy(
+        num_gpus_per_worker=2)
+    distribution.configure(
+        cluster_spec=self._cluster_spec, task_type='worker', task_id=1)
+
+    config_proto = config_pb2.ConfigProto(device_filters=['to_be_overridden'])
+
+    new_config = distribution.update_config_proto(config_proto)
+
+    # Verify device filters.
+    self.assertEqual(['/job:worker/task:1', '/job:ps'],
+                     new_config.device_filters)
+
+    # Verify isolate_session_state
+    self.assertFalse(new_config.isolate_session_state)
+
+  def testUpdateConfigProtoLocal(self):
+    distribution = parameter_server_strategy.ParameterServerStrategy(
+        num_gpus_per_worker=2)
+
+    config_proto = config_pb2.ConfigProto()
+    new_config = distribution.update_config_proto(config_proto)
+
+    # Verify isolate_session_state
+    self.assertTrue(new_config.isolate_session_state)
 
 
 class ParameterServerStrategyWithChiefTest(ParameterServerStrategyTestBase,

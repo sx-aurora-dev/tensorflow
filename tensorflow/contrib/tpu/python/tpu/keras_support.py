@@ -81,6 +81,7 @@ from tensorflow.python.keras import metrics as metrics_module
 from tensorflow.python.keras import models
 from tensorflow.python.keras import optimizers as keras_optimizers
 from tensorflow.python.keras.engine import base_layer
+from tensorflow.python.keras.engine import base_layer_utils
 from tensorflow.python.keras.engine import training_arrays
 from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.layers import embeddings
@@ -438,7 +439,7 @@ class TPURewriteContext(object):
 
     self._default_placeholder = array_ops.placeholder
     self._default_name_scope = ops.name_scope
-    self._default_make_variable = base_layer.make_variable
+    self._default_make_variable = base_layer_utils.make_variable
     self._default_random_normal = random_ops.random_normal
     self._default_qr = gen_linalg_ops.qr
 
@@ -486,14 +487,14 @@ class TPURewriteContext(object):
     gen_linalg_ops.qr = qr
 
     ops.name_scope = _name_scope
-    base_layer.make_variable = variable_scope.get_variable
+    base_layer_utils.make_variable = variable_scope.get_variable
     logging.info('Overriding default placeholder.')
     return
 
   def __exit__(self, exc_type, exc_val, exc_tb):
     array_ops.placeholder = self._default_placeholder
     ops.name_scope = self._default_name_scope
-    base_layer.make_variable = self._default_make_variable
+    base_layer_utils.make_variable = self._default_make_variable
     random_ops.random_normal = self._default_random_normal
     gen_linalg_ops.qr = self._default_qr
 
@@ -728,7 +729,7 @@ class TPUDatasetInfeedManager(TPUInfeedManager):
     dummy_x_shape[0] *= tpu_assignment.num_towers
     dummy_y_shape = dataset.output_shapes[1].as_list()
     dummy_y_shape[0] *= tpu_assignment.num_towers
-    self._iterator = dataset.make_initializable_iterator()
+    self._iterator = dataset_ops.make_initializable_iterator(dataset)
     K.get_session().run(self._iterator.initializer)
 
     self._get_next_ops = []
