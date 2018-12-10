@@ -48,10 +48,7 @@ class VEO {
     VEO() : cb_(nullptr) {}
     virtual ~VEO();
 
-    typedef void (*cb_t)(int nodeid,
-                         const std::vector<std::string>& kernel_names,
-                         const void* buf,
-                         void* data);
+    typedef void (*cb_t)(int nodeid, int kind, const void* buf, void* data);
 
     bool isTracerEnabled() const { return cb_ != nullptr; }
 
@@ -103,11 +100,25 @@ class VEO {
     }
 
     virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
-      return veo_write_mem(proc_, ve_addr, vh_buff, len);
+      if (isTracerEnabled()) {
+        uint64_t start = Env::Default()->NowMicros();
+        int r = veo_write_mem(proc_, ve_addr, vh_buff, len);
+        uint64_t end = Env::Default()->NowMicros();
+        callbackTracer(start, end, 0); // 0: HtoD
+        return r;
+      } else
+        return veo_write_mem(proc_, ve_addr, vh_buff, len);
     }
 
     virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
-      return veo_read_mem(proc_, vh_buff, ve_addr, len);
+      if (isTracerEnabled()) {
+        uint64_t start = Env::Default()->NowMicros();
+        int r = veo_read_mem(proc_, vh_buff, ve_addr, len);
+        uint64_t end = Env::Default()->NowMicros();
+        callbackTracer(start, end, 1); // 1: DtoH
+        return r;
+      } else
+        return veo_read_mem(proc_, vh_buff, ve_addr, len);
     }
 
     virtual Status compute(const std::string& name, const void* arg, size_t len,
@@ -167,8 +178,29 @@ class VEO {
                         const void* buf)
     {
       VLOG(2) << "VEO::callbackTracer: cb_=" << reinterpret_cast<void*>(cb_);
-      if (cb_)
-        cb_(0, kernel_names, buf, cb_data_);
+      if (cb_) {
+        struct {
+          const std::vector<std::string>* kernel_names;
+          const void* buf;
+        } tmp;
+        tmp.kernel_names = &kernel_names;
+        tmp.buf = buf;
+        cb_(0, 0, &tmp, cb_data_);
+      }
+    }
+
+    void callbackTracer(uint64_t start, uint64_t end, int type) {
+      if (cb_) {
+        struct {
+          uint64_t start;
+          uint64_t end;
+          uint64_t type;
+        } tmp;
+        tmp.start = start;
+        tmp.end = end;
+        tmp.type = type;
+        cb_(0, 1, &tmp, cb_data_);
+      }
     }
 
   private:
@@ -404,21 +436,8 @@ class VEOAsync : public VEOLock
         Args args(buf, len, buf_out.data(), len_out);
         s = call_and_wait(sym_prof_, args);
 
-        if (s.ok()) {
+        if (s.ok())
           callbackTracer(stack->annotations(), buf_out.data());
-
-#if 0
-          double hz = *reinterpret_cast<double*>(buf_out);
-          uint64_t* pcyc = reinterpret_cast<uint64_t*>(
-              reinterpret_cast<uintptr_t>(buf_out) + sizeof(double));
-          for (int i = 0; i < n; ++i) {
-            VLOG(2) << "VEOAsync::sync: i=" << i << " t0=" << pcyc[2*i]
-              << " t1=" << pcyc[2*i+1];
-            VLOG(2) << "VEOAsync::sync: i=" << i << " " << stack->annotations()[i]
-              << " time " << (pcyc[2*i+1]-pcyc[2*i]) * 1e6 / hz << " us";
-          }
-#endif
-        }
       } else {
         Args args(buf, len);
         s = call_and_wait(sym_noprof_, args);
