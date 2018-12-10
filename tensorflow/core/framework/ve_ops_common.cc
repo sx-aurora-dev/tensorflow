@@ -52,9 +52,10 @@ Status VEOpKernelHelper::Args::addTensor(const Tensor& t) {
 
 void VEOpKernelHelper::Call(OpKernelContext* context, 
                             const std::string& name, 
-                            const Args& buf) {
+                            const Args& buf,
+                            const OpKernel* op) {
   VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-  Status s = vectx->Compute(name.c_str(), buf.buf(), buf.size());
+  Status s = vectx->Compute(name.c_str(), buf.buf(), buf.size(), op);
   if (!s.ok())
     context->SetStatus(s);
 }

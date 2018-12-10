@@ -55,16 +55,17 @@ class VEOpKernelHelper {
       };
 
   public:
-    void Call(OpKernelContext* context, const std::string& name, const Args& buf);
+    void Call(OpKernelContext* context, const std::string& name, const Args& buf,
+              const OpKernel* op = NULL);
     // shortcuts
     void Call(OpKernelContext* context, const std::string& name,
-              const Tensor& t0) {
-      Call(context, name, ArgsImpl<>(t0));
+              const Tensor& t0, const OpKernel* op = NULL) {
+      Call(context, name, ArgsImpl<>(t0), op);
     }
     void Call(OpKernelContext* context, const std::string& name,
-              const Tensor& t0, const Tensor& t1)
+              const Tensor& t0, const Tensor& t1, const OpKernel* op = NULL)
     {
-      Call(context, name, ArgsImpl<>(t0, t1));
+      Call(context, name, ArgsImpl<>(t0, t1), op);
     }
 };
 

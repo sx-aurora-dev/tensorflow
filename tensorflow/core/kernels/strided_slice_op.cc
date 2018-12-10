@@ -39,6 +39,10 @@ limitations under the License.
 #include "tensorflow/core/platform/prefetch.h"
 #include "tensorflow/core/util/strided_slice_op.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 namespace {
 
@@ -567,4 +571,18 @@ REGISTER_KERNEL_BUILDER(Name("ResourceStridedSliceAssign")
                         StridedSliceAssignOp<CPUDevice, int32>)
 #undef REGISTER_SYCL
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+#if 1
+REGISTER_KERNEL_BUILDER(Name("StridedSlice")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("input")
+                            .HostMemory("begin")
+                            .HostMemory("end")
+                            .HostMemory("strides")
+                            .HostMemory("output"),
+                        StridedSliceOp<CPUDevice, int32>);
+#endif
+#endif // TENSORFLOW_USE_VE
 }  // namespace tensorflow
