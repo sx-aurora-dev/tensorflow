@@ -227,6 +227,18 @@ REGISTER_KERNEL_BUILDER(Name("Fill")
 #undef REGISTER_KERNEL_SYCL
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("Fill")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("index_type")
+                            .HostMemory("dims")
+                            .HostMemory("value")
+                            .HostMemory("output"),
+                        FillOp<CPUDevice, int32, int32>);
+#undef REGISTER_KERNEL_VE
+#endif  // TENSORFLOW_USE_VE
+
 #if GOOGLE_CUDA
 REGISTER_KERNEL(GPU, Eigen::half);
 REGISTER_KERNEL(GPU, bfloat16);

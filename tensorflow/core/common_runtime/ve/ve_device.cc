@@ -99,26 +99,36 @@ class VEO {
       return veo_free_mem(proc_, addr);
     }
 
-    virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
+    virtual Status write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
+      int rc;
       if (isTracerEnabled()) {
         uint64_t start = Env::Default()->NowMicros();
-        int r = veo_write_mem(proc_, ve_addr, vh_buff, len);
+        rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
         uint64_t end = Env::Default()->NowMicros();
         callbackTracer(start, end, 0); // 0: HtoD
-        return r;
       } else
-        return veo_write_mem(proc_, ve_addr, vh_buff, len);
+        rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
+
+      if (rc == 0)
+        return Status::OK();
+      else
+        return errors::Internal("write_mem failed. rc=", rc);
     }
 
-    virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
+    virtual Status read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
+      int rc;
       if (isTracerEnabled()) {
         uint64_t start = Env::Default()->NowMicros();
-        int r = veo_read_mem(proc_, vh_buff, ve_addr, len);
+        rc = veo_read_mem(proc_, vh_buff, ve_addr, len);
         uint64_t end = Env::Default()->NowMicros();
         callbackTracer(start, end, 1); // 1: DtoH
-        return r;
       } else
-        return veo_read_mem(proc_, vh_buff, ve_addr, len);
+        rc = veo_read_mem(proc_, vh_buff, ve_addr, len);
+
+      if (rc == 0)
+        return Status::OK();
+      else
+        return errors::Internal("write_mem failed. rc=", rc);
     }
 
     virtual Status compute(const std::string& name, const void* arg, size_t len,
@@ -143,6 +153,14 @@ class VEO {
       return it->second;
     }
 
+    std::string find_kernel_name(uint64_t sym) {
+      for (auto p : kernel_map_) {
+        if (p.second == sym)
+          return p.first;
+      }
+      return "(unknown)";
+    }
+
     virtual uint64_t get_sym(uint64_t lib_id, const char* name) {
       return veo_get_sym(proc_, lib_id, name);
     }
@@ -153,25 +171,28 @@ class VEO {
       return req_id;
     }
 
-    virtual Status wait(uint64_t req_id) {
-      VLOG(2) << "VEO::call: call veo_wait_result for req_id=" << req_id;
+    virtual Status wait(uint64_t req_id, uint64_t *pRetval = NULL) {
+      VLOG(2) << "VEO::wait: call veo_wait_result for req_id=" << req_id;
       uint64_t retval;
       int ret = veo_call_wait_result(ctx_, req_id, &retval);
-      VLOG(2) << "VEO::call: return from veo_wait_result."
+      VLOG(2) << "VEO::wait: return from veo_wait_result."
         << " req_id=" << req_id << " ret=" << ret << " retval=" << retval;
+      if (pRetval)
+        *pRetval = retval;
       if (ret != 0)
         return errors::Internal("Failed to wait kernel result");
       if (retval != 0)
-        return errors::Internal("Failed in the kernel");
+        return errors::Internal("Failed in the kernel: retval=", retval);
 
       return Status::OK();
     }
 
-    virtual Status call_and_wait(uint64_t sym, const Args& a) {
+    virtual Status call_and_wait(uint64_t sym, const Args& a, 
+                                 uint64_t *pRetval = NULL) {
       uint64_t req_id = call(sym, a);
       if (req_id == VEO_REQUEST_ID_INVALID)
         return errors::Internal("Failed to call kernel");
-      return wait(req_id);
+      return wait(req_id, pRetval);
     }
 
     void callbackTracer(const std::vector<std::string>& kernel_names,
@@ -230,12 +251,12 @@ class VEOLock : public VEO {
       return VEO::free_mem(addr);
     }
 
-    virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) override {
+    virtual Status write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) override {
       mutex_lock guard(lock_);
       return VEO::write_mem(ve_addr, vh_buff, len);
     }
 
-    virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) override {
+    virtual Status read_mem(void* vh_buff, uint64_t ve_addr, size_t len) override {
       mutex_lock guard(lock_);
       return VEO::read_mem(vh_buff, ve_addr, len);
     }
@@ -253,9 +274,9 @@ class VEOLock : public VEO {
       return VEO::call(sym, a);
     }
 
-    virtual Status wait(uint64_t req_id) override {
+    virtual Status wait(uint64_t req_id, uint64_t* pRetval = NULL) override {
       mutex_lock guard(lock_);
-      return VEO::wait(req_id);
+      return VEO::wait(req_id, pRetval);
     }
 
   private:
@@ -300,6 +321,22 @@ class KernelStack
         annotations_.push_back(*annotation);
 
       return 0;
+    }
+
+    uint64_t find_sym(int idx) const {
+      //VLOG(2) << "KernelStack::find_sym: idx=" << idx << " num_kernels_=" << num_kernels_;
+      if (num_kernels_ <= idx)
+        return 0;
+      uintptr_t curr = reinterpret_cast<uintptr_t>(buf_);
+      curr += sizeof(int32_t); // skip num_kernels
+      uint64_t sym = 0;
+      for (int i = 0; i < idx + 1; ++i) {
+        sym = *reinterpret_cast<const uint64_t*>(curr);
+        size_t len = *reinterpret_cast<const size_t*>(curr + sizeof(uint64_t));
+        curr += len + sizeof(uint64_t) + sizeof(size_t);
+        //VLOG(2) << "KernelStack::find_sym: i=" << i << " sym=" << sym;
+      }
+      return sym;
     }
 
     int32_t num_kernels() const { return num_kernels_; }
@@ -348,17 +385,17 @@ class VEOAsync : public VEOLock
       return Status::OK();
     }
 
-    virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) override {
+    virtual Status write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) override {
       Status s = sync();
       if (!s.ok())
-        return 1;
+        return s;
       return VEO::write_mem(ve_addr, vh_buff, len);
     }
 
-    virtual int read_mem(void* vh_buff, uint64_t ve_addr, size_t len) override {
+    virtual Status read_mem(void* vh_buff, uint64_t ve_addr, size_t len) override {
       Status s = sync();
       if (!s.ok())
-        return 1;
+        return s;
       return VEO::read_mem(vh_buff, ve_addr, len);
     }
 
@@ -373,6 +410,8 @@ class VEOAsync : public VEOLock
         << " name=" << name << " len=" << len;
 #endif
       uint64_t sym = find_kernel_sym(name);
+      if (sym == 0)
+        return errors::Internal("VEOAsync: VE kernel not found for ", name);
 
       int ret;
       if (isTracerEnabled()) {
@@ -387,7 +426,7 @@ class VEOAsync : public VEOLock
       }
 
       if (ret != 0)
-        return errors::Internal("Failed to push kernel");
+        return errors::Internal("VEOAsync: Failed to push kernel");
 
       return Status::OK();
     }
@@ -430,17 +469,31 @@ class VEOAsync : public VEOLock
       *reinterpret_cast<int32_t*>(buf) = n;
       Status s;
 
+      uint64_t retval = 0;
       if (isTracerEnabled()) {
         size_t len_out = sizeof(double) + sizeof(uint64_t) * n * 2;
         std::vector<char> buf_out(len_out);
         Args args(buf, len, buf_out.data(), len_out);
-        s = call_and_wait(sym_prof_, args);
+        s = call_and_wait(sym_prof_, args, &retval);
 
         if (s.ok())
           callbackTracer(stack->annotations(), buf_out.data());
       } else {
         Args args(buf, len);
-        s = call_and_wait(sym_noprof_, args);
+        s = call_and_wait(sym_noprof_, args, &retval);
+      }
+
+      if (!s.ok()) {
+        int i = retval >> 32;
+        int rc = retval & 0xffffffff;
+        uint64_t sym = stack->find_sym(i);
+        std::string name = find_kernel_name(sym);
+        VLOG(2) << "VEOAsync::sync: retval=" << retval
+          << " i=" << i
+          << " rc=" << rc
+          << " sym=" << reinterpret_cast<void*>(sym)
+          << " name=" << name;
+        return errors::Internal("Failed in ", name, " Kernel on VE. rc=", rc);
       }
 
       stack->clear();
@@ -852,13 +905,8 @@ void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device
   VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: proc_pid_=" << getpid() << " tid=" << syscall(SYS_gettid);
 #endif
 
-  int rc = veo_->write_mem((uint64_t)out, in, cpu_tensor->TotalBytes());
-  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: rc=" << rc;
-
-  if (rc == 0)
-    done(Status::OK());
-  else
-    done(errors::Internal("VEO::write_mem failed"));
+  Status s = veo_->write_mem((uint64_t)out, in, cpu_tensor->TotalBytes());
+  done(s);
 }
 
 void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
@@ -869,14 +917,8 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
   const void* in = DMAHelper::base(device_tensor);
   void* out = DMAHelper::base(cpu_tensor);
 
-  int rc = veo_->read_mem(out, (uint64_t)in, device_tensor->TotalBytes());
-
-  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: rc=" << rc;
-
-  if (rc == 0)
-    done(Status::OK());
-  else
-    done(errors::Internal("VEO::write_mem failed"));
+  Status s = veo_->read_mem(out, (uint64_t)in, device_tensor->TotalBytes());
+  done(s);
 }
 
 Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len,

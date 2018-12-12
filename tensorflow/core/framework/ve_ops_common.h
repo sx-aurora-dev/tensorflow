@@ -10,7 +10,7 @@
 namespace tensorflow {
 
 class VEOpKernelHelper {
-  protected:
+  public:
     class Args {
       public:
         Args(void* buf, size_t size) : buf_(buf) {
@@ -55,14 +55,14 @@ class VEOpKernelHelper {
       };
 
   public:
-    void Call(OpKernelContext* context, const std::string& name, const Args& buf,
-              const OpKernel* op = NULL);
+    static void Call(OpKernelContext* context, const std::string& name, const Args& buf,
+                     const OpKernel* op = NULL);
     // shortcuts
-    void Call(OpKernelContext* context, const std::string& name,
+    static void Call(OpKernelContext* context, const std::string& name,
               const Tensor& t0, const OpKernel* op = NULL) {
       Call(context, name, ArgsImpl<>(t0), op);
     }
-    void Call(OpKernelContext* context, const std::string& name,
+    static void Call(OpKernelContext* context, const std::string& name,
               const Tensor& t0, const Tensor& t1, const OpKernel* op = NULL)
     {
       Call(context, name, ArgsImpl<>(t0, t1), op);
