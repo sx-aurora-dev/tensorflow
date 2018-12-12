@@ -169,8 +169,7 @@ void VEDeviceTracer::callback(int nodeid, int kind, const void* data)
     VLOG(2) << "VEDeviceTracer::callback: kernel_records_.size=" << kernel_records_.size()
       << " kernel_names.size=" << kernel_names.size();
 
-    uint64_t* pcyc = reinterpret_cast<uint64_t*>(
-        reinterpret_cast<uintptr_t>(buf) + sizeof(double));
+    const uint64_t* pcyc = reinterpret_cast<const uint64_t*>(buf);
     int n = kernel_names.size();
     for (int i = 0; i < n; ++i) {
       uint64_t t0 = pcyc[i*2];
