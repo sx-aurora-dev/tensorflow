@@ -363,6 +363,24 @@ REGISTER_KERNEL_BUILDER(Name("Size")
                         SizeOp<int64>);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                               \
+  REGISTER_KERNEL_BUILDER(Name("Size")                           \
+                              .Device(DEVICE_VE)               \
+                              .TypeConstraint<type>("T")         \
+                              .TypeConstraint<int32>("out_type") \
+                              .HostMemory("output"),             \
+                          SizeOp<int32>);                        \
+  REGISTER_KERNEL_BUILDER(Name("Size")                           \
+                              .Device(DEVICE_VE)               \
+                              .TypeConstraint<type>("T")         \
+                              .TypeConstraint<int64>("out_type") \
+                              .HostMemory("output"),             \
+                          SizeOp<int64>);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_bool(REGISTER_VE_KERNEL);
+#endif
+
 // ExpandDims ------------------------------------
 REGISTER_KERNEL_BUILDER(Name("ExpandDims")
                             .Device(DEVICE_CPU)

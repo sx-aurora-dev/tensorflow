@@ -37,6 +37,10 @@ limitations under the License.
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -44,6 +48,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 // Forward declarations of functors that will be defined in tile_ops_impl.h
 namespace functor {
@@ -618,5 +625,28 @@ TF_CALL_double(REGISTER_SYCL);
 
 #undef REGISTER_SYCL
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+template<>
+template<>
+void TileOp<VEDevice, int32>::HandleCase<DataTypeToEnum<float>::value>(
+    OpKernelContext* context,
+    const gtl::ArraySlice<int32>& multiples_array, Tensor* result) {
+  const Tensor& input = context->input(0);
+
+  VEOpKernelHelper::ArgsImpl<> args;
+  args.addTensor(input);
+  args.addTensor(*result);
+
+  VEOpKernelHelper::Call(context, "Tile", args);
+}
+
+REGISTER_KERNEL_BUILDER(Name("Tile")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<float>("T")
+                        .TypeConstraint<int32>("Tmultiples")
+                        .HostMemory("multiples"),
+                        TileOp<VEDevice, int32>);
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

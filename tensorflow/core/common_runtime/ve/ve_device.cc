@@ -99,6 +99,7 @@ class VEO {
       return veo_free_mem(proc_, addr);
     }
 
+    // FIXME: return Status
     virtual int write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
       if (isTracerEnabled()) {
         uint64_t start = Env::Default()->NowMicros();
@@ -373,6 +374,8 @@ class VEOAsync : public VEOLock
         << " name=" << name << " len=" << len;
 #endif
       uint64_t sym = find_kernel_sym(name);
+      if (sym == 0)
+        return errors::Internal("VEOAsync: VE kernel not found for ", name);
 
       int ret;
       if (isTracerEnabled()) {
@@ -387,7 +390,7 @@ class VEOAsync : public VEOLock
       }
 
       if (ret != 0)
-        return errors::Internal("Failed to push kernel");
+        return errors::Internal("VEOAsync: Failed to push kernel");
 
       return Status::OK();
     }
