@@ -2,21 +2,17 @@
 
 We have tested on CentOS 7.4 and:
 
-- ncc/nc++: 1.5.6
+- ncc/nc++: 1.5.8
 - llvm: 15cc8820165651868316bf70b9f55be0ad6a9a03
 - clang: 6b373253998ea732d51f5633de67e78761bdbccb
-- veos: 1.3.0
-- veo: 1.2.2e (https://github.com/SX-Aurora/veoffload/releases/tag/1.2.2e)
+- veos: 1.3.2
+- veo: https://github.com/veos-sxarr-NEC/veoffload/releases/tag/v1.3.2-github
 
 ## Setup
 
 ### Install veoffload
 
-There are some version of veoffload. The other version may not work for
-tensorflow-ve even it is later than below.
-
-- https://github.com/SX-Aurora/veoffload/releases/download/1.2.2e/veoffload-1.2.2e-1.el7.centos.x86_64.rpm
-- https://github.com/SX-Aurora/veoffload-veorun/releases/download/1.2.2a/veoffload-veorun-1.2.2a-1.el7.centos.x86_64.rpm
+Install from above url.
 
 ### Install bazel
 
@@ -62,7 +58,7 @@ $ scl enable rh-python35 bash
 $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
-(tmp)$ pip install -U six numpy wheel
+(tmp)$ pip install -U six numpy wheel Keras-Preprocessing
 ```
 
 ### Build source code
@@ -98,7 +94,7 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 Build tensorflow.
 
 ```
-(tmp)% ./configure # answer N for all questions
+(tmp)% ./configure # answer N for all questions. You can probably ignore an error on getsitepackages.
 (tmp)% bazel build --config=ve --config=opt //tensorflow/tools/pip_package:build_pip_package
 (tmp)% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
 ```
@@ -111,7 +107,7 @@ Build keras.
 (tmp)% python setup.py bdist_wheel
 ```
 
-You can find package in dist directory.
+You can find package in `dist` directory.
 
 ### Install packages 
 
@@ -147,7 +143,7 @@ LLVM_DIR when you build vetfkernel. You can also specify version of ncc/nc++.
 
 ```
 (tmp)% (cd build && cmake3 \
-        -DLLVM_DIR=<install prefix> \
+        -DLLVM_DIR=<install prefix>/lib/cmake/llvm \
         -NCC=/opt/nec/ve/bin/ncc-1.5.6 \
         -NCXX=/opt/nec/ve/bin/nc++-1.5.6 .. && make)
 ```
