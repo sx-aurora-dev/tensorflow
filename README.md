@@ -9,7 +9,6 @@ We have four repositories:
 - [samples](http://socsv218:3002/ve-tensorflow/samples)
 
 If you are a developper, see [[README_ve.md]] for details.
-If you are a user, see [[README_ve_user.md]].
 
 
 <div align="center">
