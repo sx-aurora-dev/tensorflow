@@ -7,6 +7,7 @@ We have tested on CentOS 7.4 and:
 - clang: 6b373253998ea732d51f5633de67e78761bdbccb
 - veos: 1.3.2
 - veo: https://github.com/veos-sxarr-NEC/veoffload/releases/tag/v1.3.2-github
+- bazel: 0.19.2
 
 ## Setup
 
@@ -24,6 +25,14 @@ Install bazel.
 
 ```
 % yum install bazel
+```
+
+If you can not find bazel-0.19.2, you can build it.
+
+```
+% wget https://vbatts.fedorapeople.org/bazel-0.19.2-1.fc28.src.rpm
+% rpmbuild --rebuild bazel-0.19.2-1.fc28.src.rpm
+% rpm -Uvh --oldpackage bazel-0.19.2-1.el7.centos.x86_64.rpm
 ```
 
 ### Create virtualenv with python 3.5
