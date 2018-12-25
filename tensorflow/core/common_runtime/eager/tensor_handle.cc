@@ -27,7 +27,6 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/common_runtime/eager/context.h"
 #include "tensorflow/core/common_runtime/eager/eager_executor.h"
-#include "tensorflow/core/common_runtime/eager/kernel_and_device.h"
 #include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/rendezvous_mgr.h"
 #include "tensorflow/core/framework/rendezvous.h"
@@ -76,6 +75,13 @@ Status TensorHandle::Tensor(const tensorflow::Tensor** t) {
   TF_RETURN_IF_ERROR(WaitReady());
   DCHECK(IsReady());
   *t = &tensor_;
+  return Status::OK();
+}
+
+Status TensorHandle::TensorValue(tensorflow::TensorValue* t) {
+  TF_RETURN_IF_ERROR(WaitReady());
+  DCHECK(IsReady());
+  *t = tensorflow::TensorValue(&tensor_);
   return Status::OK();
 }
 
@@ -184,10 +190,7 @@ Status TensorHandle::CopyToDevice(EagerContext* ctx, tensorflow::Device* dstd,
   bool is_same_device = (srcd == dstd) || (srcd->name() == dstd->name());
   const bool dst_cpu = dstd->tensorflow_gpu_device_info() == nullptr;
   const bool src_cpu = srcd->tensorflow_gpu_device_info() == nullptr;
-  // both_on_cpu can be true and yet is_same_device is false, if one of src/dst
-  // has device type XLA_CPU, and the other CPU.
-  const bool both_on_cpu = src_cpu && dst_cpu;
-  if (is_same_device || both_on_cpu) {
+  if (is_same_device) {
     *output = new tensorflow::TensorHandle(*src, dstd, dstd, ctx);
     return tensorflow::Status::OK();
   }

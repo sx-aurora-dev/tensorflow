@@ -96,7 +96,7 @@ int TfLiteIntArrayEqualsArray(TfLiteIntArray* a, int b_size, int b_data[]);
 
 // Create a copy of an array passed as `src`.
 // You are expected to free memory with TfLiteIntArrayFree
-TfLiteIntArray* TfLiteIntArrayCopy(TfLiteIntArray* src);
+TfLiteIntArray* TfLiteIntArrayCopy(const TfLiteIntArray* src);
 
 // Free memory of array `v`.
 void TfLiteIntArrayFree(TfLiteIntArray* v);
@@ -397,6 +397,9 @@ typedef struct TfLiteContext {
   // default: false.
   // WARNING: This is an experimental API and subject to change.
   bool allow_fp32_relax_to_fp16;
+
+  // Pointer to the op-level profiler, if set; nullptr otherwise.
+  void* profiler;
 } TfLiteContext;
 
 typedef struct _TfLiteRegistration {

@@ -27,11 +27,12 @@ from tensorflow.python.eager import context
 from tensorflow.python.framework import errors
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import callbacks as cbks
-from tensorflow.python.keras.engine import training_distributed
+from tensorflow.python.keras.engine import distributed_training_utils
 from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.utils.generic_utils import make_batches
 from tensorflow.python.keras.utils.generic_utils import slice_arrays
 from tensorflow.python.platform import tf_logging as logging
+from tensorflow.python.training.mode_keys import ModeKeys
 
 try:
   from scipy.sparse import issparse  # pylint: disable=g-import-not-at-top
@@ -39,93 +40,8 @@ except ImportError:
   issparse = None
 
 
-class Aggregator(object):
-  """Abstract base class used to aggregate batch-level outputs of a loop.
-
-  Arguments:
-    use_steps: Whether the loop is using `step` or `batch_size`.
-    num_samples_or_steps: Either `batch_size*num_batches` or `steps`.
-  """
-
-  def __init__(self, use_steps, num_samples_or_steps):
-    self.use_steps = use_steps
-    self.num_samples_or_steps = num_samples_or_steps
-    self.results = []
-
-  def create(self, batch_outs):
-    """Create the initial results from the first batch outputs.
-
-    Arguments:
-      batch_outs: A list of batch-level outputs.
-    """
-    raise NotImplementedError
-
-  def aggregate(self, batch_outs, batch_start=None, batch_end=None):
-    """Aggregate batch-level results into total results.
-
-    Arguments:
-      batch_outs: A list of batch-level outputs.
-      batch_start: The start index of this batch. Always `None` if `use_steps`
-        is `True`.
-      batch_end: The end index of this batch. Always `None` if `use_steps` is
-        `True`.
-    """
-    raise NotImplementedError
-
-  def finalize(self):
-    """Prepare the total results to be returned."""
-    raise NotImplementedError
-
-
-class MetricsAggregator(Aggregator):
-  """Aggregator that calculates loss and metrics info."""
-
-  def create(self, batch_outs):
-    self.results = [0.] * len(batch_outs)
-
-  def aggregate(self, batch_outs, batch_start=None, batch_end=None):
-    # Loss.
-    if self.use_steps:
-      self.results[0] += batch_outs[0]
-    else:
-      self.results[0] += batch_outs[0] * (batch_end - batch_start)
-    # Metrics (always stateful, just grab current values.)
-    self.results[1:] = batch_outs[1:]
-
-  def finalize(self):
-    self.results[0] /= self.num_samples_or_steps
-
-
-class OutputsAggregator(Aggregator):
-  """Aggregator that concatenates outputs."""
-
-  def create(self, batch_outs):
-    if self.use_steps:
-      # Cannot pre-allocate the returned NumPy arrays bc
-      # batch sizes are unknown. Concatenate batches at the end.
-      for _ in batch_outs:
-        self.results.append([])
-    else:
-      # Pre-allocate NumPy arrays.
-      for batch_out in batch_outs:
-        shape = (self.num_samples_or_steps,) + batch_out.shape[1:]
-        self.results.append(np.zeros(shape, dtype=batch_out.dtype))
-
-  def aggregate(self, batch_outs, batch_start=None, batch_end=None):
-    if self.use_steps:
-      for i, batch_out in enumerate(batch_outs):
-        self.results[i].append(batch_out)
-    else:
-      for i, batch_out in enumerate(batch_outs):
-        self.results[i][batch_start:batch_end] = batch_out
-
-  def finalize(self):
-    if self.use_steps:
-      self.results = [np.concatenate(result, axis=0) for result in self.results]
-
-
 def _get_model_feed(model, mode):
-  if mode == 'predict':
+  if mode == ModeKeys.PREDICT:
     feed = model._feed_inputs
   else:
     feed = (
@@ -153,31 +69,12 @@ def _print_train_info(inputs, val_inputs, steps_per_epoch, verbose):
           (inputs[0].shape[0], val_inputs[0].shape[0]))
 
 
-def _get_progbar(model, count_mode):
-  stateful_metric_names = None
-  if hasattr(model, 'metrics_names'):
-    stateful_metric_names = model.metrics_names[1:]  # Exclude `loss`
-  return cbks.ProgbarLogger(count_mode, stateful_metrics=stateful_metric_names)
-
-
 def _get_num_samples_or_steps(ins, batch_size, steps_per_epoch):
   """Returns total number of samples (when training in batch mode) or steps."""
   if steps_per_epoch:
     return steps_per_epoch
   return training_utils.check_num_samples(ins, batch_size, steps_per_epoch,
                                           'steps_per_epoch')
-
-
-def _make_logs(model, outputs, mode, prefix=''):
-  """Used to make logs to send to `on_batch_end` methods."""
-  logs = {}
-  # TODO(omalleyt): handle outputs in prediction when Callback
-  # hooks are ready.
-  if mode in ['train', 'test']:
-    if hasattr(model, 'metrics_names'):
-      for label, output in zip(model.metrics_names, outputs):
-        logs[prefix + label] = output
-  return logs
 
 
 def _prepare_feed_values(model, inputs, targets, sample_weights, mode):
@@ -188,14 +85,14 @@ def _prepare_feed_values(model, inputs, targets, sample_weights, mode):
     inputs: List or dict of model inputs.
     targets: Optional list of model targets.
     sample_weights: Optional list of sample weight arrays.
-    mode: One of 'train'/'test'/'predict'.
+    mode: One of ModeKeys.TRAIN/ModeKeys.TEST/ModeKeys.PREDICT.
 
   Returns:
     Feed values for the model in the given mode.
   """
   if model._distribution_strategy:
     def get_distributed_inputs():
-      return training_distributed._prepare_feed_values(
+      return distributed_training_utils._prepare_feed_values(
           model, inputs, targets, sample_weights, mode)
 
     # In the eager case, we want to call the input method per step, so return
@@ -214,16 +111,17 @@ def _prepare_feed_values(model, inputs, targets, sample_weights, mode):
   targets = targets or []
   sample_weights = sample_weights or []
   ins = inputs + targets + sample_weights
-  if mode == 'train' and not isinstance(K.symbolic_learning_phase(), int):
+  if mode == ModeKeys.TRAIN and not isinstance(K.symbolic_learning_phase(),
+                                               int):
     ins += [True]
   return ins
 
 
-def _get_execution_function(model, mode):
-  """Get function to run one step of model execution."""
+def _make_execution_function(model, mode):
+  """Makes function to run one step of model execution."""
   if model._distribution_strategy:
-    return training_distributed._get_execution_function(model, mode)
-  return model._get_execution_function(mode)
+    return distributed_training_utils._make_execution_function(model, mode)
+  return model._make_execution_function(mode)
 
 
 def model_iteration(model,
@@ -241,9 +139,10 @@ def model_iteration(model,
                     initial_epoch=0,
                     steps_per_epoch=None,
                     validation_steps=None,
-                    mode='train',
+                    mode=ModeKeys.TRAIN,
+                    validation_in_fit=False,
                     **kwargs):
-  """Loop function for arrays of data with modes 'train'/'test'/'predict'.
+  """Loop function for arrays of data with modes TRAIN/TEST/PREDICT.
 
   Arguments:
       model: Keras Model instance.
@@ -267,13 +166,18 @@ def model_iteration(model,
         the default value of `None`.
       validation_steps: Number of steps to run validation for (only if doing
         validation from data tensors). Ignored with the default value of `None`.
-      mode: One of 'train'/'test'/'predict'.
+      mode: One of ModeKeys.TRAIN/ModeKeys.TEST/ModeKeys.PREDICT.
+      validation_in_fit: DEPRECATED: if true, then this method is invoked from
+        within training iteration (for validation). In this case, do not copy
+        weights when using a tf.distribute.Strategy. The input is deprecated as
+        it is not required if the user creates a distributed model under the
+        distribution strategy scope rather than passing it to compile.
       **kwargs: Additional arguments for backwards compatibility.
 
   Returns:
-      - In 'train' mode: `History` object.
-      - In 'test' mode: Evaluation metrics.
-      - In 'predict' mode: Outputs of the Model called on inputs.
+      - In TRAIN mode: `History` object.
+      - In TEST mode: Evaluation metrics.
+      - In PREDICT mode: Outputs of the Model called on inputs.
 
   Raises:
       ValueError: in case of invalid arguments.
@@ -283,7 +187,7 @@ def model_iteration(model,
     steps_per_epoch = kwargs['steps']
 
   _validate_arguments(steps_per_epoch, validation_steps, kwargs)
-  if mode == 'train':
+  if mode == ModeKeys.TRAIN:
     _print_train_info(inputs, val_inputs, steps_per_epoch, verbose)
 
   # Enter DistributionStrategy scope.
@@ -292,7 +196,7 @@ def model_iteration(model,
     scope.__enter__()
 
   # Get step function and loop type.
-  f = _get_execution_function(model, mode)
+  f = _make_execution_function(model, mode)
   use_steps = steps_per_epoch is not None
   do_validation = val_inputs is not None
 
@@ -307,19 +211,14 @@ def model_iteration(model,
       callbacks,
       model,
       do_validation=do_validation,
-      val_inputs=val_inputs,
-      val_targets=val_targets,
-      val_sample_weights=val_sample_weights,
       batch_size=batch_size,
       epochs=epochs,
       steps_per_epoch=steps_per_epoch,
       samples=num_samples_or_steps,
-      validation_steps=validation_steps,
       verbose=0,  # Handle ProgBarLogger separately in this loop.
-      count_mode=count_mode,
       mode=mode)
   # TODO(omalleyt): Handle ProgBar as part of Callbacks once hooks are ready.
-  progbar = _get_progbar(model, count_mode)
+  progbar = training_utils.get_progbar(model, count_mode)
   progbar.params = callbacks.params
   progbar.params['verbose'] = verbose
 
@@ -332,28 +231,30 @@ def model_iteration(model,
         indices_for_conversion_to_dense.append(i)
 
   # Select aggregation method.
-  if mode == 'predict':
-    aggregator = OutputsAggregator(use_steps, num_samples_or_steps)
+  if mode == ModeKeys.PREDICT:
+    aggregator = training_utils.OutputsAggregator(use_steps,
+                                                  num_samples_or_steps)
   else:
-    aggregator = MetricsAggregator(use_steps, num_samples_or_steps)
+    aggregator = training_utils.MetricsAggregator(use_steps,
+                                                  num_samples_or_steps)
 
-  if model._distribution_strategy:
-    training_distributed._copy_weights_to_distributed_model(model)
+  if model._compile_distribution and not validation_in_fit:
+    distributed_training_utils._copy_weights_to_distributed_model(
+        model, model._distributed_model)
 
   callbacks.model.stop_training = False
   callbacks._call_begin_hook(mode)
   progbar.on_train_begin()
+
   for epoch in range(initial_epoch, epochs):
     if callbacks.model.stop_training:
       break
 
     # Setup work for each epoch
-    results = []
     epoch_logs = {}
-    if hasattr(model, 'metrics'):
-      for m in model.metrics:
-        m.reset_states()
-    callbacks.on_epoch_begin(epoch, epoch_logs, mode=mode)
+    model.reset_metrics()
+    if mode == ModeKeys.TRAIN:
+      callbacks.on_epoch_begin(epoch, epoch_logs)
     progbar.on_epoch_begin(epoch, epoch_logs)
 
     if use_steps:
@@ -380,7 +281,7 @@ def model_iteration(model,
           batch_outs = [batch_outs]
 
         if model._distribution_strategy:
-          batch_outs = training_distributed._per_device_aggregate_batch(
+          batch_outs = distributed_training_utils._per_device_aggregate_batch(
               batch_outs, model, mode)
 
         # Aggregate results.
@@ -389,7 +290,7 @@ def model_iteration(model,
         aggregator.aggregate(batch_outs)
 
         # Callbacks batch end.
-        batch_logs.update(_make_logs(model, batch_outs, mode))
+        batch_logs = cbks.make_logs(model, batch_logs, batch_outs, mode)
         callbacks._call_batch_hook(mode, 'end', step, batch_logs)
         progbar.on_batch_end(step, batch_logs)
 
@@ -440,7 +341,7 @@ def model_iteration(model,
         aggregator.aggregate(batch_outs, batch_start, batch_end)
 
         # Callbacks batch end.
-        batch_logs.update(_make_logs(model, batch_outs, mode))
+        batch_logs = cbks.make_logs(model, batch_logs, batch_outs, mode)
         callbacks._call_batch_hook(mode, 'end', batch_index, batch_logs)
         progbar.on_batch_end(batch_index, batch_logs)
 
@@ -449,7 +350,7 @@ def model_iteration(model,
 
     aggregator.finalize()
     results = aggregator.results
-    epoch_logs.update(_make_logs(model, results, mode))
+    epoch_logs = cbks.make_logs(model, epoch_logs, results, mode)
     if len(results) == 1:
       results = results[0]
 
@@ -464,25 +365,35 @@ def model_iteration(model,
           steps_per_epoch=validation_steps,
           callbacks=callbacks,
           verbose=0,
-          mode='test')
+          mode=ModeKeys.TEST,
+          validation_in_fit=True)
       if not isinstance(val_results, list):
         val_results = [val_results]
-      epoch_logs.update(_make_logs(model, val_results, mode, prefix='val_'))
+      epoch_logs = cbks.make_logs(
+          model, epoch_logs, val_results, mode, prefix='val_')
 
-    callbacks.on_epoch_end(epoch, epoch_logs, mode=mode)
-    progbar.on_epoch_end(epoch, epoch_logs)
+    if mode == ModeKeys.TRAIN:
+      # Epochs only apply to `fit`.
+      callbacks.on_epoch_end(epoch, epoch_logs)
+      progbar.on_epoch_end(epoch, epoch_logs)
+
   callbacks._call_end_hook(mode)
 
   if model._distribution_strategy:
-    training_distributed._copy_weights_to_original_model(model, mode)
+    if model._compile_distribution and not validation_in_fit:
+      # TODO(priyag, psv): Copy back metrics to the original model as well?
+      distributed_training_utils._copy_weights_to_original_model(
+          model, model._distributed_model, mode)
     scope.__exit__(None, None, None)
 
-  if mode == 'train':
+  if mode == ModeKeys.TRAIN:
     return model.history
   return results
 
 
 # For backwards compatibility for internal users of these loops.
-fit_loop = functools.partial(model_iteration, mode='train')
-test_loop = functools.partial(model_iteration, mode='test', shuffle=False)
-predict_loop = functools.partial(model_iteration, mode='predict', shuffle=False)
+fit_loop = functools.partial(model_iteration, mode=ModeKeys.TRAIN)
+test_loop = functools.partial(
+    model_iteration, mode=ModeKeys.TEST, shuffle=False)
+predict_loop = functools.partial(
+    model_iteration, mode=ModeKeys.PREDICT, shuffle=False)

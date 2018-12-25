@@ -18,24 +18,29 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import abc
 from collections import OrderedDict
 import copy
-import math
 
 import numpy as np
 import six
 
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.ops import iterator_ops
+from tensorflow.python.data.ops import readers
 from tensorflow.python.eager import context
+from tensorflow.python.eager import def_function
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
+from tensorflow.python.framework import tensor_spec
 from tensorflow.python.framework import tensor_util
 from tensorflow.python.keras import backend as K
+from tensorflow.python.keras import callbacks as cbks
 from tensorflow.python.keras import losses
 from tensorflow.python.keras import metrics as metrics_module
 from tensorflow.python.keras.engine import base_layer
+from tensorflow.python.keras.utils import generic_utils
 from tensorflow.python.keras.utils.losses_utils import squeeze_or_expand_dimensions
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
@@ -43,143 +48,138 @@ from tensorflow.python.ops import weights_broadcast_ops
 from tensorflow.python.util import nest
 
 
-def _map_nested(data, func):
-  """Maps each nested element using func."""
-  if isinstance(data, list):
-    return [_map_nested(nested_data, func) for nested_data in data]
-  elif isinstance(data, tuple):
-    return tuple(_map_nested(nested_data, func) for nested_data in data)
-  elif isinstance(data, dict):
-    return {
-        k: _map_nested(nested_data, func) for k, nested_data in data.items()
-    }
-  else:
-    return func(data)
+@six.add_metaclass(abc.ABCMeta)
+class Aggregator(object):
+  """Abstract base class used to aggregate batch-level outputs of a loop.
+
+  Attributes:
+    use_steps: Whether the loop is using `step` or `batch_size`.
+    num_samples_or_steps: Either `batch_size*num_batches` or `steps`.
+    results: What to return at the end of the aggregation loop.
+  """
+
+  def __init__(self, use_steps, num_samples_or_steps):
+    self.use_steps = use_steps
+    self.num_samples_or_steps = num_samples_or_steps
+    self.results = []
+
+  @abc.abstractmethod
+  def create(self, batch_outs):
+    """Creates the initial results from the first batch outputs.
+
+    Arguments:
+      batch_outs: A list of batch-level outputs.
+    """
+    raise NotImplementedError('Must be implemented in subclasses.')
+
+  @abc.abstractmethod
+  def aggregate(self, batch_outs, batch_start=None, batch_end=None):
+    """Aggregates batch-level results into total results.
+
+    Arguments:
+      batch_outs: A list of batch-level outputs.
+      batch_start: The start index of this batch. Always `None` if `use_steps`
+        is `True`.
+      batch_end: The end index of this batch. Always `None` if `use_steps` is
+        `True`.
+    """
+    raise NotImplementedError('Must be implemented in subclasses.')
+
+  @abc.abstractmethod
+  def finalize(self):
+    """Prepares the total results to be returned."""
+    raise NotImplementedError('Must be implemented in subclasses.')
 
 
-def _nested_all(data, cond_func):
-  """Checks if all elements in a nested structure satisfy cond_func."""
-  if isinstance(data, (tuple, list)):
-    return all(_nested_all(nested_data, cond_func) for nested_data in data)
-  elif isinstance(data, dict):
-    return all(
-        _nested_all(nested_data, cond_func) for nested_data in data.values())
-  else:
-    return cond_func(data)
+class MetricsAggregator(Aggregator):
+  """Aggregator that calculates loss and metrics info."""
+
+  def create(self, batch_outs):
+    self.results = [0.] * len(batch_outs)
+
+  def aggregate(self, batch_outs, batch_start=None, batch_end=None):
+    # Loss.
+    if self.use_steps:
+      self.results[0] += batch_outs[0]
+    else:
+      self.results[0] += batch_outs[0] * (batch_end - batch_start)
+    # Metrics (always stateful, just grab current values.)
+    self.results[1:] = batch_outs[1:]
+
+  def finalize(self):
+    self.results[0] /= self.num_samples_or_steps
 
 
-def _nested_any(data, cond_func):
-  """Checks if any nested_elements in a nested structure satisfy cond_func."""
-  if isinstance(data, (tuple, list)):
-    return any(_nested_any(nested_data, cond_func) for nested_data in data)
-  elif isinstance(data, dict):
-    return any(
-        [_nested_any(nested_data, cond_func) for nested_data in data.values()])
-  else:
-    return cond_func(data)
+class OutputsAggregator(Aggregator):
+  """Aggregator that concatenates outputs."""
+
+  def create(self, batch_outs):
+    if self.use_steps:
+      # Cannot pre-allocate the returned NumPy arrays bc
+      # batch sizes are unknown. Concatenate batches at the end.
+      for _ in batch_outs:
+        self.results.append([])
+    else:
+      # Pre-allocate NumPy arrays.
+      for batch_out in batch_outs:
+        shape = (self.num_samples_or_steps,) + batch_out.shape[1:]
+        self.results.append(np.zeros(shape, dtype=batch_out.dtype))
+
+  def aggregate(self, batch_outs, batch_start=None, batch_end=None):
+    if self.use_steps:
+      for i, batch_out in enumerate(batch_outs):
+        self.results[i].append(batch_out)
+    else:
+      for i, batch_out in enumerate(batch_outs):
+        self.results[i][batch_start:batch_end] = batch_out
+
+  def finalize(self):
+    if self.use_steps:
+      self.results = [np.concatenate(result, axis=0) for result in self.results]
 
 
-def _convert_lists_to_tuples(data):
-  """Converts all lists to tuples, since Datasets expect tuples."""
-  if isinstance(data, (tuple, list)):
-    return tuple(_convert_lists_to_tuples(nested_data) for nested_data in data)
-  elif isinstance(data, dict):
-    return {
-        k: _convert_lists_to_tuples(nested_data)
-        for k, nested_data in data.items()
-    }
-  else:
-    return data
+def get_progbar(model, count_mode):
+  """Get Progbar."""
+  stateful_metric_names = None
+  if hasattr(model, 'metrics_names'):
+    stateful_metric_names = model.metrics_names[1:]  # Exclude `loss`
+  return cbks.ProgbarLogger(count_mode, stateful_metrics=stateful_metric_names)
 
 
-def _get_batch_axis_size(data):
-  """Returns batch axis shape for nested data."""
-  if isinstance(data, (tuple, list)):
-    return _get_batch_axis_size(data[0])
-  elif isinstance(data, dict):
-    return _get_batch_axis_size(list(data.values()))
-  else:
-    return int(data.shape[0])
+def slice_arrays(arrays, indices, contiguous=True):
+  """Slices batches out of provided arrays (workaround for eager tensors).
 
-
-def convert_to_iterator(x=None,
-                        y=None,
-                        sample_weights=None,
-                        batch_size=None,
-                        steps_per_epoch=None,
-                        epochs=1,
-                        shuffle=False,
-                        is_validation=False):
-  """Converts NumPy arrays or EagerTensors to an EagerIterator.
-
-  Combines all provided data into a single EagerIterator.
+  Unfortunately eager tensors don't have the same slicing behavior as
+  Numpy arrays (they follow the same slicing behavior as symbolic TF tensors),
+  hence we cannot use `generic_utils.slice_arrays` directly
+  and we have to implement this workaround based on `concat`. This has a
+  performance cost.
 
   Arguments:
-      x: NumPy array or EagerTensor,  or list of Numpy arrays or EagerTensors
-        representing inputs to a model.
-      y: Optional. NumPy array or EagerTensor, or list of Numpy arrays or
-        EagerTensors representing targets of a model.
-      sample_weights: Optional NumPy array or EagerTensor representing sample
-        weights.
-      batch_size: Used to batch data and calculate how many steps EagerIterator
-        should take per epoch.
-      steps_per_epoch: If provided, how many steps EagerIterator should take per
-        epoch.
-      epochs: Epochs to repeat iterator for.
-      shuffle: Whether to shuffle data after each epoch.
-      is_validation: Whether this call is for validation during a training
-        (e.g., `fit()`) call. This info is used to construct error messages
-        (if any).
-
-  Raises:
-      ValueError: if steps_per_epoch cannot be calculated from the data
-      provided.
+    arrays: Single array or list of arrays.
+    indices: List of indices in the array that should be included in the output
+      batch.
+    contiguous: Boolean flag indicating whether the indices are contiguous.
 
   Returns:
-      (Iterator, steps_per_epoch).
-
+    Slice of data (either single array or list of arrays).
   """
-  if isinstance(x, iterator_ops.EagerIterator):
-    if steps_per_epoch is None:
-      raise ValueError('You must specify the number of steps (number of batches'
-                       ' to draw from the iterator).')
-    return x, steps_per_epoch
-
-  if not _nested_any(sample_weights, lambda x: x is None):
-    data = (x, y, sample_weights)
-  elif not _nested_any(y, lambda x: x is None):
-    data = (x, y)
+  converted_to_list = False
+  if not isinstance(arrays, list):
+    converted_to_list = True
+    arrays = [arrays]
+  if any(tensor_util.is_tensor(x) for x in arrays):
+    if not contiguous:
+      entries = [[x[i:i + 1] for i in indices] for x in arrays]
+      slices = [array_ops.concat(x, axis=0) for x in entries]
+    else:
+      slices = [x[indices[0]:indices[-1] + 1] for x in arrays]
   else:
-    # always wrap in a tuple, so we know y, sample_weights weren't set
-    # even when x has multiple elements
-    data = (x,)
+    slices = generic_utils.slice_arrays(arrays, indices)
 
-  data = _convert_lists_to_tuples(data)
-  if steps_per_epoch is None and batch_size is not None:
-    num_samples = _get_batch_axis_size(data)
-    steps_per_epoch = int(math.ceil(num_samples / int(batch_size)))
-
-  if steps_per_epoch is None:
-    alternative_arg_name = (
-        'validation_steps' if is_validation else 'steps_per_epoch')
-    raise ValueError(
-        'Could not determine how to convert EagerTensors into EagerIterator. '
-        'Please provide either `batch_size` or '
-        '`%s`.' % alternative_arg_name)
-
-  # TODO(omalleyt) for NumPy arrays in graph mode
-  # placeholder ops should be used
-  # this is only ideal for eager mode
-  dataset = dataset_ops.Dataset.from_tensor_slices(data)
-
-  if batch_size is not None:
-    dataset = dataset.batch(batch_size)
-  if shuffle:
-    dataset = dataset.shuffle(buffer_size=10000)
-  dataset = dataset.repeat(epochs)
-  iterator = dataset_ops.make_one_shot_iterator(dataset)
-
-  return iterator, steps_per_epoch
+  if converted_to_list:
+    slices = slices[0]
+  return slices
 
 
 def check_num_samples(ins,
@@ -224,10 +224,14 @@ def check_num_samples(ins,
   return None  # Edge case where ins == [static_learning_phase]
 
 
-def standardize_single_array(x):
+def standardize_single_array(x, expected_shape=None):
+  """Expand data of shape (x,) to (x, 1), unless len(expected_shape)==1."""
   if x is None:
     return None
-  if x.shape is not None and len(x.shape) == 1:
+
+  if (x.shape is not None
+      and len(x.shape) == 1
+      and (expected_shape is None or len(expected_shape) != 1)):
     if tensor_util.is_tensor(x):
       x = array_ops.expand_dims(x, axis=1)
     else:
@@ -293,7 +297,11 @@ def standardize_input_data(data,
   else:
     data = data.values if data.__class__.__name__ == 'DataFrame' else data
     data = [data]
-  data = [standardize_single_array(x) for x in data]
+  if shapes is not None:
+    data = [standardize_single_array(x, shape)
+            for (x, shape) in zip(data, shapes)]
+  else:
+    data = [standardize_single_array(x) for x in data]
 
   if len(data) != len(names):
     if data and hasattr(data[0], 'shape'):
@@ -668,7 +676,8 @@ def standardize_weights(y,
   """Performs sample weight validation and standardization.
 
   Everything gets normalized to a single sample-wise (or timestep-wise)
-  weight array.
+  weight array. If both `sample_weight` and `class_weight` are provided,
+  the weights are multiplied.
 
   Arguments:
       y: Numpy array of model targets to be weighted.
@@ -729,22 +738,26 @@ def standardize_weights(y,
           'Found a sample_weight array with shape ' + str(sample_weight.shape) +
           ' for an input with shape ' + str(y.shape) + '. '
           'sample_weight cannot be broadcast.')
-    return sample_weight
-  elif isinstance(class_weight, dict):
+
+  # Class weights applied per-sample.
+  class_sample_weight = None
+  if isinstance(class_weight, dict):
     if len(y.shape) > 2:
       raise ValueError('`class_weight` not supported for '
                        '3+ dimensional targets.')
-    if y.shape[1] > 1:
-      y_classes = np.argmax(y, axis=1)
-    elif y.shape[1] == 1:
-      y_classes = np.reshape(y, y.shape[0])
+
+    if len(y.shape) == 2:
+      if y.shape[1] > 1:
+        y_classes = np.argmax(y, axis=1)
+      elif y.shape[1] == 1:
+        y_classes = np.reshape(y, y.shape[0])
     else:
       y_classes = y
 
-    weights = np.asarray(
+    class_sample_weight = np.asarray(
         [class_weight[cls] for cls in y_classes if cls in class_weight])
 
-    if len(weights) != len(y_classes):
+    if len(class_sample_weight) != len(y_classes):
       # subtract the sets to pick all missing classes
       existing_classes = set(y_classes)
       existing_class_weight = set(class_weight.keys())
@@ -752,9 +765,15 @@ def standardize_weights(y,
                        ' The classes %s exist in the data but not in '
                        '`class_weight`.' %
                        (existing_classes - existing_class_weight))
-    return weights
-  else:
-    return None
+
+  if class_sample_weight is not None and sample_weight is not None:
+    # Multiply weights if both are provided.
+    return class_sample_weight * sample_weight
+  if sample_weight is not None:
+    return sample_weight
+  if class_sample_weight is not None:
+    return class_sample_weight
+  return None
 
 
 def has_symbolic_tensors(ls):
@@ -855,11 +874,11 @@ def get_loss_function(loss):
   return losses.get(loss)
 
 
-def validate_iterator_input(x, y, sample_weight, validation_split=None):
+def validate_dataset_input(x, y, sample_weight, validation_split=None):
   """Validates user input arguments when a dataset iterator is passed.
 
   Arguments:
-    x: Input data. A `tf.data` dataset iterator.
+    x: Input data. A `tf.data` dataset or iterator.
     y: Target data. It could be either Numpy array(s) or TensorFlow tensor(s).
         Expected to be `None` when `x` is a dataset iterator.
     sample_weight: An optional sample-weight array passed by the user to
@@ -893,7 +912,9 @@ def validate_iterator_input(x, y, sample_weight, validation_split=None):
         'Received: x=%s, validation_split=%f' % (x, validation_split))
 
 
-def check_generator_arguments(y=None, sample_weight=None):
+def check_generator_arguments(y=None,
+                              sample_weight=None,
+                              validation_split=None):
   """Validates arguments passed when using a generator."""
   if y is not None:
     raise ValueError('`y` argument is not supported when data is'
@@ -903,6 +924,9 @@ def check_generator_arguments(y=None, sample_weight=None):
     raise ValueError('`sample_weight` argument is not supported when data is'
                      'a generator or Sequence instance. Instead pass sample'
                      ' weights as the third element of the generator.')
+  if validation_split:
+    raise ValueError('If your data is in the form of a Python generator, '
+                     'you cannot use `validation_split`.')
 
 
 def check_steps_argument(input_data, steps, steps_name):
@@ -928,15 +952,14 @@ def check_steps_argument(input_data, steps, steps_name):
       ValueError: if `steps` argument is required for given input data type
         but not provided.
   """
-
-  is_x_iterator = (
-      isinstance(input_data, iterator_ops.Iterator) or
-      isinstance(input_data, iterator_ops.EagerIterator))
-
-  if (input_data is None or is_x_iterator or has_symbolic_tensors(input_data) or
+  # TODO(fchollet): allow datasets with steps=None if cardinality is known.
+  is_x_dataset = isinstance(input_data, (iterator_ops.Iterator,
+                                         iterator_ops.EagerIterator,
+                                         dataset_ops.DatasetV2))
+  if (input_data is None or is_x_dataset or has_symbolic_tensors(input_data) or
       (isinstance(input_data, list) and not input_data)):
     if steps is None:
-      input_type_str = 'iterators' if is_x_iterator else 'data tensors'
+      input_type_str = 'a Dataset' if is_x_dataset else 'data tensors'
       raise ValueError('When using {input_type} as input to a model, you should'
                        ' specify the `{steps_name}` argument.'.format(
                            input_type=input_type_str, steps_name=steps_name))
@@ -1057,6 +1080,125 @@ def is_feature_layer(layer):
   return getattr(layer, '_is_feature_layer', False)
 
 
+def is_eager_dataset_or_iterator(data):
+  if context.executing_eagerly():
+    if isinstance(data, (dataset_ops.DatasetV2, iterator_ops.EagerIterator)):
+      return True
+  return False
+
+
+# pylint: disable=protected-access
+def assert_not_batched(dataset):
+  """Asserts that `dataset` is not batched.
+
+  The algorithm used by this method is sound but not complete. In other words,
+  if the method fails to establish the assertion, it does not mean the dataset
+  is batched.
+
+  Example usage:
+  ```python
+  try:
+    assert_not_batched(dataset)
+    # safe to assume `dataset` it not batched here
+  expect ValueError:
+    # make no assumptions about `dataset`
+  ```
+
+  Args:
+    dataset: The dataset to analyze.
+
+  Raises:
+    ValueError: If the method cannot establish the assertion.
+  """
+  if isinstance(dataset, dataset_ops.DatasetV1Adapter):
+    return assert_not_batched(dataset._dataset)
+  else:
+    whitelisted_types = [
+        dataset_ops._OptionsDataset,
+        dataset_ops.ConcatenateDataset,
+        dataset_ops.CacheDataset,
+        dataset_ops.FilterDataset,
+        dataset_ops.MapDataset,
+        dataset_ops.ParallelMapDataset,
+        dataset_ops.PrefetchDataset,
+        dataset_ops.RangeDataset,
+        dataset_ops.RepeatDataset,
+        dataset_ops.ShuffleDataset,
+        dataset_ops.SkipDataset,
+        dataset_ops.SparseTensorSliceDataset,
+        dataset_ops.TakeDataset,
+        dataset_ops.TensorDataset,
+        dataset_ops.TensorSliceDataset,
+        dataset_ops.ZipDataset,
+        readers.FixedLengthRecordDatasetV2,
+        readers.TextLineDatasetV2,
+        readers.TFRecordDatasetV2,
+    ]
+    for ty in whitelisted_types:
+      if isinstance(dataset, ty):
+        for input_dataset in dataset._inputs():
+          assert_not_batched(input_dataset)
+        return
+    raise ValueError('Could not assert that dataset is not batched.')
+
+
+# pylint: disable=protected-access
+def assert_not_shuffled(dataset):
+  """Asserts that `dataset` is not shuffled.
+
+  The algorithm used by this method is sound but not complete. In other words,
+  if the method fails to establish the assertion, it does not mean the dataset
+  is shuffled.
+
+  Example usage:
+  ```python
+  try:
+    assert_not_shuffled(dataset)
+    # safe to assume `dataset` it not shuffled here
+  expect ValueError:
+    # make no assumptions about `dataset`
+  ```
+
+  Args:
+    dataset: The dataset to analyze.
+
+  Raises:
+    ValueError: If the method cannot establish the assertion.
+  """
+  if isinstance(dataset, dataset_ops.DatasetV1Adapter):
+    return assert_not_shuffled(dataset._dataset)
+  else:
+    whitelisted_types = [
+        dataset_ops._OptionsDataset,
+        dataset_ops.BatchDataset,
+        dataset_ops.ConcatenateDataset,
+        dataset_ops.CacheDataset,
+        dataset_ops.FilterDataset,
+        dataset_ops.MapDataset,
+        dataset_ops.PaddedBatchDataset,
+        dataset_ops.ParallelMapDataset,
+        dataset_ops.PrefetchDataset,
+        dataset_ops.RangeDataset,
+        dataset_ops.RepeatDataset,
+        dataset_ops.SkipDataset,
+        dataset_ops.SparseTensorSliceDataset,
+        dataset_ops.TakeDataset,
+        dataset_ops.TensorDataset,
+        dataset_ops.TensorSliceDataset,
+        dataset_ops.WindowDataset,
+        dataset_ops.ZipDataset,
+        readers.FixedLengthRecordDatasetV2,
+        readers.TextLineDatasetV2,
+        readers.TFRecordDatasetV2,
+    ]
+    for ty in whitelisted_types:
+      if isinstance(dataset, ty):
+        for input_dataset in dataset._inputs():
+          assert_not_shuffled(input_dataset)
+        return
+    raise ValueError('Could not assert that dataset is not shuffled.')
+
+
 class ModelInputs(object):
   """Encapsulates model inputs.
 
@@ -1091,6 +1233,9 @@ class ModelInputs(object):
 
   def get_symbolic_inputs(self, return_single_as_list=False):
     """Returns inputs to be set as self.inputs for a model."""
+    # TODO(karmel): There is a side-effect here where what you get
+    # with as_list and as_dict depends on whether you have called this
+    # method first, since it modifies in place.
     for i in range(len(self._flattened_inputs)):
       k = self._input_names[i]
       v = self._flattened_inputs[i]
@@ -1098,6 +1243,7 @@ class ModelInputs(object):
         v = np.asarray(v)
         if v.ndim == 1:
           v = np.expand_dims(v, 1)
+
       if isinstance(v, (np.ndarray, ops.EagerTensor)):
         # We fix the placeholder shape except the batch size.
         # This is suboptimal, but it is the best we can do with the info
@@ -1105,6 +1251,10 @@ class ModelInputs(object):
         # to specify custom placeholders if the need arises.
         shape = (None,) + tuple(v.shape[1:])
         v = K.placeholder(shape=shape, name=k)
+      elif isinstance(v, tensor_shape.TensorShape):
+        shape = (None,) + tuple(v.as_list()[1:])
+        v = K.placeholder(shape=shape, name=k)
+
       self._flattened_inputs[i] = v
 
     if self._is_dict:
@@ -1172,3 +1322,83 @@ def get_static_batch_size(layer):
   if batch_input_shape is not None:
     return tensor_shape.as_dimension(batch_input_shape[0]).value
   return None
+
+
+def generic_output_names(outputs_list):
+  return ['output_%d' % (i + 1) for i in range(len(outputs_list))]
+
+
+def trace_model_call(model, input_signature=None):
+  """Trace the model call to create a tf.function for exporting a Keras model.
+
+  Args:
+    model: A Keras model.
+    input_signature: optional, a list of tf.TensorSpec objects specifying the
+      inputs to the model.
+
+  Returns:
+    A tf.function wrapping the model's call function with input signatures set.
+
+  Raises:
+    ValueError: if input signature cannot be inferred from the model.
+  """
+  if input_signature is None:
+    if isinstance(model.call, def_function.PolymorphicFunction):
+      input_signature = model.call.input_signature
+
+  if input_signature is None:
+    try:
+      inputs = model.inputs
+      input_names = model.input_names
+    except AttributeError:
+      raise ValueError(
+          'Model {} cannot be saved because the input shapes have not been '
+          'set. Usually, input shapes are automatically determined from calling'
+          ' .fit() or .predict(). To manually set the shapes, call '
+          'model._set_inputs(inputs).'.format(model))
+    input_specs = []
+    for input_tensor, input_name in zip(inputs, input_names):
+      input_specs.append(tensor_spec.TensorSpec(
+          shape=input_tensor.shape, dtype=input_tensor.dtype,
+          name=input_name))
+    # The input signature of the call function is a list with one element, since
+    # all tensor inputs must be passed in as the first argument.
+    input_signature = [input_specs] if len(input_specs) > 1 else input_specs
+
+  # TODO(mdan): Should the model's call be autographed by default?
+  @def_function.function(input_signature=input_signature, autograph=False)
+  def _wrapped_model(*args):
+    """A concrete tf.function that wraps the model's call function."""
+    # When given a single input, Keras models will call the model on the tensor
+    # rather than a list consisting of the single tensor.
+    inputs = args[0] if len(input_signature) == 1 else list(args)
+    outputs_list = nest.flatten(model(inputs=inputs))
+    try:
+      output_names = model.output_names
+    except AttributeError:
+      output_names = generic_output_names(outputs_list)
+    return {name: output for name, output in zip(output_names, outputs_list)}
+
+  return _wrapped_model
+
+
+def set_run_eagerly_for_dict_structure(model, x):
+  """Set model.run_eagerly to true if x is dict structure.
+
+  Set model.run_eagerly to true if x is dict or
+  Iterator/EagerIterator/Dataset of dict.
+
+  Args:
+    model: A Keras model.
+    x: Input data.
+  """
+  if not context.executing_eagerly():
+    return
+  if isinstance(x, dict):
+    model.run_eagerly = True
+  if (isinstance(x, (iterator_ops.Iterator, iterator_ops.EagerIterator,
+                     dataset_ops.DatasetV2))):
+    for item in x.output_shapes:
+      if isinstance(item, dict):
+        model.run_eagerly = True
+        return

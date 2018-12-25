@@ -775,7 +775,7 @@ class ShapePatternIsArrayImpl {
   explicit constexpr ShapePatternIsArrayImpl() {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
-    if (!ShapeUtil::IsArray(*shape)) {
+    if (!shape->IsArray()) {
       EXPLAIN << "Shape is not an array";
       return false;
     }
@@ -793,7 +793,7 @@ class ShapePatternIsTupleImpl {
   explicit constexpr ShapePatternIsTupleImpl() {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
-    if (!ShapeUtil::IsTuple(*shape)) {
+    if (!shape->IsTuple()) {
       EXPLAIN << "Shape is not a tuple";
       return false;
     }
@@ -831,7 +831,7 @@ class ShapePatternRankImpl {
   explicit constexpr ShapePatternRankImpl(int64 rank) : rank_(rank) {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
-    if (ShapeUtil::Rank(*shape) != rank_) {
+    if (shape->rank() != rank_) {
       if (rank_ == 0) {
         EXPLAIN << "Shape is not a scalar";
       } else {
@@ -1737,7 +1737,8 @@ class HloConstantScalarImpl {
               literal_r0_as_val_ty_or.ValueOrDie() == val_literal &&
               literal_r0 == val_as_literal_ty;
     if (!rv) {
-      EXPLAIN << "HloInstruction's constant value " << literal_r0.ToString()
+      EXPLAIN << "HloInstruction's constant value "
+              << literal_r0.ToStringWithoutShape()
               << " did not match expected value " << *val_;
     }
     return rv;
@@ -2035,7 +2036,7 @@ XLA_UNOP_PATTERN(Ceil)
 XLA_UNOP_PATTERN(Convert)
 XLA_UNOP_PATTERN(Copy)
 XLA_UNOP_PATTERN(Cos)
-XLA_UNOP_PATTERN(CrossReplicaSum)
+XLA_UNOP_PATTERN(AllReduce)
 XLA_UNOP_PATTERN(Exp)
 XLA_UNOP_PATTERN(Fft)
 XLA_UNOP_PATTERN(Floor)
@@ -2232,6 +2233,7 @@ inline auto WithOperands(Matcher&& m, int64 operand_num, FirstArg&& first_arg,
 
 // We could implement all ops as "variadic" ops, but it would make the
 // already-bad compile errors even worse.
+XLA_VARIADIC_OP_PATTERN(AfterAll);
 XLA_VARIADIC_OP_PATTERN(Concatenate);
 XLA_VARIADIC_OP_PATTERN(CustomCall);
 XLA_VARIADIC_OP_PATTERN(Map)

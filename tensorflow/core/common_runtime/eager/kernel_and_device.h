@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "tensorflow/core/common_runtime/device.h"
 #include "tensorflow/core/framework/cancellation.h"
+#include "tensorflow/core/framework/collective.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/types.h"
@@ -55,17 +56,24 @@ class KernelAndDevice {
                      KernelAndDevice* out);
 
   KernelAndDevice(tensorflow::Rendezvous* rendez, bool log_memory)
+      : KernelAndDevice(rendez, log_memory, nullptr) {}
+
+  KernelAndDevice(
+      tensorflow::Rendezvous* rendez, bool log_memory,
+      std::unique_ptr<CollectiveExecutor::Handle> collective_executor)
       : device_(nullptr),
         flr_(nullptr),
         rendez_(rendez),
-        log_memory_(log_memory) {}
+        log_memory_(log_memory),
+        collective_executor_(std::move(collective_executor)) {}
 
   // TODO(ashankar): Handle list-valued inputs.
-  Status Run(std::vector<Tensor>* inputs, std::vector<Tensor>* outputs,
-             NodeExecStats* stats, StepStats* step_stats,
-             GraphCollector* graph_collector);
+  Status Run(const gtl::InlinedVector<TensorValue, 4>& inputs,
+             std::vector<Tensor>* outputs, NodeExecStats* stats,
+             StepStats* step_stats, GraphCollector* graph_collector);
 
-  Status Run(ScopedStepContainer* step_container, std::vector<Tensor>* inputs,
+  Status Run(ScopedStepContainer* step_container,
+             const gtl::InlinedVector<TensorValue, 4>& inputs,
              std::vector<Tensor>* outputs, NodeExecStats* stats,
              StepStats* step_stats, GraphCollector* graph_collector);
 
@@ -92,6 +100,7 @@ class KernelAndDevice {
   std::function<void(std::function<void()>)>* runner_;
   std::function<void(std::function<void()>)> default_runner_;
   const bool log_memory_;
+  const std::unique_ptr<CollectiveExecutor::Handle> collective_executor_;
 };
 
 }  // namespace tensorflow

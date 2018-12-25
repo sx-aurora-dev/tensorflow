@@ -643,8 +643,8 @@ template struct LaunchConv2DOp<VEDevice, float>;
 #endif
 
 #if GOOGLE_CUDA
-int64 GetCudnnWorkspaceLimit(const string& envvar_in_mb,
-                             int64 default_value_in_bytes) {
+int64 GetDnnWorkspaceLimit(const string& envvar_in_mb,
+                           int64 default_value_in_bytes) {
   const char* workspace_limit_in_mb_str = getenv(envvar_in_mb.c_str());
   if (workspace_limit_in_mb_str != nullptr &&
       strcmp(workspace_limit_in_mb_str, "") != 0) {
@@ -881,7 +881,7 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
       AsDeviceMemory(transformed_output.template flat<T>().data(),
                      transformed_output.template flat<T>().size());
 
-  static int64 ConvolveScratchSize = GetCudnnWorkspaceLimit(
+  static int64 ConvolveScratchSize = GetDnnWorkspaceLimit(
       // default value is in bytes despite the name of the environment variable
       "TF_CUDNN_WORKSPACE_LIMIT_IN_MB", 1LL << 32  // 4GB
   );
@@ -925,7 +925,7 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
     for (auto profile_algorithm : algorithms) {
       // TODO(zhengxq): profile each algorithm multiple times to better
       // accuracy.
-      CudnnScratchAllocator scratch_allocator(ConvolveScratchSize, ctx);
+      DnnScratchAllocator scratch_allocator(ConvolveScratchSize, ctx);
       ProfileResult profile_result;
       bool cudnn_launch_status =
           stream
@@ -963,7 +963,7 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
     AutoTuneConv::GetInstance()->Insert(conv_parameters, algorithm_config);
   }
 
-  CudnnScratchAllocator scratch_allocator(ConvolveScratchSize, ctx);
+  DnnScratchAllocator scratch_allocator(ConvolveScratchSize, ctx);
   bool cudnn_launch_status =
       stream
           ->ThenConvolveWithAlgorithm(input_desc, input_ptr, filter_desc,
