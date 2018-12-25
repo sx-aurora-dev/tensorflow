@@ -2169,6 +2169,14 @@ def _softmax(logits, compute_op, dim=-1, name=None):
   # If dim is not the last dimension, we have to do a transpose so that we can
   # still perform softmax on its last dimension.
 
+  # In case dim is negative (and is not last dimension -1), add shape.ndims
+  ndims = array_ops.rank(logits)
+  if not isinstance(dim, ops.Tensor):
+    if dim < 0:
+      dim += ndims
+  else:
+    dim = array_ops.where(math_ops.less(dim, 0), dim + ndims, dim)
+
   # Swap logits' dimension of dim and its last dimension.
   input_rank = array_ops.rank(logits)
   dim_axis = dim % shape.ndims
@@ -2577,8 +2585,9 @@ def sparse_softmax_cross_entropy_with_logits(
   on `logits` internally for efficiency.  Do not call this op with the
   output of `softmax`, as it will produce incorrect results.
 
-  A common use case is to have logits and labels of shape
-  `[batch_size, num_classes]`, but higher dimensions are supported, in which
+  A common use case is to have logits of shape
+  `[batch_size, num_classes]` and have labels of shape
+  `[batch_size]`, but higher dimensions are supported, in which
   case the `dim`-th dimension is assumed to be of size `num_classes`.
   `logits` must have the dtype of `float16`, `float32`, or `float64`, and
   `labels` must have the dtype of `int32` or `int64`.
@@ -3039,7 +3048,7 @@ def dropout_v2(x, rate, noise_shape=None, seed=None, name=None):  # pylint: disa
         noise_shape, seed=seed, dtype=x.dtype)
     # 0. if [keep_prob, 1.0) and 1. if [1.0, 1.0 + keep_prob)
     binary_tensor = math_ops.floor(random_tensor)
-    ret = math_ops.div(x, keep_prob) * binary_tensor
+    ret = math_ops.divide(x, keep_prob) * binary_tensor
     if not context.executing_eagerly():
       ret.set_shape(x.get_shape())
     return ret
@@ -3775,7 +3784,7 @@ def erosion2d_v2(value,
             name=name))
 
 
-@tf_export("math.in_top_k", "nn.in_top_k")
+@tf_export(v1=["math.in_top_k", "nn.in_top_k"])
 def in_top_k(predictions, targets, k, name=None):
   r"""Says whether the targets are in the top `K` predictions.
 
@@ -3809,8 +3818,15 @@ def in_top_k(predictions, targets, k, name=None):
     return gen_nn_ops.in_top_kv2(predictions, targets, k, name=name)
 
 
+@tf_export("math.in_top_k", "nn.in_top_k", v1=[])
+def in_top_k_v2(targets, predictions, k, name=None):
+  return in_top_k(predictions, targets, k, name)
+
+
+in_top_k_v2.__doc__ = in_top_k.__doc__
+
+
 tf_export(v1=["nn.quantized_avg_pool"])(gen_nn_ops.quantized_avg_pool)
 tf_export(v1=["nn.quantized_conv2d"])(gen_nn_ops.quantized_conv2d)
 tf_export(v1=["nn.quantized_relu_x"])(gen_nn_ops.quantized_relu_x)
 tf_export(v1=["nn.quantized_max_pool"])(gen_nn_ops.quantized_max_pool)
-

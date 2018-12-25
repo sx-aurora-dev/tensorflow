@@ -223,11 +223,22 @@ class SquaredDifferenceTest(test_util.TensorFlowTestCase):
 
   @test_util.run_in_graph_and_eager_modes
   def testSquaredDifference(self):
-    for dtype in [np.int32, np.float16]:
+    for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]:
       x = np.array([[1, 2, 3], [4, 5, 6]], dtype=dtype)
       y = np.array([-3, -2, -1], dtype=dtype)
       z = (x - y) * (x - y)
       with test_util.device(use_gpu=True):
+        z_tf = self.evaluate(math_ops.squared_difference(x, y))
+        self.assertAllClose(z, z_tf)
+
+  @test_util.run_in_graph_and_eager_modes()
+  def testComplexSquaredDifference(self):
+    for dtype in [np.complex64, np.complex128]:
+      x = np.array([[1 + 3j, 2 + 2j, 3 + 1j], [4 - 1j, 5 - 2j, 6 - 3j]],
+                   dtype=dtype)
+      y = np.array([-3 + 1j, -2 + 2j, -1 + 3j], dtype=dtype)
+      z = np.conj(x - y) * (x - y)
+      with test_util.device(use_gpu=False):
         z_tf = self.evaluate(math_ops.squared_difference(x, y))
         self.assertAllClose(z, z_tf)
 
@@ -390,6 +401,18 @@ class AddNTest(test_util.TensorFlowTestCase):
         add_n_grad = gradients.gradients(addn, input_vars)
         self.assertAllEqual(np.repeat(1.0, num_inputs), # d/dx (x + y + ...) = 1
                             [g.eval() for g in add_n_grad])
+
+
+  @test_util.run_deprecated_v1
+  def testIndexedSlices(self):
+    slc = ops.IndexedSlices(
+        array_ops.constant([1, 2], shape=[1, 2]), array_ops.constant([1]),
+        array_ops.constant([2, 2]))
+    slc_as_dense = np.array([[0, 0], [1, 2]])
+    with self.test_session(use_gpu=True):
+      # add_n currently always converts IndexedSlices to dense
+      self.assertAllEqual(slc_as_dense, math_ops.add_n([slc]).eval())
+      self.assertAllEqual(2 * slc_as_dense, math_ops.add_n([slc, slc]).eval())
 
 
 class DivAndModTest(test_util.TensorFlowTestCase):
@@ -602,6 +625,43 @@ class XdivyTest(test_util.TensorFlowTestCase):
         x_over_y = self.evaluate(1 / y[1])
         self.assertAllClose(zeros_np, xdivy_tf_np[0])
         self.assertAllClose(x_over_y, xdivy_tf_np[1])
+
+
+class NextAfterTest(test_util.TensorFlowTestCase):
+
+  # Basic NextAfter tests that replicate numpy nextafter tests.
+  @test_util.run_in_graph_and_eager_modes
+  def testBasic(self):
+
+    for dtype in [dtypes.float32, dtypes.float64]:
+      one = constant_op.constant([1], dtype=dtype)
+      two = constant_op.constant([2], dtype=dtype)
+      zero = constant_op.constant([0], dtype=dtype)
+      nan = constant_op.constant([np.nan], dtype=dtype)
+
+      eps = constant_op.constant([np.finfo(dtype.as_numpy_dtype).eps],
+                                 dtype=dtype)
+
+      self.assertAllEqual(math_ops.nextafter(one, two) - one, eps)
+      self.assertAllLess(math_ops.nextafter(one, zero) - one, 0)
+      self.assertAllEqual(
+          math_ops.is_nan(math_ops.nextafter(nan, one)), [True])
+      self.assertAllEqual(
+          math_ops.is_nan(math_ops.nextafter(one, nan)), [True])
+      self.assertAllEqual(math_ops.nextafter(one, one), one)
+
+  @test_util.run_in_graph_and_eager_modes
+  def testBroadcasting(self):
+
+    for dtype in [dtypes.float32, dtypes.float64]:
+      one = constant_op.constant([1, 1], dtype=dtype)
+      two = constant_op.constant([2], dtype=dtype)
+
+      eps = np.finfo(dtype.as_numpy_dtype).eps
+
+      eps_const = constant_op.constant([eps, eps], dtype=dtype)
+
+      self.assertAllEqual(math_ops.nextafter(one, two) - one, eps_const)
 
 
 if __name__ == "__main__":

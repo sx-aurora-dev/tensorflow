@@ -129,7 +129,7 @@ Status AddRewritesForShape(int i, const xla::Shape& shape,
   TF_RETURN_IF_ERROR(XLATypeToCpp(shape.element_type(), &type));
   std::vector<string> dim_vars;
   string dim_sizes, indices;
-  if (xla::ShapeUtil::Rank(shape) == 0 ||
+  if (shape.rank() == 0 ||
       (shape.dimensions_size() == 1 && shape.dimensions(0) == 1)) {
     dim_sizes = "[1]";
     indices = "[0]";
@@ -178,7 +178,7 @@ Status GenArgMethods(const tf2xla::Config& config,
     TF_RETURN_IF_ERROR(
         AddRewritesForShape(i, xla::Shape(ps.parameters(i)), &rewrites));
     const string code = R"(
-  void set_arg{{NAME}}_data(void* data) {
+  void set_arg{{NAME}}_data(const void* data) {
     set_arg_data({{I}}, data);
   }
   {{TYPE}}* arg{{NAME}}_data() {

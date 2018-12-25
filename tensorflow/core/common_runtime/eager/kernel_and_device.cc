@@ -57,7 +57,7 @@ Status KernelAndDevice::Init(const NodeDef& ndef, FunctionLibraryRuntime* flr,
   return OutputTypesForNode(ndef, *op_def, &out->output_dtypes_);
 }
 
-Status KernelAndDevice::Run(std::vector<Tensor>* inputs,
+Status KernelAndDevice::Run(const gtl::InlinedVector<TensorValue, 4>& inputs,
                             std::vector<Tensor>* outputs, NodeExecStats* stats,
                             StepStats* step_stats,
                             GraphCollector* graph_collector) {
@@ -69,25 +69,29 @@ Status KernelAndDevice::Run(std::vector<Tensor>* inputs,
 }
 
 Status KernelAndDevice::Run(ScopedStepContainer* step_container,
-                            std::vector<Tensor>* inputs,
+                            const gtl::InlinedVector<TensorValue, 4>& inputs,
                             std::vector<Tensor>* outputs, NodeExecStats* stats,
                             StepStats* step_stats,
                             GraphCollector* graph_collector) {
-  gtl::InlinedVector<TensorValue, 4> input_vector;
-  for (Tensor& t : *inputs) {
-    input_vector.push_back(TensorValue(&t));
-  }
-
   std::vector<AllocatorAttributes> out_attrs(kernel_->num_outputs());
   for (size_t i = 0; i < out_attrs.size(); ++i) {
     out_attrs[i].set_on_host(kernel_->output_memory_types()[i] ==
                              tensorflow::HOST_MEMORY);
   }
 
+  gtl::InlinedVector<DeviceContext*, 4> input_device_contexts;
+  for (int i = 0; i < inputs.size(); i++) {
+    DeviceContext* device_context = nullptr;
+    if (device_->tensorflow_gpu_device_info() != nullptr) {
+      device_context = device_->tensorflow_gpu_device_info()->default_context;
+    }
+    input_device_contexts.push_back(device_context);
+  }
+
   OpKernelContext::Params params;
   params.device = device_;
   params.frame_iter = FrameAndIter(0, 0);
-  params.inputs = &input_vector;
+  params.inputs = &inputs;
   params.op_kernel = kernel_.get();
   params.resource_manager = device_->resource_manager();
   params.output_attr_array = gtl::vector_as_array(&out_attrs);
@@ -110,6 +114,9 @@ Status KernelAndDevice::Run(ScopedStepContainer* step_container,
   }
 
   params.step_container = step_container;
+  params.collective_executor =
+      collective_executor_ ? collective_executor_->get() : nullptr;
+  params.input_device_contexts = &input_device_contexts;
 
   OpKernelContext context(&params);
 

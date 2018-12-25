@@ -40,7 +40,7 @@ namespace {
 
 // Return whether the given shape is rank 2 excluding the batch dimensions.
 bool IsRank2(const Shape& shape, int64 batch_dimensions_size) {
-  return ShapeUtil::Rank(shape) == batch_dimensions_size + 2;
+  return shape.rank() == batch_dimensions_size + 2;
 }
 
 // In a gemm operation where output = lhs * rhs, check whether the given shapes
@@ -266,6 +266,18 @@ string CudnnConvKindToString(CudnnConvKind kind) {
     case CudnnConvKind::kForwardActivation:
       return "forward with activation";
   }
+}
+
+llvm::Value* IsBlock0Thread0(llvm::IRBuilder<>* b) {
+  return b->CreateAnd(
+      b->CreateICmpEQ(
+          b->getInt32(0),
+          llvm_ir::EmitCallToIntrinsic(
+              llvm::Intrinsic::nvvm_read_ptx_sreg_tid_x, {}, {}, b)),
+      b->CreateICmpEQ(
+          b->getInt32(0),
+          llvm_ir::EmitCallToIntrinsic(
+              llvm::Intrinsic::nvvm_read_ptx_sreg_ctaid_x, {}, {}, b)));
 }
 
 }  // namespace gpu
