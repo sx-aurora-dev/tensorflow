@@ -1448,7 +1448,8 @@ tf_kernel_library(
         ":bounds_check",
         "//tensorflow/core:framework",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime",
+               "//tensorflow/core:core_cpu"]),
 )
 
 # Unlike gather_functor library, this does not include the CUDA code and deps.

@@ -465,6 +465,19 @@ REGISTER_KERNEL_BUILDER(Name("ExpandDims")
                         ExpandDimsOp<int64>);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("ExpandDims")
+                            .Device(DEVICE_VE)
+                            .HostMemory("dim")
+                            .TypeConstraint<int32>("Tdim"),
+                        ExpandDimsOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("ExpandDims")
+                            .Device(DEVICE_VE)
+                            .HostMemory("dim")
+                            .TypeConstraint<int64>("Tdim"),
+                        ExpandDimsOp<int64>);
+#endif // TENSORFLOW_USE_VE
+
 // Squeeze ---------------------------------------
 REGISTER_KERNEL_BUILDER(Name("Squeeze").Device(DEVICE_CPU), SqueezeOp);
 

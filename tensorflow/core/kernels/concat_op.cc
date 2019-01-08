@@ -29,6 +29,11 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif  // TENSORFLOW_USE_VE
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -38,6 +43,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 enum AxisArgumentName { NAME_IS_AXIS, NAME_IS_CONCAT_DIM };
 
@@ -367,4 +375,195 @@ REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
                             .HostMemory("offset"),
                         ConcatOffsetOp);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+
+#define MAX_CONCAT_SIZE	16
+
+template <typename T, AxisArgumentName AxisArgName>
+class VEConcatBaseOp : public OpKernel {
+ public:
+  typedef std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>
+      ConstMatrixVector;
+
+  explicit VEConcatBaseOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void Compute(OpKernelContext* c) override {
+    const Tensor* concat_dim_tensor;
+    const char* axis_attribute_name =
+        AxisArgName == NAME_IS_AXIS ? "axis" : AxisArgName == NAME_IS_CONCAT_DIM
+                                                   ? "concat_dim"
+                                                   : "<invalid>";
+    OP_REQUIRES_OK(c, c->input(axis_attribute_name, &concat_dim_tensor));
+    OP_REQUIRES(c, IsLegacyScalar(concat_dim_tensor->shape()),
+                errors::InvalidArgument(
+                    axis_attribute_name,
+                    " tensor should be a scalar integer, but got shape ",
+                    concat_dim_tensor->shape().DebugString()));
+    int64 concat_dim;
+    // In case of ConcatV2, "axis" could be int32 or int64
+    if (AxisArgName == NAME_IS_AXIS) {
+      OP_REQUIRES(
+          c,
+          (concat_dim_tensor->dtype() == DT_INT32 ||
+           concat_dim_tensor->dtype() == DT_INT64),
+          errors::InvalidArgument(axis_attribute_name,
+                                  " tensor should be int32 or int64, but got ",
+                                  DataTypeString(concat_dim_tensor->dtype())));
+    } else {
+      OP_REQUIRES(c, (concat_dim_tensor->dtype() == DT_INT32),
+                  errors::InvalidArgument(
+                      axis_attribute_name, " tensor should be int32, but got ",
+                      DataTypeString(concat_dim_tensor->dtype())));
+    }
+    if (concat_dim_tensor->dtype() == DT_INT32) {
+      concat_dim =
+          internal::SubtleMustCopy(concat_dim_tensor->scalar<int32>()());
+    } else {
+      concat_dim =
+          internal::SubtleMustCopy(concat_dim_tensor->scalar<int64>()());
+    }
+
+    OpInputList values;
+    OP_REQUIRES_OK(c, c->input_list("values", &values));
+    const int N = values.size();
+    const int input_dims = values[0].dims();
+    const TensorShape& input_shape = values[0].shape();
+
+    int32 axis = concat_dim < 0 ? concat_dim + input_dims : concat_dim;
+    OP_REQUIRES(c,
+                (0 <= axis && axis < input_dims) ||
+                    (allow_legacy_scalars() && concat_dim == 0),
+                errors::InvalidArgument(
+                    "ConcatOp : Expected concatenating dimensions in the range "
+                    "[",
+                    -input_dims, ", ", input_dims, "), but got ", concat_dim));
+    // Note that we reduce the concat of n-dimensional tensors into a two
+    // dimensional concat. Assuming the dimensions of any input/output
+    // tensor are {x0, x1,...,xn-1, y0, y1,...,ym-1}, where the concat is along
+    // the dimension indicated with size y0, we flatten it to {x, y}, where y =
+    // Prod_i(yi) and x = ((n > 0) ? Prod_i(xi) : 1).
+    ConstMatrixVector inputs_flat;
+    inputs_flat.reserve(N);
+    int64 inputs_flat_dim0 = 1;
+    for (int d = 0; d < axis; ++d) {
+      inputs_flat_dim0 *= input_shape.dim_size(d);
+    }
+    int64 output_concat_dim = 0;
+    const bool input_is_scalar = IsLegacyScalar(input_shape);
+    for (int i = 0; i < N; ++i) {
+      const auto& in = values[i];
+      const bool in_is_scalar = IsLegacyScalar(in.shape());
+      OP_REQUIRES(
+          c, in.dims() == input_dims || (input_is_scalar && in_is_scalar),
+          errors::InvalidArgument(
+              "ConcatOp : Ranks of all input tensors should match: shape[0] = ",
+              input_shape.DebugString(), " vs. shape[", i,
+              "] = ", in.shape().DebugString()));
+      for (int j = 0; j < input_dims; ++j) {
+        if (j == axis) {
+          continue;
+        }
+        OP_REQUIRES(
+            c, in.dim_size(j) == input_shape.dim_size(j),
+            errors::InvalidArgument(
+                "ConcatOp : Dimensions of inputs should match: shape[0] = ",
+                input_shape.DebugString(), " vs. shape[", i,
+                "] = ", in.shape().DebugString()));
+      }
+      if (in.NumElements() > 0) {
+        int64 inputs_flat_dim1 = in.NumElements() / inputs_flat_dim0;
+        inputs_flat.emplace_back(new typename TTypes<T, 2>::ConstMatrix(
+            in.shaped<T, 2>({inputs_flat_dim0, inputs_flat_dim1})));
+      }
+      // TODO(irving): Remove check once !allow_legacy_scalars().
+      output_concat_dim += in.dims() > 0 ? in.dim_size(axis) : 1;
+    }
+
+    TensorShape output_shape(input_shape);
+    // TODO(irving): Remove rank 0 case once !allow_legacy_scalars().
+    if (output_shape.dims() == 0) {
+      output_shape.AddDim(output_concat_dim);
+    } else {
+      output_shape.set_dim(axis, output_concat_dim);
+    }
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(c, c->allocate_output(0, output_shape, &output));
+    if (output->NumElements() > 0) {
+      int64 output_dim1 = output->NumElements() / inputs_flat_dim0;
+      auto output_flat = output->shaped<T, 2>({inputs_flat_dim0, output_dim1});
+
+      uint64_t n_input = inputs_flat.size() ;
+
+      OP_REQUIRES(
+          c, n_input <= MAX_CONCAT_SIZE,
+          errors::InvalidArgument(
+              "VEConcatOp does not support more than ",
+	      MAX_CONCAT_SIZE, " input tensors."));
+
+      struct {
+        int dtype;
+        uint64_t n_input;
+        uint64_t outputs_flat_dim0;
+        uint64_t outputs_flat_dim1;
+        uint64_t output_ptr;
+        uint64_t array[2*MAX_CONCAT_SIZE] ;
+      } args;
+
+      uint64_t arg_size = sizeof(args) - 2 * sizeof(uint64_t) * ( MAX_CONCAT_SIZE - n_input)  ;
+
+      args.dtype = values[0].dtype() ;
+      args.n_input = n_input ;
+      args.outputs_flat_dim0 = inputs_flat_dim0 ;
+      args.outputs_flat_dim1 = output_dim1 ;
+      args.output_ptr = (uint64_t)DMAHelper::base(output);
+
+      uint64_t *input_ptrs  = args.array ;
+      uint64_t *input_dim1s = args.array + n_input ;
+
+      for (int i = 0; i < n_input; ++i) {
+	const auto& input = inputs_flat[i] ;
+        input_ptrs[i] =  (uint64_t)DMAHelper::base(&values[i]) ;
+        input_dim1s[i] = inputs_flat[i]->dimension(1); ;
+      }
+
+      VEDeviceContext* vectx = c->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("Concat", (void*)&args, arg_size);
+      if (!s.ok())
+        c->SetStatus(s);
+    }
+  }
+};
+
+template <typename T>
+using VEConcatOp = VEConcatBaseOp<T, NAME_IS_CONCAT_DIM>;
+template <typename T>
+using VEConcatV2Op = VEConcatBaseOp<T, NAME_IS_AXIS>;
+
+#define REGISTER_VE(type)                             	 \
+  REGISTER_KERNEL_BUILDER(Name("Concat")               \
+                              .Device(DEVICE_VE)         \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("concat_dim"), \
+                          VEConcatOp<type>)               \
+  REGISTER_KERNEL_BUILDER(Name("ConcatV2")             \
+                              .Device(DEVICE_VE)         \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("axis"),       \
+                          VEConcatV2Op<type>)
+// TODO : add other types
+TF_CALL_float(REGISTER_VE)
+TF_CALL_double(REGISTER_VE)
+TF_CALL_int32(REGISTER_VE)
+
+
+// TODO : add ConcatOffsetOp for VE
+
+#undef REGISTER_VE
+
+#undef MAX_CONCAT_SIZE
+
+#endif // TENSORFLOW_USE_VE
+
+
 }  // namespace tensorflow

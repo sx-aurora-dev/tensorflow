@@ -873,6 +873,101 @@ REGISTER_KERNEL_BUILDER(Name("ResourceGather")
 #undef REGISTER_GATHER_ALL_INDICES
 #undef REGISTER_GATHER_FULL
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T, typename Index>
+class VEResourceGatherOp : public OpKernel {
+ public:
+  explicit VEResourceGatherOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void Compute(OpKernelContext* c) override {
+    Var* v = nullptr;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    core::ScopedUnref su(v);
+    OP_REQUIRES_OK(c, VEEnsureSparseVariableAccess<T>(c, v));
+    // NOTE: We hold the lock for the whole gather operation instead
+    // of increasing the reference count of v->tensor() to avoid a
+    // situation where a write to the same variable will see a
+    // reference count greater than one and make a copy of the
+    // (potentially very large) tensor buffer.
+    tf_shared_lock ml(*v->mu());
+    const Tensor& params = *v->tensor();
+    const Tensor& indices = c->input(1);
+    OP_REQUIRES(
+	c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+	errors::InvalidArgument("params must be at least 1 dimensional"));
+
+    // Check that we have enough index space
+    const int64 N = indices.NumElements();
+    OP_REQUIRES(
+	c, params.dim_size(0) <= std::numeric_limits<Index>::max(),
+	errors::InvalidArgument("params.shape[0] too large for ",
+				DataTypeString(DataTypeToEnum<Index>::v()),
+				" indexing: ", params.dim_size(0), " > ",
+				std::numeric_limits<Index>::max()));
+
+    // The result shape is indices.shape + params.shape[1:].
+    TensorShape result_shape = indices.shape();
+    for (int i = 1; i < params.dims(); i++) {
+      result_shape.AddDim(params.dim_size(i));
+    }
+
+    Tensor* out = nullptr;
+    Tensor tmp;
+#if 0 // // FIXME : impl Variant objects
+    if (params.dtype() == DT_VARIANT) {
+      tmp = Tensor(DT_VARIANT, result_shape);
+      c->set_output(0, tmp);
+      out = &tmp;
+    } else
+#endif
+    {
+      OP_REQUIRES_OK(c, c->allocate_output(0, result_shape, &out));
+    }
+    if (N > 0) {
+      const int64 gather_dim_size = params.dim_size(0);
+      int64 inner_size = 1;
+      for (int i = 1; i < params.dims(); i++) {
+	inner_size *= params.dim_size(i);
+      }
+
+      functor::VEGatherFunctor<T, Index> functor;
+#if 0	// FIXME : check bad_i
+      int64 bad_i = functor(c, &params, &indices, out, gather_dim_size, inner_size, N);
+
+      auto indices_flat = indices.flat<Index>();
+      OP_REQUIRES(
+	  c, bad_i < 0,
+	  errors::InvalidArgument(
+	      "indices", SliceDebugString(indices.shape(), bad_i), " = ",
+	      indices_flat(bad_i), " is not in [0, ", params.dim_size(0), ")"));
+#else
+      functor(c, &params, &indices, out, gather_dim_size, inner_size, N) ;
+#endif
+    }
+  }
+};
+
+#define REGISTER_GATHER_VE(type, index_type)                           \
+  REGISTER_KERNEL_BUILDER(Name("ResourceGather")                       \
+			      .Device(DEVICE_VE)                       \
+			      .HostMemory("resource")                  \
+			      .TypeConstraint<type>("dtype")           \
+			      .TypeConstraint<index_type>("Tindices"), \
+			  VEResourceGatherOp<type, index_type>)
+
+#define REGISTER_GATHER_ALL_INDICES_VE(type)   \
+  REGISTER_GATHER_VE(type, int32);             \
+  REGISTER_GATHER_VE(type, int64)
+
+//TF_CALL_half(REGISTER_GATHER_ALL_INDICES_VE)
+TF_CALL_float(REGISTER_GATHER_ALL_INDICES_VE)
+TF_CALL_double(REGISTER_GATHER_ALL_INDICES_VE)
+
+
+#undef REGISTER_GATHER_ALL_INDICES_VE
+#undef REGISTER_GATHER_VE
+#endif // TENSORFLOW_USE_VE
+
 template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>
 class ResourceScatterUpdateOp : public OpKernel {
  public:
