@@ -75,7 +75,17 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/util.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
+
+
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 REGISTER_RESOURCE_HANDLE_KERNEL(Var);
 REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp").Device(DEVICE_CPU),
@@ -248,6 +258,73 @@ REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp")
                         ResourceHandlesOp<Var>);
 
 #endif  // GOOGLE_CUDA
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(
+    Name("ReadVariableOp").Device(DEVICE_VE).HostMemory("resource"),
+    ReadVariableOp);
+REGISTER_KERNEL_BUILDER(
+    Name("_ReadVariablesOp").Device(DEVICE_VE).HostMemory("resources"),
+    ReadVariablesOp);
+
+#if 0 // FIXME : use DenseUpdate
+#define REGISTER_VE_KERNELS(type)                              \
+  namespace functor {                                          \
+  template <>                                                  \
+  void DenseUpdate<VEDevice, type, ASSIGN>::operator()(        \
+      const VEDevice& d, typename TTypes<type>::Flat lhs,      \
+      typename TTypes<type>::ConstFlat rhs);                   \
+  extern template struct DenseUpdate<VEDevice, type, ASSIGN>;  \
+  }                                                            \
+  REGISTER_KERNEL_BUILDER(Name("VarHandleOp")                  \
+                              .Device(DEVICE_VE)               \
+                              .HostMemory("resource")          \
+                              .TypeConstraint<type>("dtype"),  \
+                          ResourceHandleOp<Var>)
+#else
+#define REGISTER_VE_KERNELS(type)                              \
+  REGISTER_KERNEL_BUILDER(Name("VarHandleOp")                  \
+                              .Device(DEVICE_VE)               \
+                              .HostMemory("resource")          \
+                              .TypeConstraint<type>("dtype"),  \
+                          ResourceHandleOp<Var>)
+#endif
+
+#if 0  // FIXME : add types
+TF_CALL_half(REGISTER_VE_KERNELS)
+TF_CALL_float(REGISTER_VE_KERNELS)
+TF_CALL_double(REGISTER_VE_KERNELS)
+TF_CALL_bool(REGISTER_VE_KERNELS)
+TF_CALL_complex64(REGISTER_VE_KERNELS)
+TF_CALL_complex128(REGISTER_VE_KERNELS)
+TF_CALL_int64(REGISTER_VE_KERNELS);
+TF_CALL_variant(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+
+REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp")
+                            .Device(DEVICE_VE)
+                            .HostMemory("resources")
+                            .TypeConstraint("dtypes",
+                                            {DT_INT64, DT_COMPLEX64,
+                                             DT_COMPLEX128, DT_HALF, DT_FLOAT,
+                                             DT_DOUBLE, DT_BOOL, DT_VARIANT}),
+                        ResourceHandlesOp<Var>);
+#else
+TF_CALL_float(REGISTER_VE_KERNELS)
+TF_CALL_double(REGISTER_VE_KERNELS)
+
+#undef REGISTER_VE_KERNELS
+
+REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp")
+                            .Device(DEVICE_VE)
+                            .HostMemory("resources")
+                            .TypeConstraint("dtypes",
+                                {DT_FLOAT,
+                                 DT_DOUBLE}),
+                        ResourceHandlesOp<Var>);
+#endif
+
+#endif  // TENSORFLOW_USE_VE
 
 template <typename T>
 class VariableShapeOp : public OpKernel {
@@ -484,6 +561,97 @@ TF_CALL_variant(REGISTER_GPU_KERNELS);
 #undef REGISTER_GPU_KERNELS
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class VEAssignVariableOp : public OpKernel {
+ public:
+  explicit VEAssignVariableOp(OpKernelConstruction* c) : OpKernel(c) {
+    OP_REQUIRES_OK(c, c->GetAttr("dtype", &dtype_));
+    if (!c->GetAttr("_grappler_relax_allocator_constraints",
+                    &relax_constraints_)
+             .ok()) {
+      relax_constraints_ = false;
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    OP_REQUIRES(context, dtype_ == context->input(1).dtype(),
+                errors::InvalidArgument(
+                    "Variable and value dtypes don't match; respectively, ",
+                    DataTypeString(dtype_), " and ",
+                    DataTypeString(context->input(1).dtype())));
+    Var* variable = nullptr;
+    const Tensor& value = context->input(1);
+    // Note: every resource-variable-manipulating op assumes copy-on-write
+    // semantics, and creates a copy of the variable's Tensor if its refcount is
+    // bigger than 1 when we try to modify it. This means we never need to copy
+    // the original tensor for AssignVariableOp; even if there are other live
+    // users of it we know none can modify it so this is always safe (even in
+    // esoteric cases where the same tensor is used to initialize multiple
+    // variables or the tensor is a constant this is safe, as future writes will
+    // trigger copies).
+    OP_REQUIRES_OK(context, LookupOrCreateResource<Var>(
+                                context, HandleFromInput(context, 0), &variable,
+                                [this, &value](Var** ptr) {
+                                  *ptr = new Var(dtype_);
+                                  *(*ptr)->tensor() = value;
+                                  (*ptr)->is_initialized = true;
+                                  return Status::OK();
+                                }));
+    core::ScopedUnref s(variable);
+    mutex_lock ml(*variable->mu());
+    OP_REQUIRES(context, variable->tensor()->dtype() == dtype_,
+                errors::InvalidArgument(
+                    "Trying to assign variable with wrong dtype. Expected ",
+                    DataTypeString(variable->tensor()->dtype()), " got ",
+                    DataTypeString(dtype_)));
+    if (variable->copy_on_read_mode.load()) {
+      PersistentTensor unused;
+      Tensor* tmp;
+      AllocatorAttributes attr;
+      attr.set_gpu_compatible(true);
+      attr.set_nic_compatible(true);
+      OP_REQUIRES_OK(context,
+                     context->allocate_persistent(value.dtype(), value.shape(),
+                                                  &unused, &tmp, attr));
+
+
+      functor::VEDenseUpdate<T, ASSIGN> copy_functor;
+      copy_functor(context, tmp, &value);
+
+      *variable->tensor() = *tmp;
+    } else {
+      *variable->tensor() = value;
+    }
+    variable->is_initialized = true;
+  }
+
+ private:
+  DataType dtype_;
+  bool relax_constraints_;
+};
+
+
+#define REGISTER_VE_KERNELS(type)                            \
+  REGISTER_KERNEL_BUILDER(Name("AssignVariableOp")           \
+                              .Device(DEVICE_VE)             \
+                              .TypeConstraint<type>("dtype") \
+                              .HostMemory("resource"),       \
+                          VEAssignVariableOp<type>);
+
+// FIXME : Add types
+//TF_CALL_half(REGISTER_VE_KERNELS);
+TF_CALL_float(REGISTER_VE_KERNELS);
+TF_CALL_double(REGISTER_VE_KERNELS);
+//TF_CALL_bool(REGISTER_VE_KERNELS);
+//TF_CALL_complex64(REGISTER_VE_KERNELS);
+//TF_CALL_complex128(REGISTER_VE_KERNELS);
+//TF_CALL_int64(REGISTER_VE_KERNELS);
+//TF_CALL_variant(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+#endif // TENSORFLOW_USE_VE
+
 template <typename Device, typename T, DenseUpdateType Op>
 class AssignUpdateVariableOp : public OpKernel {
  public:
@@ -580,6 +748,14 @@ REGISTER_KERNEL_BUILDER(Name("VarIsInitializedOp")
                             .HostMemory("is_initialized"),
                         IsResourceInitialized<Var>);
 #endif  // GOOGLE_CUDA
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("VarIsInitializedOp")
+                            .Device(DEVICE_VE)
+                            .HostMemory("resource")
+                            .HostMemory("is_initialized"),
+                        IsResourceInitialized<Var>);
+#endif
 
 template <typename Device, typename T, typename Index>
 class ResourceGatherOp : public OpKernel {

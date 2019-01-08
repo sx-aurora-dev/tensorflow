@@ -29,11 +29,20 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/sycl/sycl_util.h"
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
 using SYCLDevice = Eigen::SyclDevice;
+
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 namespace {
 template <class T>
@@ -3060,6 +3069,141 @@ REGISTER_KERNELS(GPU, double);
 #endif
 #undef REGISTER_CPU_KERNELS
 #undef REGISTER_KERNELS
+
+
+#ifdef TENSORFLOW_USE_VE
+template < typename T>
+class VEApplyAdamOp : public OpKernel {
+ public:
+  explicit VEApplyAdamOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_nesterov", &use_nesterov_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const bool sparse = false;
+    auto locks = VEMaybeLockVariableInputMutexesInOrder<T>(
+        ctx, use_exclusive_lock_, sparse, {0, 1, 2});
+
+    Tensor var;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 0, use_exclusive_lock_, sparse, &var));
+    Tensor m;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 1, use_exclusive_lock_, sparse, &m));
+    Tensor v;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 2, use_exclusive_lock_, sparse, &v));
+    OP_REQUIRES(
+        ctx, var.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(0)));
+    OP_REQUIRES(
+        ctx, m.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(1)));
+    OP_REQUIRES(
+        ctx, v.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(2)));
+
+    const Tensor& beta1_power = ctx->input(3);
+    const Tensor& beta2_power = ctx->input(4);
+    const Tensor& lr = ctx->input(5);
+    const Tensor& beta1 = ctx->input(6);
+    const Tensor& beta2 = ctx->input(7);
+    const Tensor& epsilon = ctx->input(8);
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta1_power.shape()),
+                errors::InvalidArgument("beta1_power is not a scalar: ",
+                                        beta1_power.shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta2_power.shape()),
+                errors::InvalidArgument("beta2_power is not a scalar: ",
+                                        beta2_power.shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr.shape()),
+                errors::InvalidArgument("lr is not a scalar : ",
+                                        lr.shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta1.shape()),
+                errors::InvalidArgument("beta1 is not a scalar: ",
+                                        beta1.shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(beta2.shape()),
+                errors::InvalidArgument("beta2 is not a scalar: ",
+                                        beta2.shape().DebugString()));
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(epsilon.shape()),
+                errors::InvalidArgument("epsilon is not a scalar: ",
+                                        epsilon.shape().DebugString()));
+
+    const Tensor& grad = ctx->input(9);
+    OP_REQUIRES(ctx, var.shape().IsSameSize(m.shape()),
+                errors::InvalidArgument("var and m do not have the same shape",
+                                        var.shape().DebugString(), " ",
+                                        m.shape().DebugString()));
+    OP_REQUIRES(ctx, var.shape().IsSameSize(v.shape()),
+                errors::InvalidArgument("var and v do not have the same shape",
+                                        var.shape().DebugString(), " ",
+                                        v.shape().DebugString()));
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(grad.shape()),
+        errors::InvalidArgument("var and grad do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                grad.shape().DebugString()));
+
+    struct {
+      int dtype;
+      bool use_nesterov_ ;
+      int64_t num_elements ;
+      uint64_t var_ptr, m_ptr, v_ptr ;
+      uint64_t beta1_power_ptr, beta2_power_ptr ;
+      uint64_t lr_ptr ;
+      uint64_t beta1_ptr, beta2_ptr, epsilon_ptr ;
+      uint64_t grad_ptr;
+    } args;
+
+    args.dtype = var.dtype() ;
+    args.use_nesterov_ = use_nesterov_ ;
+    args.num_elements = var.NumElements() ;
+    args.var_ptr = (uint64_t) DMAHelper::base(&var) ;
+    args.m_ptr = (uint64_t) DMAHelper::base(&m) ;
+    args.v_ptr = (uint64_t) DMAHelper::base(&v) ;
+    args.beta1_power_ptr = (uint64_t) DMAHelper::base(&beta1_power) ;
+    args.beta2_power_ptr = (uint64_t) DMAHelper::base(&beta2_power) ;
+    args.lr_ptr = (uint64_t) DMAHelper::base(&lr) ;
+    args.beta1_ptr = (uint64_t) DMAHelper::base(&beta1) ;
+    args.beta2_ptr = (uint64_t) DMAHelper::base(&beta2) ;
+    args.epsilon_ptr = (uint64_t) DMAHelper::base(&epsilon) ;
+    args.grad_ptr = (uint64_t) DMAHelper::base(&grad) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("ApplyAdam", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+
+    MaybeForwardRefInputToRefOutput(ctx, 0, 0);
+  }
+
+ private:
+  bool use_exclusive_lock_;
+  bool use_nesterov_;
+};
+
+#define REGISTER_VE_KERNELS(T)                                     \
+  REGISTER_KERNEL_BUILDER(                                         \
+      Name("VEApplyAdam").Device(DEVICE_VE).TypeConstraint<T>("T"), \
+      VEApplyAdamOp<T>);                                           \
+  REGISTER_KERNEL_BUILDER(Name("ResourceApplyAdam")                \
+                              .HostMemory("var")                   \
+                              .HostMemory("m")                     \
+                              .HostMemory("v")                     \
+                              .Device(DEVICE_VE)                   \
+                              .TypeConstraint<T>("T"),             \
+                          VEApplyAdamOp<T>);
+
+REGISTER_VE_KERNELS(float);
+REGISTER_VE_KERNELS(double);
+#undef REGISTER_VE_KERNELS
+
+#endif // TENSORFLOW_USE_VE
+
 
 template <typename Device, typename T>
 class ApplyAdamWithAmsgradOp : public OpKernel {

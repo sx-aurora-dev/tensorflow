@@ -592,6 +592,15 @@ class Tensor {
   template <typename Device, typename T>
   friend Status EnsureSparseVariableAccess(
       OpKernelContext* ctx, Var* var);  // For access to RefCountIsOne().
+#ifdef TENSORFLOW_USE_VE
+  template <typename T>
+  friend Status VEPrepareToUpdateVariable(
+      OpKernelContext* ctx, Tensor* tensor,
+      bool copy_on_read_mode);  // For access to RefCountIsOne().
+  template <typename T>
+  friend Status VEEnsureSparseVariableAccess(
+      OpKernelContext* ctx, Var* var);  // For access to RefCountIsOne().
+#endif
   friend Status batch_util::CopyElementToSlice(
       Tensor element, Tensor* parent,
       int64 index);                // For access to RefCountIsOne().

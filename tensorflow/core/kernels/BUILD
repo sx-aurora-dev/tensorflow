@@ -1469,7 +1469,8 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime",
+               "//tensorflow/core:core_cpu"]),
     alwayslink = 0,
 )
 
@@ -4925,7 +4926,9 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:training_ops_op_lib",
         "//third_party/eigen3",
-    ],
+    ] 
+    + if_ve(["//tensorflow/core:ve_runtime",
+             "//tensorflow/core:core_cpu"]),
 )
 
 tf_cc_test(
