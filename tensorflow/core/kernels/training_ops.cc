@@ -3188,7 +3188,7 @@ class VEApplyAdamOp : public OpKernel {
 
 #define REGISTER_VE_KERNELS(T)                                     \
   REGISTER_KERNEL_BUILDER(                                         \
-      Name("VEApplyAdam").Device(DEVICE_VE).TypeConstraint<T>("T"), \
+      Name("ApplyAdam").Device(DEVICE_VE).TypeConstraint<T>("T"),  \
       VEApplyAdamOp<T>);                                           \
   REGISTER_KERNEL_BUILDER(Name("ResourceApplyAdam")                \
                               .HostMemory("var")                   \
