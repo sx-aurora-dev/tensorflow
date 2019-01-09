@@ -3278,7 +3278,8 @@ tf_kernel_library(
     prefix = "segment_reduction_ops",
     deps = MATH_DEPS + if_cuda([
         ":cuda_solvers",
-    ]),
+    ])
+    + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(

@@ -43,10 +43,19 @@ limitations under the License.
 using stream_executor::cuda::ScopedActivateExecutorContext;
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 // Static routines not in the templated class to reduce code size
 static void SegmentReductionValidationHelper(OpKernelContext* context,
@@ -606,6 +615,124 @@ TF_CALL_complex128(REGISTER_SUM_GPU_UNSORTED_KERNELS_ALL);
 #undef REGISTER_SUM_GPU_UNSORTED_KERNELS_ALL
 
 #endif  // GOOGLE_CUDA
+
+#ifdef TENSORFLOW_USE_VE
+namespace functor {
+
+// The ReductionFunctor implementation for VE.
+
+// TODO : Add other reduction functor
+template <typename T>
+struct VEUnsortedSegmentSumOp {
+  void operator()(OpKernelContext* ctx,
+                  const Tensor* src,
+		  const Tensor* idx,
+                  Tensor* dst,
+		  const int64_t num_idx,
+		  const int64_t num_segments,
+		  const int64_t segment_size,
+		  const T initial_value)
+  {
+    struct {
+      int dtype, idxtype;
+      int64_t num_idx, num_segments, segment_size ;
+      union { float f32; double f64; } initial_value ;
+      uint64_t src_ptr, idx_ptr, dst_ptr ;
+    } args ;
+
+    args.dtype = src->dtype() ;
+    args.idxtype = idx->dtype() ;
+    args.num_idx = num_idx ;
+    args.num_segments = num_segments ;
+    args.segment_size = segment_size ;
+
+    if( typeid(T) == typeid(float) ) {
+      args.initial_value.f32 = initial_value ;
+    }
+    if( typeid(T) == typeid(double) ) {
+      args.initial_value.f64 = initial_value ;
+    }
+
+    args.src_ptr = (uint64_t) DMAHelper::base(src) ;
+    args.idx_ptr = (uint64_t) DMAHelper::base(idx) ;
+    args.dst_ptr = (uint64_t) DMAHelper::base(dst) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("UnsortedSegmentSum", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+  }
+};
+}
+
+template <typename T, typename Index, typename VEReductionFunctor, typename InitialValueF>
+class VEUnsortedSegmentReductionOp : public OpKernel {
+ public:
+  explicit VEUnsortedSegmentReductionOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& data = context->input(0);
+    const Tensor& segment_ids = context->input(1);
+    const Tensor& num_segments = context->input(2);
+    if (!UnsortedSegmentReductionDoValidation(this, context, data, segment_ids,
+                                              num_segments)) {
+      return;
+    }
+    const auto segment_flat = segment_ids.flat<Index>();
+    const Index output_rows =
+        internal::SubtleMustCopy(num_segments.scalar<int32>()());
+    OP_REQUIRES(context, output_rows >= 0,
+                errors::InvalidArgument("Input num_segments == ", output_rows,
+                                        " must not be negative."));
+    TensorShape output_shape;
+    output_shape.AddDim(output_rows);
+    for (int i = segment_ids.dims(); i < data.dims(); i++) {
+      output_shape.AddDim(data.dim_size(i));
+    }
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
+
+    const int64_t N = segment_flat.dimension(0) ;
+    const int64_t data_size = data.NumElements() ;
+
+    VEReductionFunctor reduction_functor;
+    InitialValueF initialvalue_functor ;
+    reduction_functor(context, &data, &segment_ids, output,
+	              N, output_rows, data_size / N,
+		      initialvalue_functor() ) ;
+  }
+};
+
+#define REGISTER_VE_KERNEL_UNSORTEDSEGMENT(                                  \
+    name, type, index_type, initial_value_functor, reduction_kernel_functor) \
+  REGISTER_KERNEL_BUILDER(                                                   \
+      Name(name)                                                             \
+          .Device(DEVICE_VE)                                                 \
+          .HostMemory("num_segments")                                        \
+          .TypeConstraint<type>("T")                                         \
+          .TypeConstraint<index_type>("Tindices"),                           \
+      VEUnsortedSegmentReductionOp<                                          \
+          type, index_type,                                                  \
+          reduction_kernel_functor, initial_value_functor> )
+
+#define REGISTER_REAL_VE_UNSORTED_KERNELS(type, index_type)                   \
+  REGISTER_VE_KERNEL_UNSORTEDSEGMENT("UnsortedSegmentSum", type, index_type,  \
+                                      functor::Zero<type>,                    \
+                                      functor::VEUnsortedSegmentSumOp<type>);
+
+#define REGISTER_REAL_VE_UNSORTED_KERNELS_ALL(type) \
+  REGISTER_REAL_VE_UNSORTED_KERNELS(type, int32);   \
+  REGISTER_REAL_VE_UNSORTED_KERNELS(type, int64);
+
+TF_CALL_float(REGISTER_REAL_VE_UNSORTED_KERNELS_ALL) ;
+TF_CALL_double(REGISTER_REAL_VE_UNSORTED_KERNELS_ALL) ;
+
+#undef REGISTER_REAL_VE_UNSORTED_KERNELS_ALL
+#undef REGISTER_REAL_VE_UNSORTED_KERNELS
+#undef REGISTER_VE_KERNEL_UNSORTEDSEGMENT
+
+#endif // TENSORFLOW_USE_VE
 
 // ____________________________________________________________________________
 // Sparse segment reduction ops.
