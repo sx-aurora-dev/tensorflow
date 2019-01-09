@@ -491,7 +491,6 @@ class VEConcatBaseOp : public OpKernel {
     OP_REQUIRES_OK(c, c->allocate_output(0, output_shape, &output));
     if (output->NumElements() > 0) {
       int64 output_dim1 = output->NumElements() / inputs_flat_dim0;
-      auto output_flat = output->shaped<T, 2>({inputs_flat_dim0, output_dim1});
 
       uint64_t n_input = inputs_flat.size() ;
 
@@ -557,7 +556,12 @@ TF_CALL_double(REGISTER_VE)
 TF_CALL_int32(REGISTER_VE)
 
 
-// TODO : add ConcatOffsetOp for VE
+REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
+                            .Device(DEVICE_VE)
+                            .HostMemory("concat_dim")
+                            .HostMemory("shape")
+                            .HostMemory("offset"),
+                        ConcatOffsetOp);
 
 #undef REGISTER_VE
 
