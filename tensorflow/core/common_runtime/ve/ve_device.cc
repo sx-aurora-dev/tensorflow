@@ -708,6 +708,11 @@ class VEDeviceContextImpl : public VEDeviceContext {
                                        Device* device, Tensor* cpu_tensor,
                                        StatusCallback done) override;
 
+    virtual void CopyTensorInSameDevice(const Tensor* input_tensor,
+					Device* device,
+					Tensor* output_tensor,
+					StatusCallback done) const override;
+
     virtual Status Compute(const std::string& name, const void* arg, size_t len,
                            const OpKernel* op);
 
@@ -919,6 +924,26 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
 
   Status s = veo_->read_mem(out, (uint64_t)in, device_tensor->TotalBytes());
   done(s);
+}
+
+void VEDeviceContextImpl::CopyTensorInSameDevice(const Tensor* input_tensor,
+                                                 Device* device,
+                                                 Tensor* output_tensor,
+                                                 StatusCallback done) const {
+  VLOG(2) << "VEDeviceContextImpl::CopyTensorInSameDevice";
+
+  struct {
+    uint64_t dst, src ;
+    size_t size ;
+  } args ;
+
+  args.dst = (uint64_t) DMAHelper::base(output_tensor) ;
+  args.src = (uint64_t) DMAHelper::base(input_tensor) ;
+
+  args.size = input_tensor->TotalBytes() ;
+
+  Status s = veo_->compute("Snapshot", (void*)&args, sizeof(args), nullptr);
+  done(s) ;
 }
 
 Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, size_t len,
