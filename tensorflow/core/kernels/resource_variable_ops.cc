@@ -267,28 +267,12 @@ REGISTER_KERNEL_BUILDER(
     Name("_ReadVariablesOp").Device(DEVICE_VE).HostMemory("resources"),
     ReadVariablesOp);
 
-#if 0 // FIXME : use DenseUpdate
-#define REGISTER_VE_KERNELS(type)                              \
-  namespace functor {                                          \
-  template <>                                                  \
-  void DenseUpdate<VEDevice, type, ASSIGN>::operator()(        \
-      const VEDevice& d, typename TTypes<type>::Flat lhs,      \
-      typename TTypes<type>::ConstFlat rhs);                   \
-  extern template struct DenseUpdate<VEDevice, type, ASSIGN>;  \
-  }                                                            \
-  REGISTER_KERNEL_BUILDER(Name("VarHandleOp")                  \
-                              .Device(DEVICE_VE)               \
-                              .HostMemory("resource")          \
-                              .TypeConstraint<type>("dtype"),  \
-                          ResourceHandleOp<Var>)
-#else
 #define REGISTER_VE_KERNELS(type)                              \
   REGISTER_KERNEL_BUILDER(Name("VarHandleOp")                  \
                               .Device(DEVICE_VE)               \
                               .HostMemory("resource")          \
                               .TypeConstraint<type>("dtype"),  \
                           ResourceHandleOp<Var>)
-#endif
 
 #if 0  // FIXME : add types
 TF_CALL_half(REGISTER_VE_KERNELS)
