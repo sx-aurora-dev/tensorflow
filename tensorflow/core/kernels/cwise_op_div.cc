@@ -61,6 +61,7 @@ REGISTER_KERNEL_BUILDER(Name("Div")
 
 #ifdef TENSORFLOW_USE_VE
 REGISTER_VE_BINARY_OP(Div, float, float, float);
+REGISTER_VE_BINARY_OP(DivNoNan, float, float, float);
 
 REGISTER_KERNEL_BUILDER(Name("RealDiv")
                         .Device(DEVICE_VE)
