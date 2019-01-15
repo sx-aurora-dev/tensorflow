@@ -153,6 +153,7 @@ REGISTER_GPU_HOST_KERNEL(ResourceHandle);
 
 #ifdef TENSORFLOW_USE_VE
 REGISTER_KERNEL_BUILDER(Name("Identity").Device(DEVICE_VE), IdentityOp);
+REGISTER_KERNEL_BUILDER(Name("PreventGradient").Device(DEVICE_VE), IdentityOp);
 #endif
 
 }  // namespace tensorflow

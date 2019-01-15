@@ -318,7 +318,7 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
 
 REGISTER_KERNEL(VE, float);
 REGISTER_KERNEL(VE, double);
-#endif
+#endif // TENSORFLOW_USE_VE
 
 #undef REGISTER_KERNEL
 
@@ -392,6 +392,65 @@ REGISTER_KERNEL_BUILDER(Name("ZerosLike")
                             .HostMemory("y"),
                         ZerosLikeOp<CPUDevice, int32>);
 #endif  // GOOGLE_CUDA
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class ZerosLikeOp<VEDevice, T> : public OpKernel {
+ public:
+  explicit ZerosLikeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+
+#if 0 // FIXME : DT_VARIANT
+    if (std::is_same<T, Variant>::value) {
+      OP_REQUIRES(
+          ctx, input.dims() == 0,
+          errors::InvalidArgument("ZerosLike non-scalar Tensor with "
+                                  "dtype=DT_VARIANT is not supported."));
+      const Variant& v = input.scalar<Variant>()();
+      // DT_VARIANT tensors must be allocated on CPU since they wrap C++
+      // objects which can not be efficiently represented in GPU memory.
+      int numa_node = DeviceNumaNode(ctx->device());
+      Tensor out(cpu_allocator(numa_node), DT_VARIANT, TensorShape({}));
+      Variant* out_v = &(out.scalar<Variant>()());
+      OP_REQUIRES_OK(ctx, UnaryOpVariant<Device>(
+                              ctx, ZEROS_LIKE_VARIANT_UNARY_OP, v, out_v));
+      ctx->set_output(0, out);
+    }
+    else
+#endif
+    {
+      Tensor* out = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+                              {0}, 0, input.shape(), &out));
+
+      struct {
+        int32 data_type;
+        uint64_t out_ptr;
+        size_t num_elems;
+      } args;
+
+      args.data_type = out->dtype();
+      args.out_ptr = (uint64_t)DMAHelper::base(out);
+      args.num_elems = out->NumElements();
+
+      VLOG(2) << "FillOp: num_elems=" << out->NumElements();
+
+      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("ZerosLike", (void*)&args, sizeof(args));
+      if (!s.ok())
+        ctx->SetStatus(s);
+
+      VLOG(2) << __PRETTY_FUNCTION__ << " done";
+    }
+  }
+};
+
+REGISTER_KERNEL(float, VE);
+REGISTER_KERNEL(double, VE);
+
+#endif
 
 #undef REGISTER_KERNEL
 

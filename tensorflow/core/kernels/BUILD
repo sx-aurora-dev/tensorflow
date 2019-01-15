@@ -4462,7 +4462,9 @@ tf_kernel_library(
     deps = SPARSE_DEPS + [
         ":bounds_check",
         "//third_party/eigen3",
-    ],
+    ]
+    + if_ve(["//tensorflow/core:ve_runtime",
+             "//tensorflow/core:core_cpu"]),
 )
 
 tf_kernel_library(
