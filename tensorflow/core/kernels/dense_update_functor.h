@@ -110,7 +110,21 @@ struct VEDenseUpdate<T, ADD> {
   void operator()(OpKernelContext* ctx,
                   Tensor* params,
                   const Tensor* update) {
+    struct {
+      int dtype;
+      int64_t num_elements ;
+      uint64_t dst_ptr, src_ptr ;
+    } args;
 
+    args.dtype = update->dtype() ;
+    args.num_elements = update->NumElements() ;
+    args.dst_ptr = (uint64_t) DMAHelper::base(params) ;
+    args.src_ptr = (uint64_t) DMAHelper::base(update) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("DenseUpdateAssignAdd", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
   }
 };
 
@@ -119,7 +133,21 @@ struct VEDenseUpdate<T, SUB> {
   void operator()(OpKernelContext* ctx,
                   Tensor* params,
                   const Tensor* update) {
+    struct {
+      int dtype;
+      int64_t num_elements ;
+      uint64_t dst_ptr, src_ptr ;
+    } args;
 
+    args.dtype = update->dtype() ;
+    args.num_elements = update->NumElements() ;
+    args.dst_ptr = (uint64_t) DMAHelper::base(params) ;
+    args.src_ptr = (uint64_t) DMAHelper::base(update) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("DenseUpdateAssignSub", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
   }
 };
 

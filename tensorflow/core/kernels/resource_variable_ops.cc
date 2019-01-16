@@ -294,8 +294,14 @@ REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp")
                                              DT_DOUBLE, DT_BOOL, DT_VARIANT}),
                         ResourceHandlesOp<Var>);
 #else
+//TF_CALL_half(REGISTER_VE_KERNELS)
 TF_CALL_float(REGISTER_VE_KERNELS)
 TF_CALL_double(REGISTER_VE_KERNELS)
+TF_CALL_bool(REGISTER_VE_KERNELS)
+//TF_CALL_complex64(REGISTER_VE_KERNELS)
+//TF_CALL_complex128(REGISTER_VE_KERNELS)
+TF_CALL_int64(REGISTER_VE_KERNELS);
+//TF_CALL_variant(REGISTER_VE_KERNELS);
 
 #undef REGISTER_VE_KERNELS
 
@@ -304,7 +310,9 @@ REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp")
                             .HostMemory("resources")
                             .TypeConstraint("dtypes",
                                 {DT_FLOAT,
-                                 DT_DOUBLE}),
+                                 DT_DOUBLE,
+                                 DT_BOOL,
+                                 DT_INT64}),
                         ResourceHandlesOp<Var>);
 #endif
 
@@ -631,7 +639,7 @@ TF_CALL_double(REGISTER_VE_KERNELS);
 //TF_CALL_bool(REGISTER_VE_KERNELS);
 //TF_CALL_complex64(REGISTER_VE_KERNELS);
 //TF_CALL_complex128(REGISTER_VE_KERNELS);
-//TF_CALL_int64(REGISTER_VE_KERNELS);
+TF_CALL_int64(REGISTER_VE_KERNELS);
 //TF_CALL_variant(REGISTER_VE_KERNELS);
 #undef REGISTER_VE_KERNELS
 #endif // TENSORFLOW_USE_VE
@@ -700,6 +708,59 @@ TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU_KERNELS);
 TF_CALL_int64(REGISTER_GPU_KERNELS);
 #undef REGISTER_GPU_KERNELS
 #endif  // GOOGLE_CUDA
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T, DenseUpdateType Op>
+class VEAssignUpdateVariableOp : public OpKernel {
+ public:
+  explicit VEAssignUpdateVariableOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void Compute(OpKernelContext* context) override {
+    Var* variable = nullptr;
+    OP_REQUIRES_OK(context, LookupResource(context, HandleFromInput(context, 0),
+                                           &variable));
+    core::ScopedUnref s(variable);
+
+    const Tensor& value = context->input(1);
+    // TODO(apassos): We could possibly avoid the copy done by
+    // PrepareToUpdateVariable() for commutative operations like Op ==
+    // ADD if value's refcount was 1.
+    mutex_lock ml(*variable->mu());
+    Tensor* var_tensor = variable->tensor();
+    OP_REQUIRES(context, var_tensor->shape().IsSameSize(value.shape()),
+                errors::InvalidArgument("Cannot update variable with shape ",
+                                        var_tensor->shape().DebugString(),
+                                        " using a Tensor with shape ",
+                                        value.shape().DebugString(),
+                                        ", shapes must be equal."));
+    OP_REQUIRES_OK(
+        context, VEPrepareToUpdateVariable<T>(
+                     context, var_tensor, variable->copy_on_read_mode.load()));
+    functor::VEDenseUpdate<T, Op> update_functor;
+    update_functor(context, var_tensor, &value);
+  }
+};
+
+#define REGISTER_VE_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(Name("AssignAddVariableOp")                \
+                              .Device(DEVICE_VE)                     \
+                              .HostMemory("resource")                \
+                              .TypeConstraint<type>("dtype"),        \
+                          VEAssignUpdateVariableOp<type, ADD>);      \
+  REGISTER_KERNEL_BUILDER(Name("AssignSubVariableOp")                \
+                              .Device(DEVICE_VE)                     \
+                              .HostMemory("resource")                \
+                              .TypeConstraint<type>("dtype"),        \
+                          VEAssignUpdateVariableOp<type, SUB>);
+
+//TF_CALL_half(REGISTER_VE_KERNELS) ;
+TF_CALL_float(REGISTER_VE_KERNELS) ;
+TF_CALL_double(REGISTER_VE_KERNELS) ;
+TF_CALL_int64(REGISTER_VE_KERNELS);
+
+#undef REGISTER_VE_KERNELS
+
+#endif // TENSORFLOW_USE_VE
 
 class VarIsInitializedOp : public OpKernel {
  public:
