@@ -98,7 +98,30 @@ ConstantOp::~ConstantOp() {}
 REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_CPU), ConstantOp);
 
 #ifdef TENSORFLOW_USE_VE
-REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_VE), ConstantOp);
+#define REGISTER_KERNEL(D, TYPE)                                      \
+  REGISTER_KERNEL_BUILDER(                                            \
+      Name("Const").Device(DEVICE_##D).TypeConstraint<TYPE>("dtype"), \
+      ConstantOp);
+REGISTER_KERNEL(VE, Eigen::half);
+REGISTER_KERNEL(VE, bfloat16);
+REGISTER_KERNEL(VE, float);
+REGISTER_KERNEL(VE, double);
+REGISTER_KERNEL(VE, uint8);
+REGISTER_KERNEL(VE, int8);
+REGISTER_KERNEL(VE, qint8);
+REGISTER_KERNEL(VE, uint16);
+REGISTER_KERNEL(VE, int16);
+REGISTER_KERNEL(VE, qint16);
+REGISTER_KERNEL(VE, quint16);
+REGISTER_KERNEL(VE, uint32);
+REGISTER_KERNEL(VE, qint32);
+REGISTER_KERNEL(VE, int64);
+REGISTER_KERNEL(VE, uint64);
+REGISTER_KERNEL(VE, complex64);
+REGISTER_KERNEL(VE, complex128);
+REGISTER_KERNEL(VE, bool);
+REGISTER_KERNEL(VE, Variant);
+#undef REGISTER_KERNEL
 #endif
 
 #if GOOGLE_CUDA
