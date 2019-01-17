@@ -3158,7 +3158,7 @@ tf_kernel_library(
 tf_kernel_library(
     name = "argmax_op",
     prefix = "argmax_op",
-    deps = MATH_DEPS,
+    deps = MATH_DEPS + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
