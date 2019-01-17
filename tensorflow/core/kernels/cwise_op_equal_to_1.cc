@@ -75,7 +75,7 @@ REGISTER_KERNEL_BUILDER(Name("Equal")
                             .HostMemory("y")
                             .HostMemory("z")
                             .TypeConstraint<int32>("T"),
-                        BinaryOp<CPUDevice, functor::less_equal<int32>>);
+                        BinaryOp<CPUDevice, functor::equal_to<int32>>);
 #endif  // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
