@@ -146,7 +146,8 @@ class VEAssignOpT : public AssignOp, public VEOpKernelHelper {
   using AssignOp::AssignOp;
 
   void Copy(OpKernelContext* context, Tensor* lhs, const Tensor& rhs) override {
-    Call(context, "Assign", rhs, *lhs);
+    functor::VEDenseUpdate<T, DenseUpdateType::ASSIGN> update_functor;
+    update_functor(context, lhs, &rhs);
   }
 };
 
@@ -156,6 +157,7 @@ class VEAssignOpT : public AssignOp, public VEOpKernelHelper {
       VEAssignOpT<type>);
 
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+TF_CALL_int64(REGISTER_VE_KERNELS);
 #undef REGISTER_VE_KERNELS
 #endif  // TENSORFLOW_USE_VE
 
@@ -195,4 +197,66 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL_KERNELS);
 #undef REGISTER_SYCL_KERNELS
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+// TODO(jeff): Get rid of use_exclusive_lock_ option
+template <typename T, DenseUpdateType OP>
+class VEDenseUpdateOp : public OpKernel {
+ public:
+  explicit VEDenseUpdateOp(OpKernelConstruction* context) : OpKernel(context) {
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("use_locking", &use_exclusive_lock_));
+    const DataType dt = DataTypeToEnum<T>::v();
+    OP_REQUIRES_OK(context, context->MatchSignature({MakeRefType(dt), dt},
+                                                    {MakeRefType(dt)}));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // We always return the input ref.
+    context->forward_ref_input_to_ref_output(0, 0);
+
+    if (use_exclusive_lock_) {
+      mutex_lock l(*context->input_ref_mutex(0));
+      DoUpdate(context);
+    } else {
+      DoUpdate(context);
+    }
+  }
+
+ private:
+  void DoUpdate(OpKernelContext* context) {
+    Tensor Tparams = context->mutable_input(0, use_exclusive_lock_);
+    const Tensor& Tupdate = context->input(1);
+    OP_REQUIRES(context, Tparams.IsInitialized(),
+                errors::FailedPrecondition("Attempting to use uninitialized "
+                                           "parameters: ",
+                                           requested_input(0)));
+    OP_REQUIRES(
+        context, Tparams.IsSameSize(Tupdate),
+        errors::InvalidArgument("Parameters and update must be the same size"));
+
+    functor::VEDenseUpdate<T, OP> update_functor;
+
+    update_functor(context, &Tparams, &Tupdate);
+
+  }
+
+  bool use_exclusive_lock_;
+};
+
+#define REGISTER_VE_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("AssignAdd").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      VEDenseUpdateOp<type, DenseUpdateType::ADD>);                  \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("AssignSub").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      VEDenseUpdateOp<type, DenseUpdateType::SUB>);
+//TF_CALL_half(REGISTER_VE_KERNELS) ;
+TF_CALL_float(REGISTER_VE_KERNELS) ;
+TF_CALL_double(REGISTER_VE_KERNELS) ;
+TF_CALL_int64(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+
+#endif
+
 }  // namespace tensorflow

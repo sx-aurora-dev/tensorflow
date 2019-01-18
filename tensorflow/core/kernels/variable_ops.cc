@@ -249,6 +249,7 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
                               .HostMemory("is_initialized"),                \
                           IsVariableInitializedOp);
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNEL);
+TF_CALL_int64(REGISTER_VE_KERNEL);
 #undef REGISTER_VE_KERNEL
 #endif // TENSORFLOW_USE_VE
 

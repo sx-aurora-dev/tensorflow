@@ -87,25 +87,22 @@ REGISTER_KERNEL_BUILDER(Name("Reshape")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-#define REGISTER_VE_KERNEL(type)                              \
+#define REGISTER_VE_KERNEL(type)                                \
   REGISTER_KERNEL_BUILDER(Name("Reshape")                       \
-                              .Device(DEVICE_VE)              \
+                              .Device(DEVICE_VE)                \
                               .HostMemory("shape")              \
                               .TypeConstraint<type>("T")        \
                               .TypeConstraint<int32>("Tshape"), \
                           ReshapeOp);                           \
   REGISTER_KERNEL_BUILDER(Name("Reshape")                       \
-                              .Device(DEVICE_VE)              \
+                              .Device(DEVICE_VE)                \
                               .HostMemory("shape")              \
                               .TypeConstraint<type>("T")        \
                               .TypeConstraint<int64>("Tshape"), \
                           ReshapeOp);
-REGISTER_VE_KERNEL(float)
-REGISTER_VE_KERNEL(double)
-REGISTER_VE_KERNEL(uint8)
-REGISTER_VE_KERNEL(int8)
-REGISTER_VE_KERNEL(int64)
-REGISTER_VE_KERNEL(uint16)
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_bool(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
 
 REGISTER_KERNEL_BUILDER(Name("Reshape")
                             .Device(DEVICE_VE)
@@ -123,7 +120,6 @@ REGISTER_KERNEL_BUILDER(Name("Reshape")
                             .TypeConstraint<int32>("T")
                             .TypeConstraint<int64>("Tshape"),
                         ReshapeOp);
-#undef REGISTER_VE_KERNEL
 #endif  // TENSORFLOW_USE_VE
 
 #if GOOGLE_CUDA
