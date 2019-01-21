@@ -36,6 +36,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/protobuf/config.pb.h"  // NOLINT
 #include "tensorflow/core/public/session.h"
@@ -364,9 +365,6 @@ TEST(TRT_TensorOrWeights_Test, Basic) {
       EXPECT_EQ(false, ptr->is_tensor());
       EXPECT_EQ(true, ptr->is_weights());
       EXPECT_TRUE(TrtShapedWeightsEquals(weights, ptr->weights()));
-
-      nvinfer1::Dims dims;
-      dims.nbDims = 0;
       ExpectTrtDimsEqualsArray({}, ptr->GetTrtDims());
     }
   }
@@ -915,6 +913,20 @@ TEST_F(ConverterTest, GetTrtBroadcastShape) {
                  "(tensor #dims 4 vs broadcast #dims 5)");
 }
 
+TEST_F(ConverterTest, CreateConstantLayer) {
+  for (auto dtype : {DT_FLOAT, DT_INT32}) {
+    TRT_ShapedWeights weights =
+        weight_store_->GetTempWeights(dtype, GetTestDims({2, 3, 5}));
+    nvinfer1::ITensor* tensor =
+        converter_->CreateConstantLayer(weights, GetTestDims({3, 10}));
+    ASSERT_NE(nullptr, tensor);
+    EXPECT_EQ(TfDataTypeToTrt(dtype), tensor->getType())
+        << "Expected " << DebugString(TfDataTypeToTrt(dtype)) << " vs. actual "
+        << DebugString(tensor->getType());
+    ExpectTrtDimsEqualsArray({3, 10}, tensor->getDimensions());
+  }
+}
+
 // Class to test various op converters, using both a TrtNodeValidator and
 // Converter.
 class OpConverterTest : public ::testing::Test {
@@ -1111,6 +1123,30 @@ class OpConverterTest : public ::testing::Test {
   std::unordered_map<string, NodeDef> validator_inputs_;
 };
 
+template <typename T>
+void CopyTensorElements(const Tensor& tensor, protobuf::RepeatedField<T>* out) {
+  out->Clear();
+  if (tensor.NumElements() == 0) return;
+
+  // TensorProto does not need to have all the elements present and can truncate
+  // trailing elements with the same value for compressed representation. Such
+  // elements are derived based on the tensor shape.
+  const auto flat = tensor.flat<T>();
+  int64 last_index = 0;
+  for (int64 i = 0; i < tensor.NumElements(); ++i) {
+    if (flat(i) != flat(last_index)) {
+      last_index = i;
+    }
+  }
+
+  int num_out_elements = last_index + 1;
+  out->Reserve(num_out_elements);
+  out->AddNAlreadyReserved(num_out_elements);
+  const T* src = flat.data();
+  T* dst = out->mutable_data();
+  std::copy(src, src + num_out_elements, dst);
+}
+
 template <DataType dtype, typename InputCType, typename OutputCType>
 void TestConvertConst(OpConverterTest* test) {
   NodeDef node_def;
@@ -1123,11 +1159,23 @@ void TestConvertConst(OpConverterTest* test) {
                             const std::vector<OutputCType>& expected_value) {
     test->Reset();
 
-    auto& attr = *node_def.mutable_attr();
+    TensorProto* tensor_attr =
+        (*node_def.mutable_attr())["value"].mutable_tensor();
+    tensor_attr->Clear();
+
     if (as_tensor_content) {
-      tensor.AsProtoTensorContent(attr["value"].mutable_tensor());
+      tensor.AsProtoTensorContent(tensor_attr);
     } else {
-      tensor.AsProtoField(attr["value"].mutable_tensor());
+      tensor.shape().AsProto(tensor_attr->mutable_tensor_shape());
+      tensor_attr->set_dtype(tensor.dtype());
+
+      if (tensor.dtype() == DT_FLOAT) {
+        CopyTensorElements<float>(tensor, tensor_attr->mutable_float_val());
+      } else if (tensor.dtype() == DT_INT32) {
+        CopyTensorElements<int32>(tensor, tensor_attr->mutable_int_val());
+      } else {
+        tensor.AsProtoField(tensor_attr);
+      }
     }
     test->RunValidationAndConversion(node_def);
     TRT_TensorOrWeights output;
@@ -1140,8 +1188,7 @@ void TestConvertConst(OpConverterTest* test) {
   {
     // By default empty tensor will pick DT_FLOAT as data type and we fix it
     // here.
-    attr["value"].mutable_tensor()->set_dtype(dtype);
-    Tensor t;  // Empty tensor.
+    Tensor t(dtype);  // Empty tensor.
     reset_and_test(t, false, {}, {});
   }
   {
@@ -1159,6 +1206,22 @@ void TestConvertConst(OpConverterTest* test) {
                                                         TensorShape({2, 3}));
     reset_and_test(t, false, {2, 3}, {1, 2, 3, 4, 5, 6});
     reset_and_test(t, true, {2, 3}, {1, 2, 3, 4, 5, 6});
+  }
+  {
+    // Set all tensor elements to the same value. Such tensors are encoded
+    // using a single element list in tensor proto.
+    Tensor t = ::tensorflow::test::AsTensor<InputCType>({1, 1, 1, 1, 1, 1},
+                                                        TensorShape({2, 3}));
+    reset_and_test(t, false, {2, 3}, {1, 1, 1, 1, 1, 1});
+    reset_and_test(t, true, {2, 3}, {1, 1, 1, 1, 1, 1});
+  }
+  {
+    // Set trailing tensor elements to the same value. Such tensors are
+    // encoded by truncating all equal elements except the first one.
+    Tensor t = ::tensorflow::test::AsTensor<InputCType>({2, 2, 1, 1, 1, 1},
+                                                        TensorShape({2, 3}));
+    reset_and_test(t, false, {2, 3}, {2, 2, 1, 1, 1, 1});
+    reset_and_test(t, true, {2, 3}, {2, 2, 1, 1, 1, 1});
   }
 }
 
@@ -2378,6 +2441,8 @@ TEST_F(OpConverterTest, ConvertStridedSlice) {
   };
 
   {
+    // Input is weights, should fail.
+    Reset();
     NodeDef node_def = get_strided_slice_nodedef();
     AddTestWeights<int32>("input", {1, 2, 3}, {1, 2, 3, 4, 5, 6});
     AddTestWeights<int32>("begin", {4}, {0, 0, 0, 0});
@@ -2614,6 +2679,240 @@ TEST_F(OpConverterTest, ConvertStridedSlice) {
     TF_EXPECT_OK(GetTensorOrWeights("my_strided_slice", &output));
     std::vector<float> output_data(ok_params[i].expected_output.size());
     BuildAndRun<float>({{"input", {1, 2, 3, 4, 5, 6}}}, "my_strided_slice",
+                       &output_data);
+    EXPECT_THAT(output_data, ElementsAreArray(ok_params[i].expected_output));
+  }
+}
+
+TEST_F(OpConverterTest, ConvertConv2D) {
+  {
+    // Input list is empty, should fail.
+    NodeDef node_def = MakeNodeDef("my_conv2d", "Conv2D", {});
+    RunValidationAndConversion(
+        node_def, error::INVALID_ARGUMENT,
+        "Two inputs are expected for Conv2D, at my_conv2d");
+  }
+
+  // Get nodedef for Conv2D layer.
+  auto get_conv2d_nodedef =
+      [](std::vector<int> strides = {1, 1, 1, 1}, string padding = "SAME",
+         string data_format = "NCHW",
+         std::vector<int> dilations = {1, 1, 1, 1}) -> NodeDef {
+    Scope s = Scope::NewRootScope();
+    auto input = ops::Placeholder(s.WithOpName("input"), DT_FLOAT);
+    auto filter = ops::Placeholder(s.WithOpName("weights"), DT_FLOAT);
+    ops::Conv2D::Attrs attrs =
+        ops::Conv2D::Attrs().DataFormat(data_format).Dilations(dilations);
+    auto conv2d = ops::Conv2D(s.WithOpName("my_conv2d"), input, filter, strides,
+                              padding, attrs);
+    return conv2d.operation.node()->def();
+  };
+
+  {
+    // Input is weights, should fail.
+    Reset();
+    NodeDef node_def = get_conv2d_nodedef();
+    AddTestWeights<float>("input", {1, 2, 3}, {1, 2, 3, 4, 5, 6});
+    AddTestWeights<float>("weights", {3, 3, 1, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    RunValidationAndConversion(
+        node_def, error::UNIMPLEMENTED,
+        "Conv2D is only implemented for tensors, not weights, at my_conv2d");
+  }
+  {
+    // Filter is tensor, should fail.
+    Reset();
+    NodeDef node_def = get_conv2d_nodedef();
+    AddTestTensor("input", {1, 2, 3});
+    AddTestTensor("weights", {3, 3, 1, 1});
+    RunValidationAndConversion(
+        node_def, error::UNIMPLEMENTED,
+        "Kernel for Conv2D must be constant weights, at my_conv2d");
+  }
+  {
+    // Filter is not 4D, should fail.
+    Reset();
+    NodeDef node_def = get_conv2d_nodedef();
+    AddTestTensor("input", {1, 2, 3});
+    AddTestWeights<float>("weights", {3, 3, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    RunValidationAndConversion(
+        node_def, error::INVALID_ARGUMENT,
+        "Conv2D expects kernel of dimension 4, at my_conv2d");
+  }
+  {
+    // Dilations is not 4D, should fail.
+    Reset();
+    NodeDef node_def =
+        get_conv2d_nodedef({1, 1, 1, 1}, "SAME", "NCHW", {1, 1, 1});
+    AddTestTensor("input", {1, 2, 3});
+    AddTestWeights<float>("weights", {3, 3, 1, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    RunValidationAndConversion(
+        node_def, error::INVALID_ARGUMENT,
+        "Convolution dilations field must specify 4 dimensions, at my_conv2d");
+  }
+  {
+    // Dilation value is not 1 for channel, should fail.
+    Reset();
+    NodeDef node_def =
+        get_conv2d_nodedef({1, 1, 1, 1}, "SAME", "NCHW", {1, 2, 1, 1});
+    AddTestTensor("input", {1, 2, 3});
+    AddTestWeights<float>("weights", {3, 3, 1, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    RunValidationAndConversion(node_def, error::UNIMPLEMENTED,
+                               "Dilation rate must be 1 for batch and channel "
+                               "dimensions, at my_conv2d");
+  }
+  {
+    // Dilation value is not 1 for channel (NHWC), should fail.
+    Reset();
+    NodeDef node_def =
+        get_conv2d_nodedef({1, 1, 1, 1}, "SAME", "NHWC", {1, 1, 1, 2});
+    AddTestTensor("input", {2, 3, 1});
+    AddTestWeights<float>("weights", {3, 3, 1, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    RunValidationAndConversion(node_def, error::UNIMPLEMENTED,
+                               "Dilation rate must be 1 for batch and channel "
+                               "dimensions, at my_conv2d");
+  }
+  {
+    // Strides is not 4D, should fail.
+    Reset();
+    NodeDef node_def =
+        get_conv2d_nodedef({1, 1, 1}, "SAME", "NCHW", {1, 1, 1, 1});
+    AddTestTensor("input", {1, 2, 3});
+    AddTestWeights<float>("weights", {3, 3, 1, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    RunValidationAndConversion(
+        node_def, error::INVALID_ARGUMENT,
+        "Convolution strides field must specify 4 dimensions, at my_conv2d");
+  }
+  {
+    // Stride value is not 1 for channel, should fail.
+    Reset();
+    NodeDef node_def =
+        get_conv2d_nodedef({1, 2, 1, 1}, "SAME", "NCHW", {1, 1, 1, 1});
+    AddTestTensor("input", {1, 2, 3});
+    AddTestWeights<float>("weights", {3, 3, 1, 1}, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+    RunValidationAndConversion(
+        node_def, error::UNIMPLEMENTED,
+        "Stride must be 1 for batch and channel dimensions, at my_conv2d");
+  }
+
+  struct TestParams {
+    TestParams(const std::vector<int>& input_dims,
+               const std::vector<float>& input,
+               const std::vector<int>& filter_dims,
+               const std::vector<float>& filter,
+               const std::vector<int>& strides, const string& padding,
+               const string& data_format, const std::vector<int>& dilations,
+               const std::vector<int>& expected_output_dims,
+               const std::vector<float>& expected_output)
+        : input_dims(input_dims),
+          input(input),
+          filter_dims(filter_dims),
+          filter(filter),
+          strides(strides),
+          padding(padding),
+          data_format(data_format),
+          dilations(dilations),
+          expected_output_dims(expected_output_dims),
+          expected_output(expected_output) {}
+
+    std::vector<int> input_dims;
+    std::vector<float> input;
+    std::vector<int> filter_dims;
+    std::vector<float> filter;
+    std::vector<int> strides;
+    string padding;
+    string data_format;
+    std::vector<int> dilations;
+    std::vector<int> expected_output_dims;
+    std::vector<float> expected_output;
+  };
+
+  // Ok.
+  const int kConv2DOKCases = 6;
+  TestParams ok_params[kConv2DOKCases] = {
+      // Basic
+      TestParams{/*input_dims=*/{1, 2, 3},
+                 /*input=*/{0, 1, 2, 3, 3, 4},
+                 /*filter_dims=*/{1, 2, 1, 1},
+                 /*filter=*/{-1, 1},
+                 /*strides=*/{1, 1, 1, 1},
+                 /*padding=*/"VALID",
+                 /*data_format=*/"NCHW",
+                 /*dilations=*/{1, 1, 1, 1},
+                 /*expected_output_dims=*/{1, 2, 2},
+                 /*expected_output=*/{1, 1, 0, 1}},
+      // SAME padding (Asymmetric)
+      TestParams{/*input_dims=*/{1, 2, 3},
+                 /*input=*/{0, 1, 2, 3, 3, 4},
+                 /*filter_dims=*/{1, 2, 1, 1},
+                 /*filter=*/{-1, 1},
+                 /*strides=*/{1, 1, 1, 1},
+                 /*padding=*/"SAME",
+                 /*data_format=*/"NCHW",
+                 /*dilations=*/{1, 1, 1, 1},
+                 /*expected_output_dims=*/{1, 2, 3},
+                 /*expected_output=*/{1, 1, -2, 0, 1, -4}},
+      // SAME padding (Symmetric)
+      TestParams{/*input_dims=*/{1, 2, 3},
+                 /*input=*/{0, 1, 2, 3, 3, 4},
+                 /*filter_dims=*/{1, 3, 1, 1},
+                 /*filter=*/{-1, 0, 1},
+                 /*strides=*/{1, 1, 1, 1},
+                 /*padding=*/"SAME",
+                 /*data_format=*/"NCHW",
+                 /*dilations=*/{1, 1, 1, 1},
+                 /*expected_output_dims=*/{1, 2, 3},
+                 /*expected_output=*/{1, 2, -1, 3, 1, -3}},
+      // NHWC
+      TestParams{/*input_dims=*/{2, 3, 1},
+                 /*input=*/{0, 1, 2, 3, 3, 4},
+                 /*filter_dims=*/{1, 2, 1, 1},
+                 /*filter=*/{-1, 1},
+                 /*strides=*/{1, 1, 1, 1},
+                 /*padding=*/"VALID",
+                 /*data_format=*/"NHWC",
+                 /*dilations=*/{1, 1, 1, 1},
+                 /*expected_output_dims=*/{2, 2, 1},
+                 /*expected_output=*/{1, 1, 0, 1}},
+      // Dilated
+      TestParams{/*input_dims=*/{1, 2, 3},
+                 /*input=*/{0, 1, 2, 3, 3, 4},
+                 /*filter_dims=*/{1, 2, 1, 1},
+                 /*filter=*/{-1, 1},
+                 /*strides=*/{1, 1, 1, 1},
+                 /*padding=*/"VALID",
+                 /*data_format=*/"NCHW",
+                 /*dilations=*/{1, 1, 1, 2},
+                 /*expected_output_dims=*/{1, 2, 1},
+                 /*expected_output=*/{2, 1}},
+      // Strided
+      TestParams{/*input_dims=*/{1, 2, 4},
+                 /*input=*/{0, 1, 2, 2, 3, 4, 4, 7},
+                 /*filter_dims=*/{1, 2, 1, 1},
+                 /*filter=*/{-1, 1},
+                 /*strides=*/{1, 1, 1, 2},
+                 /*padding=*/"VALID",
+                 /*data_format=*/"NCHW",
+                 /*dilations=*/{1, 1, 1, 1},
+                 /*expected_output_dims=*/{1, 2, 2},
+                 /*expected_output=*/{1, 0, 1, 3}},
+  };
+
+  for (int i = 0; i < kConv2DOKCases; i++) {
+    Reset();
+    NodeDef node_def =
+        get_conv2d_nodedef(ok_params[i].strides, ok_params[i].padding,
+                           ok_params[i].data_format, ok_params[i].dilations);
+    AddTestTensor("input", ok_params[i].input_dims);
+    AddTestWeights<float>("weights", ok_params[i].filter_dims,
+                          ok_params[i].filter);
+    RunValidationAndConversion(node_def);
+    TRT_TensorOrWeights output;
+    TF_EXPECT_OK(GetTensorOrWeights("my_conv2d", &output));
+    EXPECT_TRUE(output.is_tensor());
+    ExpectTrtDimsEqualsArray(ok_params[i].expected_output_dims,
+                             output.tensor()->getDimensions());
+    std::vector<float> output_data(ok_params[i].expected_output.size());
+    BuildAndRun<float>({{"input", ok_params[i].input}}, "my_conv2d",
                        &output_data);
     EXPECT_THAT(output_data, ElementsAreArray(ok_params[i].expected_output));
   }
