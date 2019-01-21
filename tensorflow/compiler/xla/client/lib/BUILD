@@ -34,6 +34,21 @@ cc_library(
     ],
 )
 
+xla_test(
+    name = "arithmetic_test",
+    srcs = ["arithmetic_test.cc"],
+    deps = [
+        ":arithmetic",
+        "//tensorflow/compiler/xla:literal_util",
+        "//tensorflow/compiler/xla:test",
+        "//tensorflow/compiler/xla:types",
+        "//tensorflow/compiler/xla:xla_data_proto",
+        "//tensorflow/compiler/xla/client:xla_builder",
+        "//tensorflow/compiler/xla/tests:client_library_test_base",
+        "//tensorflow/compiler/xla/tests:xla_internal_test_main",
+    ],
+)
+
 cc_library(
     name = "cholesky",
     srcs = ["cholesky.cc"],
@@ -77,6 +92,39 @@ xla_test(
 )
 
 cc_library(
+    name = "comparators",
+    srcs = ["comparators.cc"],
+    hdrs = ["comparators.h"],
+    deps = [
+        ":constants",
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla:types",
+        "//tensorflow/compiler/xla:xla_data_proto",
+        "//tensorflow/compiler/xla/client:xla_builder",
+        "//tensorflow/compiler/xla/client:xla_computation",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_test(
+    name = "comparators_test",
+    srcs = ["comparators_test.cc"],
+    deps = [
+        ":comparators",
+        ":constants",
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla:test",
+        "//tensorflow/compiler/xla:types",
+        "//tensorflow/compiler/xla:xla_data_proto",
+        "//tensorflow/compiler/xla/client:xla_builder",
+        "//tensorflow/compiler/xla/tests:client_library_test_base",
+        "//tensorflow/compiler/xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/container:inlined_vector",
+    ],
+)
+
+cc_library(
     name = "constants",
     srcs = ["constants.cc"],
     hdrs = ["constants.h"],
@@ -93,7 +141,6 @@ cc_library(
 xla_test(
     name = "constants_test",
     srcs = ["constants_test.cc"],
-    tags = ["enable_for_xla_interpreter"],
     deps = [
         ":constants",
         "//tensorflow/compiler/xla:test",
@@ -147,7 +194,6 @@ cc_library(
 xla_test(
     name = "math_test",
     srcs = ["math_test.cc"],
-    tags = ["enable_for_xla_interpreter"],
     deps = [
         ":math",
         "//tensorflow/compiler/xla:literal_util",
@@ -181,7 +227,6 @@ cc_library(
 xla_test(
     name = "matrix_test",
     srcs = ["matrix_test.cc"],
-    tags = ["enable_for_xla_interpreter"],
     deps = [
         ":matrix",
         ":slicing",
@@ -295,7 +340,6 @@ cc_library(
 xla_test(
     name = "slicing_test",
     srcs = ["slicing_test.cc"],
-    tags = ["enable_for_xla_interpreter"],
     deps = [
         ":slicing",
         "//tensorflow/compiler/xla:literal_util",
@@ -324,7 +368,6 @@ cc_library(
 xla_test(
     name = "sorting_test",
     srcs = ["sorting_test.cc"],
-    tags = ["enable_for_xla_interpreter"],
     deps = [
         ":sorting",
         "//tensorflow/compiler/xla:test",
@@ -352,7 +395,10 @@ cc_library(
 xla_test(
     name = "quantize_test",
     srcs = ["quantize_test.cc"],
-    tags = ["enable_for_xla_interpreter"],
+    # TODO(b/122119490): re-enable TAP after fixing.
+    tags = [
+        "notap",
+    ],
     deps = [
         ":quantize",
         "//tensorflow/compiler/xla:test",
