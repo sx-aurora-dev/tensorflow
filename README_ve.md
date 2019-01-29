@@ -6,7 +6,7 @@ We have tested on CentOS 7.5 and:
 - llvm: a47a7dea63d3d654795d28daa2fdbf1d885ceca6
 - clang: 580c9d41f8b253c1cb2011461683c91d1e4d3d2e
 - veos: 2.0.1 (installed from https://sx-aurora.github.io/posts/VEOS-yum-repository)
-- veoffload: Included in veos
+- veoffload: 2.0.0 (installed from https://sx-aurora.github.io/posts/VEOS-yum-repository)
 - bazel: 0.19.2
 
 ## Setup
@@ -152,5 +152,5 @@ LLVM_DIR when you build vetfkernel. You can also specify version of ncc/nc++.
 (tmp)% (cd build && cmake3 \
         -DLLVM_DIR=<install prefix>/lib/cmake/llvm \
         -DNCC=/opt/nec/ve/bin/ncc-2.0.8 \
-        -ENCXX=/opt/nec/ve/bin/nc++-2.0.8 .. && make)
+        -DNCXX=/opt/nec/ve/bin/nc++-2.0.8 .. && make)
 ```
