@@ -289,6 +289,13 @@ Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
 
 
 std::unique_ptr<DeviceTracer> CreateDeviceTracer() {
+
+  if (const char* tmp = getenv("VE_NODE_NUMBER")) {
+    if (atoi(tmp) < 0) {
+      return nullptr;
+    }
+  }
+  
   VLOG(2) << "CreateDeviceTracer(VE)";
   std::unique_ptr<DeviceTracer> tracer(new VEDeviceTracer());
   return tracer;
