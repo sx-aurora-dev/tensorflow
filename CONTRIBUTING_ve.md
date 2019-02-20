@@ -41,3 +41,12 @@ There are a way to run TensorFlow unit tests.
    ```bash
    bazel test ${flags} //tensorflow/python/kernel_tests/test_ve/...
    ```
+
+   If the tests are to be run on CPU, set '-1' to 'VE_NODE_NUMBER' environment value with '--test_env' option.
+
+   For example, to run all tests under tensorflow/python do:
+
+   ```bash
+   bazel test --config=opt --config=ve --test_env VE_NODE_NUMBER=-1 //tensorflow/python/...
+   ```
+
