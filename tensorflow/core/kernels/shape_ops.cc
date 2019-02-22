@@ -518,6 +518,24 @@ REGISTER_KERNEL_BUILDER(Name("Squeeze")
                         SqueezeOp);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("Squeeze").Device(DEVICE_VE).TypeConstraint<type>("T"),  \
+      SqueezeOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_bool(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
+
+REGISTER_KERNEL_BUILDER(Name("Squeeze")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        SqueezeOp);
+#endif  // TENSORFLOW_USE_VE
+
+
 class EnsureShapeOp : public OpKernel {
  public:
   explicit EnsureShapeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
