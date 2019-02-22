@@ -48,4 +48,16 @@ REGISTER_KERNEL_BUILDER(
     BinaryOp<CPUDevice, functor::squared_difference<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(SquaredDifference, float, float, float);
+REGISTER_KERNEL_BUILDER(
+    Name("SquaredDifference")
+        .Device(DEVICE_VE)
+        .HostMemory("x")
+        .HostMemory("y")
+        .HostMemory("z")
+        .TypeConstraint<int32>("T"),
+    BinaryOp<CPUDevice, functor::squared_difference<int32>>);
+#endif  // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow
