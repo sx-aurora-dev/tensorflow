@@ -663,6 +663,10 @@ class VEBinaryOp : public BinaryOpShared {
         << " in1.shape=" << state.in1.shape().DebugString()
         << " out.shape=" << state.out->shape().DebugString();
 
+      if (state.out_num_elements == 0) {
+        return;
+      }
+
       if (state.in0.dims() > 8 || state.in1.dims() > 8 || state.out->dims() > 8) {
         context->SetStatus(errors::Unimplemented(
                 "in0.dims > 8 || in1.dims > 8 || out.dims > 8"
