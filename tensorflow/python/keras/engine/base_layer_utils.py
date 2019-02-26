@@ -18,6 +18,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections as collections_lib
+import threading
 import enum
 
 from tensorflow.python.framework import dtypes
@@ -28,6 +29,9 @@ from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import init_ops_v2
 from tensorflow.python.ops import variables as tf_variables
 from tensorflow.python.util import nest
+from tensorflow.python.util import tf_contextlib
+
+_call_context = threading.local()
 
 
 class CallConvention(enum.Enum):
@@ -72,7 +76,7 @@ def make_variable(name,
   that has fewer constraints (`variable_scope.variable()`).
 
   In the longer term, it seems like a similar "default variable creator" method
-  should exist in `CheckpointableBase` instead. When this happens, we can get
+  should exist in `Trackable` instead. When this happens, we can get
   rid of this temporary solution.
 
   TODO(fchollet): remove this method when no longer needed.
@@ -119,9 +123,9 @@ def make_variable(name,
       variable_dtype = None
     else:
       # Instantiate initializer if provided initializer is a type object.
-      if isinstance(initializer, type(init_ops.Initializer)):
-        initializer = initializer(dtype=dtype)
-      elif isinstance(initializer, type(init_ops_v2.Initializer)):
+      if isinstance(
+          initializer,
+          (type(init_ops.Initializer), type(init_ops_v2.Initializer))):
         initializer = initializer()
       init_val = lambda: initializer(shape, dtype=dtype)
       variable_dtype = dtype.base_dtype
@@ -205,22 +209,16 @@ def collect_previous_mask(input_tensors):
   """Retrieves the output mask(s) of the previous node.
 
   Arguments:
-      input_tensors: A tensor or list of tensors.
+      input_tensors: An arbitrary structure of Tensors.
 
   Returns:
       A mask tensor or list of mask tensors.
   """
-  input_tensors = nest.flatten(input_tensors)
-  masks = []
-  for x in input_tensors:
-    if hasattr(x, '_keras_mask'):
-      mask = x._keras_mask  # pylint: disable=protected-access
-      masks.append(mask)
-    else:
-      masks.append(None)
-  if len(masks) == 1:
-    return masks[0]
-  return masks
+
+  def _collect_previous_mask(x):
+    return getattr(x, '_keras_mask', None)
+
+  return nest.map_structure(_collect_previous_mask, input_tensors)
 
 
 def have_all_keras_metadata(tensors):
@@ -237,8 +235,7 @@ def create_keras_history(tensors):
   This method checks to see if a Tensor in `tensors` is missing Keras metadata
   and has its origin in a Keras `Input` Layer. If so, this method will replace
   the raw TensorFlow Operations that created this tensor with
-  `TensorFlowOpLayer`
-  instances that create identical operations.
+  `TensorFlowOpLayer` instances that create identical operations.
 
   Any Tensors not originating from a Keras `Input` Layer will be treated as
   constants when constructing `TensorFlowOpLayer` instances.
@@ -247,7 +244,6 @@ def create_keras_history(tensors):
     tensors: A structure of Tensors, some of which come from raw TensorFlow
       operations and need to have Keras metadata assigned to them.
   """
-
   _create_keras_history_helper(tensors, set())
 
 
@@ -256,8 +252,8 @@ def _create_keras_history_helper(tensors, processed_ops=None):
 
   Arguments:
     tensors: A structure of Tensors for which to create Keras metadata.
-    processed_ops: TensorFlow operations that have already been wrapped in
-      `TensorFlowOpLayer` instances.
+    processed_ops: Set. TensorFlow operations that have already been wrapped
+      in `TensorFlowOpLayer` instances.
 
   Returns:
     The updated set of TensorFlow Operations that have been wrapped
@@ -278,14 +274,14 @@ def _create_keras_history_helper(tensors, processed_ops=None):
       constants = {}
       layer_inputs = []
       for i, op_input in enumerate(op_inputs):
-        if uses_keras_input_layers(op_input):
+        if uses_keras_history(op_input):
           layer_inputs.append(op_input)
         else:
           # Treat any value not originating from a `keras.Input` as
           # a constant (Variables currently have `Placeholder` op type
           # when originating from an eager context
           # so can't be supported.
-          constants[i] = backend.function([], [op_input])([])
+          constants[i] = backend.function([], op_input)([])
       processed_ops = _create_keras_history_helper(layer_inputs, processed_ops)
       name = op.name
       node_def = op.node_def.SerializeToString()
@@ -297,33 +293,105 @@ def _create_keras_history_helper(tensors, processed_ops=None):
   return processed_ops
 
 
-def uses_keras_input_layers(tensors):
-  """Checks if at least one Tensor in `tensors` originates from a Keras `Input`.
+def needs_keras_history(tensors):
+  """Check if any Tensors need to be wrapped in TensorFlowOpLayers.
 
-  If so, the Functional API is being used.
+  This will never return True inside a sublayer, because sublayers
+  do not need to create Keras History. Otherwise, this returns True
+  if one or more of `tensors` originates from a `keras.Input` and
+  does not have `_keras_history` set.
 
   Arguments:
     tensors: An arbitrary nested structure of Tensors.
 
   Returns:
-    Bool, whether at least one Tensor originates from a Keras `Input`.
+    Bool, whether at least one Tensor needs to be wrapped.
+  """
+  input_tensors = nest.flatten(tensors)
+  if is_in_call_context() or all(
+      getattr(tensor, '_keras_history', None) is not None
+      for tensor in input_tensors):
+    # KerasHistory already set.
+    return False
+  return uses_keras_history(tensors)
+
+
+def is_in_call_context():
+  """Returns true if inside of a model/layer '__call__'."""
+  return getattr(_call_context, 'in_call', False)
+
+
+def uses_keras_history(tensors):
+  """Check if at least one Tensor originates from a `keras.Input`.
+
+  This is `True` if at least one Tensor has its origin in a `keras.Input`.
+  Any Tensor that originates from a `keras.Input` will have a dependency
+  Tensor with a `_keras_history` attribute attached. Tensors that have
+  already been checked to not originate from a `keras.Input`
+  are marked as `_keras_history_checked`.
+
+  Arguments:
+    tensors: An arbitrary nested structure of Tensors.
+
+  Returns:
+    Bool, whether at least one Tensor originates from a `keras.Input`.
   """
   checked_tensors = set()
-  input_tensors = nest.flatten(tensors)
+  tensors_to_check = nest.flatten(tensors)
 
-  while input_tensors:
-    if any(
-        getattr(tensor, '_keras_history', None) is not None
-        for tensor in input_tensors):
-      return True
-    checked_tensors.update(input_tensors)
-    new_input_tensors = set()
-    for tensor in input_tensors:
+  while tensors_to_check:
+    new_tensors_to_check = set()
+    for tensor in tensors_to_check:
+      if getattr(tensor, '_keras_history_checked', None) is not None:
+        continue
+      if getattr(tensor, '_keras_history', None) is not None:
+        return True
+
       try:
-        new_input_tensors.update(tensor.op.inputs)
+        new_tensors_to_check.update(tensor.op.inputs)
       except AttributeError:
-        # In case `tensor` is a Variable created in an Eager
-        # context
+        # In case `tensor` is a Variable created in an Eager context.
         pass
-    input_tensors = list(new_input_tensors - checked_tensors)
+
+    checked_tensors.update(tensors_to_check)
+    tensors_to_check = list(new_tensors_to_check - checked_tensors)
+
+  # Mark that these Tensors have been checked once for `_keras_history`,
+  # and should not be checked again for performance reasons.
+  mark_checked(tensors)
   return False
+
+
+def mark_checked(tensors):
+  """Marks that these Tensors should not be tracked.
+
+  This prevents Layers from attempting to create TensorFlowOpLayers
+  for these Tensors.
+
+  Arguments:
+    tensors: An arbitrary structure of Tensors.
+  """
+
+  def _mark_checked(tensor):
+    tensor._keras_history_checked = True  # pylint: disable=protected-access
+
+  nest.map_structure(_mark_checked, tensors)
+
+
+@tf_contextlib.contextmanager
+def call_context():
+  """Scope that marks when we are currently inside a Layer/Model's `call`."""
+  was_in_call = is_in_call_context()
+  _call_context.in_call = True
+  try:
+    yield
+  finally:
+    _call_context.in_call = was_in_call
+
+
+def training_arg_passed_to_call(argspec, args, kwargs):
+  """Returns whether a user passed the `training` argument in `__call__`."""
+  # `argspec.args` starts with ['self', 'inputs']
+  full_args = dict(zip(argspec.args[2:], args))
+  full_args.update(kwargs)
+  return 'training' in full_args

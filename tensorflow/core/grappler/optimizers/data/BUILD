@@ -6,6 +6,7 @@ load("//tensorflow/core:platform/default/build_config.bzl", "tf_protos_all")
 package(default_visibility = [
     "//tensorflow/core/grappler/optimizers/data:__subpackages__",
     "//tensorflow/core/kernels/data:__pkg__",
+    "//tensorflow/core/kernels/data/experimental:__pkg__",
 ])
 
 cc_library(
@@ -84,6 +85,7 @@ cc_library(
         "//tensorflow/core/grappler:utils",
         "//tensorflow/core/kernels:functional_ops",
         "//tensorflow/core/kernels:control_flow_ops",
+        "//tensorflow/core:control_flow_ops_op_lib",
         "//tensorflow/core/grappler/optimizers:custom_graph_optimizer_registry",
         "//tensorflow/core:lib_internal",
     ] + tf_protos_all(),
@@ -125,7 +127,9 @@ tf_cc_test(
     srcs = ["function_utils_test.cc"],
     deps = [
         ":function_utils",
+        ":graph_utils",
         "//tensorflow/core:framework",
+        "//tensorflow/core:ops",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
@@ -133,7 +137,7 @@ tf_cc_test(
         "//tensorflow/core/grappler/optimizers:custom_graph_optimizer_registry",
         "//tensorflow/core/kernels:cast_op",
         "//tensorflow/tools/graph_transforms:transform_utils",
-    ],
+    ] + tf_protos_all(),
 )
 
 cc_library(
@@ -422,6 +426,7 @@ tf_cc_test(
         ":graph_test_utils",
         ":graph_utils",
         ":map_fusion",
+        "//tensorflow/core:control_flow_ops_op_lib",
         "//tensorflow/core:framework",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
@@ -438,6 +443,7 @@ cc_library(
         "map_parallelization.h",
     ],
     deps = [
+        ":function_utils",
         ":graph_utils",
         ":optimizer_base",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -478,6 +484,7 @@ cc_library(
         ":optimizer_base",
         ":vectorization_utils",
         "@com_google_absl//absl/container:flat_hash_set",
+        "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core/grappler:mutable_graph_view",
         "//tensorflow/core/grappler:grappler_item",
@@ -496,12 +503,19 @@ tf_cc_test(
     deps = [
         ":graph_utils",
         ":map_vectorization",
+        "//tensorflow/core:array_ops_op_lib",
+        "//tensorflow/core:bitwise_ops_op_lib",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:direct_session",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
+        "//tensorflow/core:spectral_ops_op_lib",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
         "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler/utils:topological_sort",
+        "//tensorflow/core/kernels:math",
         "//tensorflow/core/kernels/data",
     ],
 )
@@ -523,6 +537,24 @@ cc_library(
         "//tensorflow/core/grappler:grappler_item",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:ptr_util",
+    ] + tf_protos_all(),
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "rebatch",
+    srcs = ["rebatch.cc"],
+    hdrs = ["rebatch.h"],
+    deps = [
+        ":graph_utils",
+        ":optimizer_base",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "//tensorflow/core:framework",
+        "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler:mutable_graph_view",
+        "//tensorflow/core/grappler/optimizers:custom_graph_optimizer_registry",
+        "//tensorflow/core/grappler/utils:functions",
+        "//tensorflow/core:lib",
     ] + tf_protos_all(),
     alwayslink = 1,
 )
@@ -568,7 +600,7 @@ cc_library(
         "optimizer_base.h",
     ],
     deps = [
-        "//tensorflow/core:metrics",
+        "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core/grappler/optimizers:custom_graph_optimizer",
     ],
 )
@@ -647,12 +679,24 @@ tf_cc_test(
         "//tensorflow/core/grappler/optimizers:custom_graph_optimizer_registry",
         # For ops we need registered
         "//tensorflow/core/kernels/data:dataset_ops",
+        "//tensorflow/core:dataset_ops_op_lib",
         "//tensorflow/core/kernels:cast_op",
         "//tensorflow/core/kernels:cwise_op",
         "//tensorflow/core/kernels:logging_ops",
+        "//tensorflow/core:logging_ops_op_lib",
         "//tensorflow/core/kernels:math",
+        "//tensorflow/core:spectral_ops_op_lib",
+        "//tensorflow/core:bitwise_ops_op_lib",
+        "//tensorflow/core:array_ops_op_lib",
         "//tensorflow/core/kernels:nn",
+        "//tensorflow/core:sendrecv_ops_op_lib",
+        "//tensorflow/core:no_op_op_lib",
+        "//tensorflow/core:nn_ops_op_lib",
+        "//tensorflow/core:mkl_nn_ops_op_lib",
+        "//tensorflow/core:math_ops_op_lib",
+        "//tensorflow/core:functional_ops_op_lib",
         "//tensorflow/core/kernels:parsing",
+        "//tensorflow/core:parsing_ops_op_lib",
         "//tensorflow/tools/graph_transforms:transform_utils",
     ] + tf_protos_all(),
 )

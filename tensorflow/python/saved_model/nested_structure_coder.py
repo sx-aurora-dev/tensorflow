@@ -34,10 +34,11 @@ import collections
 import functools
 import six
 
+from tensorflow.core.protobuf import struct_pb2
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import tensor_spec
-from tensorflow.python.saved_model import struct_pb2
+from tensorflow.python.util import compat
 
 
 class NotEncodableError(Exception):
@@ -304,7 +305,7 @@ class _StringCodec(object):
 
   def do_decode(self, value, decode_fn):
     del decode_fn
-    return value.string_value
+    return compat.as_str(value.string_value)
 
 
 StructureCoder.register_codec(_StringCodec())
@@ -360,10 +361,7 @@ class _TensorShapeCodec(object):
   """Codec for `TensorShape`."""
 
   def can_encode(self, pyobj):
-    return isinstance(pyobj, (tensor_shape.TensorShape,
-                              # TODO(b/121255889): Should not need these.
-                              tensor_shape.TensorShapeV1,
-                              tensor_shape.TensorShapeV2))
+    return isinstance(pyobj, tensor_shape.TensorShape)
 
   def do_encode(self, tensor_shape_value, encode_fn):
     del encode_fn
