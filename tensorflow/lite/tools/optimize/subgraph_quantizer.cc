@@ -60,24 +60,24 @@ bool OpHasOptionalBiasTensor(BuiltinOperator op_code) {
 
 struct OpWithBiasTensors {
   int activation_input_index;
-  int bias_input_index;
   int weights_input_index;
+  int bias_input_index;
   int index_for_channel_in_weights;
 };
 
 const OpWithBiasTensors* GetInfoForOpWithBiasTensor(BuiltinOperator op_code) {
   if (op_code == BuiltinOperator_CONV_2D) {
-    static OpWithBiasTensors op_info = {.activation_input_index = 0,
-                                        .weights_input_index = 1,
-                                        .bias_input_index = 2,
-                                        .index_for_channel_in_weights = 0};
+    static OpWithBiasTensors op_info = {/* activation_input_index */ 0,
+                                        /* weights_input_index */ 1,
+                                        /* bias_input_index */ 2,
+                                        /* index_for_channel_in_weights */ 0};
     return &op_info;
   }
   if (op_code == BuiltinOperator_DEPTHWISE_CONV_2D) {
-    static OpWithBiasTensors op_info = {.activation_input_index = 0,
-                                        .weights_input_index = 1,
-                                        .bias_input_index = 2,
-                                        .index_for_channel_in_weights = 3};
+    static OpWithBiasTensors op_info = {/* bias_input_index */ 0,
+                                        /* bias_input_index */ 1,
+                                        /* bias_input_index */ 2,
+                                        /* index_for_channel_in_weights */ 3};
     return &op_info;
   }
 
@@ -186,14 +186,10 @@ TfLiteStatus SymmetricPerChannelBiasQuantize(const TensorT* input_tensor,
   // Set the buffers and output type.
   uint8_t* uint8_buffer = reinterpret_cast<uint8_t*>(final_buffer.data());
   size_t buffer_size = num_elements * sizeof(int32_t);
-  // For Bias we only set the quantized values, the scale and quantized
-  // dimension is implicit.
-  tensor->quantization = nullptr;
-  model->buffers[tensor->buffer]->data.assign(uint8_buffer,
-                                              uint8_buffer + buffer_size);
-
-  tensor->type = TensorType_INT32;
-  return kTfLiteOk;
+  std::vector<int64_t> zero_point(scales.size(), 0);
+  return AddQuantizationParams(scales, zero_point, channel_dim_index,
+                               uint8_buffer, buffer_size, TensorType_INT32,
+                               model, tensor);
 }
 }  // namespace
 
@@ -329,6 +325,27 @@ TfLiteStatus SubgraphQuantizer::AsymmetricQuantizeSingleInputOutputOp(
   return kTfLiteOk;
 }
 
+TfLiteStatus SubgraphQuantizer::AsymmetricQuantizeSoftmax(
+    BuiltinOperator op_code, OperatorT* op) {
+  TF_LITE_ENSURE_EQ(this->error_reporter_, op->inputs.size(), 1);
+  TF_LITE_ENSURE_EQ(this->error_reporter_, op->outputs.size(), 1);
+
+  if (IsSubgraphInput(op->inputs[0])) {
+    TF_LITE_ENSURE_STATUS(AsymmetricQuantizeTensor(op_code, op->inputs[0]));
+  }
+
+  auto output_tensor = subgraph_->tensors[op->outputs[0]].get();
+  if (output_tensor->type != TensorType_FLOAT32) {
+    return kTfLiteOk;
+  }
+
+  // Softmax output is hardcoded to have 1/256 as scale and -128 as zero point.
+  output_tensor->type = TensorType_INT8;
+  output_tensor->quantization->scale = {1.0f / 256.0f};
+  output_tensor->quantization->zero_point = {-128};
+  return kTfLiteOk;
+}
+
 bool SubgraphQuantizer::IsSubgraphInput(int32_t tensor_idx) const {
   return std::find(subgraph_->inputs.begin(), subgraph_->inputs.end(),
                    tensor_idx) != subgraph_->inputs.end();
@@ -346,8 +363,9 @@ TfLiteStatus SubgraphQuantizer::QuantizeOperator(int op_idx) {
     case BuiltinOperator_MAX_POOL_2D:
       return PropagateMinMaxForAvgAndMaxPool(op_code, op);
     case BuiltinOperator_SQUEEZE:
-    case BuiltinOperator_SOFTMAX:
       return AsymmetricQuantizeSingleInputOutputOp(op_code, op);
+    case BuiltinOperator_SOFTMAX:
+      return AsymmetricQuantizeSoftmax(op_code, op);
     default:
       return kTfLiteError;
   }

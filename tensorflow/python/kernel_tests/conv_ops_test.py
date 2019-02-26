@@ -2286,6 +2286,7 @@ class Conv2DTest(test.TestCase):
           strides=[1, 1, 1, 1],
           padding=[0, 0, 0, 0])
 
+  @test_util.disable_xla("b/123337890")  # Error messages differ
   def testOpEdgeCases(self):
     with self.cached_session() as sess:
       # Illegal strides.
