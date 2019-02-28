@@ -84,10 +84,6 @@ void BiasGPU<T>::compute(const GPUDevice& d, const T* input, const T* bias,
     return;
   }
   CudaLaunchConfig config = GetCudaLaunchConfig(total_count, d);
-#ifdef STOPWATCH
-  int64 start,end;
-  start = Env::Default()->NowMicros();
-#endif
 
   if (data_format == FORMAT_NHWC) {
     TF_CHECK_OK(CudaLaunchKernel(BiasNHWCKernel<T>, config.block_count,
@@ -100,11 +96,6 @@ void BiasGPU<T>::compute(const GPUDevice& d, const T* input, const T* bias,
                                  config.virtual_thread_count, input, bias,
                                  output, bias_size, image_size));
   }
-#ifdef STOPWATCH
-  cudaThreadSynchronize();
-  end = Env::Default()->NowMicros();
-  fprintf (stderr, " + %s : %lld us, b%d w%d h%d c%d\n", "BiasGPU<T>::compute", end - start, batch, height, width, channel);
-#endif
 }
 
 // A naive implementation that is functional on all cases.
@@ -216,9 +207,6 @@ void BiasGradGPU<T>::compute(const GPUDevice& d, const T* output_backprop,
   }
   static constexpr int32 kWarpSize = 32;
   CudaLaunchConfig config = GetCudaLaunchConfig(total_count, d);
-#ifdef STOPWATCH
-  int64 start,end;
-#endif
 
   const int max_shared_memory_size = d.sharedMemPerBlock() / 2;
   int32 shared_memory_size = 0;
@@ -226,9 +214,6 @@ void BiasGradGPU<T>::compute(const GPUDevice& d, const T* output_backprop,
     shared_memory_size = bias_size * sizeof(typename AccumulatorType<T>::type);
   }
   // Check if we have enough shared memory.
-#ifdef STOPWATCH
-  start = Env::Default()->NowMicros();
-#endif
   if (shared_memory_size <= max_shared_memory_size) {
     if (data_format == FORMAT_NHWC) {
       BiasGradNHWC_SharedAtomics<T>
@@ -262,11 +247,6 @@ void BiasGradGPU<T>::compute(const GPUDevice& d, const T* output_backprop,
                                    bias_size, image_size));
     }
   }
-#ifdef STOPWATCH
-  cudaThreadSynchronize();
-  end = Env::Default()->NowMicros();
-  fprintf (stderr, " + %s : %lld us, b%d w%d h%d c%d\n", "BiasGradGPU<T>::compute", end - start, batch, height, width, channel);
-#endif
 }
 
 template <typename T>
