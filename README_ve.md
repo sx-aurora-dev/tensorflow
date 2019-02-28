@@ -11,25 +11,17 @@ We have tested on CentOS 7.5 and:
 
 ## Setup
 
-### Install veoffload
+### Install required packages
 
 ```
-% yum install veoffload-devel veoffload-veorun-devel
+% yum install centos-releas-scl
+% yum install rh-python35 devtoolset-8 rh-git29 veoffload-devel veoffload-veorun-devel
 ```
 
-### Install bazel
+Note that veoffload-devel and veoffload-veorun-devel are included veos software
+packages, or provided above yum repository.
 
-Download and install repo.
-
-https://copr.fedorainfracloud.org/coprs/vbatts/bazel/repo/epel-7/vbatts-bazel-epel-7.repo
-
-Install bazel.
-
-```
-% yum install bazel
-```
-
-If you can not find bazel-0.19.2, you can build it.
+Install bazel-0.19.2.
 
 ```
 % wget https://vbatts.fedorapeople.org/bazel-0.19.2-1.fc28.src.rpm
@@ -39,33 +31,10 @@ If you can not find bazel-0.19.2, you can build it.
 
 ### Create virtualenv with python 3.5
 
-Add SCL repository.
+Create virtualenv and update packages after enabling scl.
 
 ```
-% yum install centos-releas-scl
-```
-
-If this does not work, you can download and install:
-- http://mirror.centos.org/centos/7/extras/x86_64/Packages/centos-release-scl-2-2.el7.centos.noarch.rpm
-- http://mirror.centos.org/centos/7/extras/x86_64/Packages/centos-release-scl-rh-2-2.el7.centos.noarch.rpm
-
-Install python 3.5.
-
-```
-% yum install \
-  rh-python35-python-pip-7.1.0-2.el7.noarch \
-  rh-python35-python-libs-3.5.1-11.el7.x86_64 \
-  rh-python35-python-setuptools-18.0.1-2.el7.noarch \
-  rh-python35-python-devel-3.5.1-11.el7.x86_64 \
-  rh-python35-runtime-2.0-2.el7.x86_64 \
-  rh-python35-python-3.5.1-11.el7.x86_64 \
-  rh-python35-python-virtualenv-13.1.2-2.el7.noarch
-```
-
-Create virtualenv and update packages.
-
-```
-$ scl enable rh-python35 bash
+$ scl enable rh-python35 devtoolset-8 rh-git29 bash
 $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
@@ -74,34 +43,11 @@ $ source ~/.virtualenvs/tmp/bin/activate
 
 ### Build source code
 
-Install devtoolset.
+Build tensorflow with scl and virtualenv.
 
 ```
-% yum install devtoolset-8
-```
-
-Work in the virtualenv as below
-
-```
-$ scl enable rh-python35 devtoolset-8 bash
+$ scl enable rh-python35 devtoolset-8 rh-git29 bash
 $ source ~/.virtualenvs/tmp/bin/activate
-```
-
-You can check version as below.
-
-```
-(tmp)$ python --version
-Python 3.5.1
-(tmp)$ gcc --version
-gcc (GCC) 8.2.1 20180905 (Red Hat 8.2.1-3)
-Copyright (C) 2018 Free Software Foundation, Inc.
-This is free software; see the source for copying conditions.  There is NO
-warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-```
-
-Build tensorflow.
-
-```
 (tmp)% ./configure # answer N for all questions. You can probably ignore an error on getsitepackages.
 (tmp)% bazel build --config=ve --config=opt //tensorflow/tools/pip_package:build_pip_package
 (tmp)% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
