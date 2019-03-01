@@ -128,17 +128,9 @@ class MklConvFwdPrimitive : public MklPrimitive {
     context_.dst_mem->set_data_handle(
         static_cast<void*>(const_cast<Toutput*>(dst_data)));
 
-#ifdef STOPWATCH
-int64 start_time,end_time;
-start_time = Env::Default()->NowMicros();
-#endif
 
     context_.fwd_stream->submit(context_.fwd_primitives);
 
-#ifdef STOPWATCH
-end_time = Env::Default()->NowMicros();
-fprintf (stderr, "submit(context_.fwd_primitives): %lld us\n", end_time-start_time);
-#endif
 
     // After exec, set data handle back
     context_.src_mem->set_data_handle(DummyData);
@@ -930,10 +922,6 @@ class MklConvOp : public OpKernel {
       // Input tensors
       const Tensor& src_tensor = MklGetInput(context, kInputIndex_Src);
       const Tensor& filter_tensor = MklGetInput(context, kInputIndex_Filter);
-#ifdef STOPWATCH
-int64 start_time,end_time;
-start_time = Env::Default()->NowMicros();
-#endif
 
 
       // Data from persistent (cached) filter tensor
@@ -1153,10 +1141,6 @@ start_time = Env::Default()->NowMicros();
       } else {
         conv_fwd->Execute(src_data, filter_data, dst_data);
       }
-#ifdef STOPWATCH
-end_time = Env::Default()->NowMicros();
-fprintf (stderr, "MklConv2DOp Compute: %lld us\n", end_time-start_time);
-#endif
 
       // Delete primitive since it is not cached.
       if (do_not_cache) delete conv_fwd;

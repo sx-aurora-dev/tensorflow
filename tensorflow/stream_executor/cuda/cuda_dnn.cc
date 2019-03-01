@@ -2779,17 +2779,6 @@ port::Status CudnnSupport::DoConvolve(
       return port::Status(port::error::INTERNAL, "Failed to start timer");
     }
   }
-#ifdef STOPWATCH
-  else {
-    timer.reset(new CUDATimer(parent_));  // NOLINT
-    // The start and stop of the timer should be as close to the Cudnn call as
-    // possible. It is still possible for other threads to issue workload on
-    // to this stream. So it could take multiple profiling measurements.
-    if (!timer->Init() || !timer->Start(AsCUDAStream(stream))) {
-      return port::Status(port::error::INTERNAL, "Failed to start timer");
-    }
-  }
-#endif
 
   const auto get_fwd_bugs = [&]() -> port::Status {
     // Report an error if we might be hitting a cuDNN bug that accesses illegal
@@ -2990,17 +2979,6 @@ port::Status CudnnSupport::DoConvolve(
                           accumulator_type, dnn::ActivationMode::kNone),
         output_profile_result->elapsed_time_in_ms(), stream->parent());
   }
-#ifdef STOPWATCH
-  else {
-    if (!timer->Stop(AsCUDAStream(stream))) {
-      return port::Status(port::error::INTERNAL, "Failed to stop timer");
-    }
-
-    fprintf (stderr, " + cudnnConvolutionForward: %6.0f us, in: %s, flt:%s, out:%s\n",
-           timer->GetElapsedMilliseconds() * 1000, input_descriptor.ToShortString().c_str(),
-           filter_descriptor.ToShortString().c_str(), output_descriptor.ToShortString().c_str());
-  }
-#endif
 
   return port::Status::OK();
 }
@@ -3862,13 +3840,6 @@ bool CudnnSupport::DoPoolForward(
 
   auto cudnn = cudnn_->GetHandle(parent_, stream);
 
-#ifdef STOPWATCH
-  std::unique_ptr<CUDATimer, TimerDeleter> timer;
-  timer.reset(new CUDATimer(parent_)); 
-  if (!timer->Init() || !timer->Start(AsCUDAStream(stream))) {
-    return false;
-  }
-#endif
 
   const auto status = [&] {
     RETURN_IF_CUDNN_ERROR(cudnnPoolingForward(
@@ -3876,16 +3847,6 @@ bool CudnnSupport::DoPoolForward(
         input_data.opaque(), &beta, dest_desc.handle(), output_data->opaque()));
     return port::Status::OK();
   }();
-
-#ifdef STOPWATCH
-    if (!timer->Stop(AsCUDAStream(stream))) {
-      return false;
-    }
-
-    fprintf (stderr, " + cudnnPoolingForward: %6.0f us, in: %s, out:%s\n",
-           timer->GetElapsedMilliseconds() * 1000, input_dimensions.ToShortString().c_str(),
-           output_dimensions.ToShortString().c_str());
-#endif
 
   return IsStatusOk(status, /*report_error=*/true);
 }
@@ -3990,14 +3951,6 @@ bool CudnnSupport::DoPoolBackward(
 
   auto cudnn = cudnn_->GetHandle(parent_, stream);
 
-#ifdef STOPWATCH
-  std::unique_ptr<CUDATimer, TimerDeleter> timer;
-  timer.reset(new CUDATimer(parent_)); 
-  if (!timer->Init() || !timer->Start(AsCUDAStream(stream))) {
-    return false;
-  }
-#endif
-
   const auto status = [&] {
     RETURN_IF_CUDNN_ERROR(cudnnPoolingBackward(
         cudnn.handle(), pooling_desc.handle(), &alpha, dest_desc.handle(),
@@ -4006,16 +3959,6 @@ bool CudnnSupport::DoPoolBackward(
         output_diff_data->opaque()));
     return port::Status::OK();
   }();
-
-#ifdef STOPWATCH
-    if (!timer->Stop(AsCUDAStream(stream))) {
-      return false;
-    }
-
-    fprintf (stderr, " + cudnnPoolingBackward: %6.0f us, in: %s, out:%s\n",
-           timer->GetElapsedMilliseconds() * 1000, input_dimensions.ToShortString().c_str(),
-           output_dimensions.ToShortString().c_str());
-#endif
 
   return IsStatusOk(status, /*report_error=*/true);
 }
