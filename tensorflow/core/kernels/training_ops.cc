@@ -602,6 +602,78 @@ TF_CALL_double(REGISTER_SYCL_KERNELS);
 #undef REGISTER_CPU_KERNELS
 #undef REGISTER_KERNELS
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VEApplyGradientDescentOp : public OpKernel {
+ public:
+  explicit VEApplyGradientDescentOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const bool sparse = false;
+    auto locks = VEMaybeLockVariableInputMutexesInOrder<T>(
+        ctx, use_exclusive_lock_, sparse, {0});
+    Tensor var;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 0, use_exclusive_lock_, sparse, &var));
+
+    OP_REQUIRES(
+        ctx, var.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(0)));
+    const Tensor& alpha = ctx->input(1);
+    OP_REQUIRES(ctx, IsLegacyScalar(alpha.shape()),
+                errors::InvalidArgument("alpha is not a scalar: ",
+                                        alpha.shape().DebugString()));
+    const Tensor& delta = ctx->input(2);
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(delta.shape()),
+        errors::InvalidArgument("var and delta do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                delta.shape().DebugString()));
+
+    struct {
+      int dtype;
+      int64_t num_elements ;
+      uint64_t var_ptr, delta_ptr ;
+      uint64_t alpha_ptr ;
+    } args;
+
+    args.dtype = var.dtype() ;
+    args.num_elements = var.NumElements() ;
+    args.var_ptr = (uint64_t) DMAHelper::base(&var) ;
+    args.delta_ptr = (uint64_t) DMAHelper::base(&delta) ;
+    args.alpha_ptr  = (uint64_t) DMAHelper::base(&alpha) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("ApplyGradientDescent", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+
+    MaybeForwardRefInputToRefOutput(ctx, 0, 0);
+  }
+
+ private:
+  bool use_exclusive_lock_;
+};
+
+#define REGISTER_VE_KERNELS(T)                                               \
+  REGISTER_KERNEL_BUILDER(                                                   \
+      Name("ApplyGradientDescent").Device(DEVICE_VE).TypeConstraint<T>("T"), \
+      VEApplyGradientDescentOp<T>);                                          \
+  REGISTER_KERNEL_BUILDER(Name("ResourceApplyGradientDescent")               \
+                              .Device(DEVICE_VE)                             \
+                              .HostMemory("var")                             \
+                              .TypeConstraint<T>("T"),                       \
+                          VEApplyGradientDescentOp<T>);
+REGISTER_VE_KERNELS(float);
+REGISTER_VE_KERNELS(double);
+#undef REGISTER_VE_KERNELS
+
+#endif // TENSORFLOW_USE_VE
+
+
 template <typename Device, typename T>
 class ApplyAdadeltaOp : public OpKernel {
  public:
