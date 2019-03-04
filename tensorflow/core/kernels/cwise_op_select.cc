@@ -209,10 +209,10 @@ class VESelectOp : public VEOpKernel {
               {"t", "e"}, "output", then->shape(), &output));
       if (output->NumElements() > 0) {
         ArgsImpl<> args;
-        args.addTensor(*cond);
-        args.addTensor(*then);
-        args.addTensor(*else_);
-        args.addTensor(*output);
+        args.addArg<Tensor>(*cond);
+        args.addArg<Tensor>(*then);
+        args.addArg<Tensor>(*else_);
+        args.addArg<Tensor>(*output);
 
         Call(ctx, "Select", args);
       }

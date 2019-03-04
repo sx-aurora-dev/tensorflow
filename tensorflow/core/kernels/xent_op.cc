@@ -208,11 +208,11 @@ class VESoftmaxXentWithLogitsOp : public VEOpKernel {
     if (shape_in.dim_size(0) > 0) {
 
       ArgsImpl<> Args = ArgsImpl<>() ;
-      Args.addTensor(logits_in) ;
-      Args.addTensor(labels_in) ;
-      Args.addTensor(scratch) ;
-      Args.addTensor(*loss_out) ;
-      Args.addTensor(*back_out) ;
+      Args.addArg<Tensor>(logits_in) ;
+      Args.addArg<Tensor>(labels_in) ;
+      Args.addArg<Tensor>(scratch) ;
+      Args.addArg<Tensor>(*loss_out) ;
+      Args.addArg<Tensor>(*back_out) ;
 
       Call(context, "SoftmaxXentWithLogits", Args);
     }

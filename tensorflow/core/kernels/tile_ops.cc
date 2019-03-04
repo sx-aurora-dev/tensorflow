@@ -638,8 +638,8 @@ void TileOp<VEDevice, int32>::HandleCase<DataTypeToEnum<float>::value>(
   const Tensor& input = context->input(0);
 
   VEOpKernelHelper::ArgsImpl<> args;
-  args.addTensor(input);
-  args.addTensor(*result);
+  args.addArg<Tensor>(input);
+  args.addArg<Tensor>(*result);
 
   VEOpKernelHelper::Call(context, "Tile", args);
 }

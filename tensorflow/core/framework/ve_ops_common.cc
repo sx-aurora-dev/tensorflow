@@ -35,16 +35,38 @@ Status _Tensor::init(const Tensor& t) {
 
 } // namespace
 
-Status VEOpKernelHelper::Args::addTensor(const Tensor& t) {
-  _Tensor* p = reinterpret_cast<_Tensor*>(curr_);
-  size_t size = _Tensor::size(t.dims());
-  if (curr_ + size >= end_)
+template<typename T>
+Status VEOpKernelHelper::Args::addArg(const T& v) {
+  size_t size = sizeof(T) ;
+  if (curr_ + sizeof(size_t) + size >= end_)
     return errors::Internal("buffer is too small");
 
-  p->init(t);
+  *reinterpret_cast<size_t*>(curr_) = size ;
+  curr_ += sizeof(size_t) ;
 
+  *reinterpret_cast<T*>(curr_) = v ;
   curr_ += size;
-  ++pHeader_->nTensors;
+
+  ++pHeader_->nVariables;
+
+  return Status::OK();
+}
+
+template<>
+Status VEOpKernelHelper::Args::addArg<Tensor>(const Tensor& t) {
+
+  size_t size = _Tensor::size(t.dims());
+  if (curr_ + sizeof(size_t) + size >= end_)
+    return errors::Internal("buffer is too small");
+
+  *reinterpret_cast<size_t*>(curr_) = size ;
+  curr_ += sizeof(size_t) ;
+
+  _Tensor* p = reinterpret_cast<_Tensor*>(curr_);
+  p->init(t);
+  curr_ += size;
+
+  ++pHeader_->nVariables;
 
   return Status::OK();
 }
@@ -59,6 +81,8 @@ void VEOpKernelHelper::Call(OpKernelContext* context,
   if (!s.ok())
     context->SetStatus(s);
 }
+
+template Status VEOpKernelHelper::Args::addArg<bool>(const bool& i) ;
 
 }; // namespace tensorflow
 

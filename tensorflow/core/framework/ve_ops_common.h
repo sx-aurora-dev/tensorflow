@@ -17,10 +17,11 @@ class VEOpKernelHelper {
           curr_ = reinterpret_cast<uintptr_t>(buf_) + sizeof(Header);
           end_ = reinterpret_cast<uintptr_t>(buf_) + size;
           pHeader_ = reinterpret_cast<Header*>(buf_);
-          pHeader_->nTensors = 0;
+          pHeader_->nVariables = 0;
         }
 
-        Status addTensor(const Tensor& t);
+        template<typename T>
+        Status addArg(const T& v) ;
 
         const void* buf() const { return buf_; }
         size_t size() const { return curr_ - reinterpret_cast<uintptr_t>(buf_); }
@@ -30,7 +31,7 @@ class VEOpKernelHelper {
         uintptr_t curr_;
         uintptr_t end_;
         struct Header {
-          int64_t nTensors;
+          int64_t nVariables;
         };
         Header* pHeader_;
     };
@@ -42,12 +43,12 @@ class VEOpKernelHelper {
 
           // shortcuts
           ArgsImpl(const Tensor& t0) : Args(buf_, MAX_BUF_SIZE) {
-            addTensor(t0);
+            addArg<Tensor>(t0);
           }
 
           ArgsImpl(const Tensor& t0, const Tensor& t1) : Args(buf_, MAX_BUF_SIZE) {
-            addTensor(t0);
-            addTensor(t1);
+            addArg<Tensor>(t0);
+            addArg<Tensor>(t1);
           }
 
         private:
