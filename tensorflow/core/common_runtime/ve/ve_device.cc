@@ -15,6 +15,12 @@
 
 #define LOCK_VEO2
 
+#define USE_DMA
+#ifdef USE_DMA
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#endif
+
 namespace tensorflow {
 
 namespace {
@@ -103,9 +109,42 @@ class VEO {
       int rc;
       if (isTracerEnabled()) {
         uint64_t start = Env::Default()->NowMicros();
+        //uint64_t t_memcpy = 0;
+#ifdef USE_DMA
+        if (dma_available_ && len > 1024*1024) {
+          //VLOG(0) << "VEO::write_mem: dma 1";
+          mutex_lock guard(dma_lock_);
+          //VLOG(0) << "VEO::write_mem: dma 2";
+
+          assert(len < 256 * 1024 * 1024);
+          struct {
+            uint64_t size;
+            uint64_t vevma;
+          } tmp;
+          tmp.size = len;
+          tmp.vevma = ve_addr;
+          Args a;
+          a.set(&tmp, sizeof(tmp));
+
+          //uint64_t ss = Env::Default()->NowMicros();
+          memcpy(shmptr_, vh_buff, len);
+          //uint64_t ee = Env::Default()->NowMicros();
+          //t_memcpy = ee - ss;
+          //VLOG(0) << "VEO::write_mem: dma 3";
+          Status s = call_and_wait(sym_write_mem_, a);
+          //VLOG(0) << "VEO::write_mem: dma 4";
+          if (!s.ok())
+            return s;
+          rc = 0;
+        } else {
+          rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
+        }
+#else
         rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
+#endif
         uint64_t end = Env::Default()->NowMicros();
         callbackTracer(start, end, 0); // 0: HtoD
+        //VLOG(0) << "VEO::write_mem: len=" << len << " time(us)=" << (end - start) << " memcpy=" << t_memcpy;
       } else
         rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
 
@@ -235,6 +274,16 @@ class VEO {
     uint64_t sym_get_timestamp_;
     cb_t cb_;
     void* cb_data_;
+
+#ifdef USE_DMA
+    uint64_t dma_threshold_;
+    bool dma_available_;
+    mutex dma_lock_;
+    uint64_t sym_write_mem_;
+    void* shmptr_;
+
+    Status init_dma(veo_proc_handle* proc, uint64_t lib_id);
+#endif
 };
 
 #ifdef LOCK_VEO2
@@ -589,6 +638,72 @@ Status load_kernel_syms(struct veo_proc_handle* proc,
   return Status::OK();
 }
 
+#ifdef USE_DMA
+Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
+{
+  size_t size = 256 * 1024 * 1024;
+  if (const char* tmp = getenv("TF_DMA_BUF_SIZE")) {
+    size = atoi(tmp);
+  }
+
+  VLOG(2) << "VEO::init: buffer size for DMA is " << size
+    << " bytes. Can be changed by TF_DMA_BUF_SIZE";
+
+  if (size == 0) {
+    VLOG(2) << "VEO::init: DMA is disable by a user";
+    dma_available_ = false;
+    return Status::OK();
+  }
+
+  int shmid = shmget(IPC_PRIVATE, size, SHM_HUGETLB | IPC_CREAT | IPC_EXCL | 0600);
+  VLOG(2) << "VEO::init: shmid=" << shmid;
+  if (shmid == -1) {
+    // when hugetable is not enabled, DMA is not avaiable
+    // To enable hugetable, `echo 1024 > /proc/sys/vm/nr_hugepages`
+    VLOG(2) << "VEO:init: DMA is not avaiable";
+    dma_available_ = false;
+    return Status::OK();
+  }
+  dma_available_ = true;
+
+  shmptr_ = shmat(shmid, NULL, 0);
+  if (shmptr_ == (void*)-1) {
+    return errors::Internal("shmat failed");
+  }
+
+  if (shmctl(shmid, IPC_RMID, NULL) != 0) {
+    return errors::Internal("shmctl failed");
+  }
+
+  dma_threshold_ = 1 * 1024 * 1024; // 1MB
+  if (const char* tmp = getenv("TF_DMA_THRESHOLD")) {
+    dma_threshold_ = atoi(tmp);
+  }
+
+  VLOG(2) << "VEO::init: dma_threshold is " << dma_threshold_ 
+    << " bytes. Can be changed by TF_DMA_THRESHOLD"; 
+
+  sym_write_mem_ = veo_get_sym(proc, lib_id, "vetfkl_write_mem");
+  uint64_t sym_init_dma = veo_get_sym(proc, lib_id, "vetfkl_init_dma");
+
+  VLOG(2) << "VEO:init:: sym_write_mem_=" << sym_write_mem_;
+  VLOG(2) << "VEO:init:: sym_init_dma=" << sym_init_dma;
+
+  struct {
+    int32_t shmid;
+    uint64_t size;
+  } tmp;
+
+  tmp.shmid = shmid;
+  tmp.size = size;
+
+  Args a;
+  a.set(&tmp, sizeof(tmp));
+
+  return call_and_wait(sym_init_dma, a);
+}
+#endif // USE_DMA
+
 Status VEO::init(int nodeid) {
 #if 0
   VLOG(2) << "VEO::init: pid=" << getpid() << " tid=" << syscall(SYS_gettid);
@@ -628,6 +743,14 @@ Status VEO::init(int nodeid) {
   if (sym_get_timestamp_ == 0)
     return errors::Internal("Failed to veo_get_sym for vetfkl_get_timestamp");
 
+#ifdef USE_DMA
+  {
+    Status s = init_dma(proc_, lib_id);
+    if (!s.ok())
+      return s;
+  }
+#endif
+
   return load_kernel_syms(proc_, ctx_, lib_id, kernel_map_);
 }
 
@@ -635,6 +758,9 @@ VEO::~VEO() {
   VLOG(2) << "VEO::~VEO";
   veo_context_close(ctx_);
   veo_proc_destroy(proc_);
+#ifdef USE_DMS
+  shmdt(shmptr_);
+#endif
 }
 
 class VEMemAllocator : public SubAllocator {
