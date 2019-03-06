@@ -107,46 +107,54 @@ class VEO {
 
     virtual Status write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
       int rc;
+      uint64_t start = 0, end = 0; // initialize to suppress warning
+      //uint64_t start0 = Env::Default()->NowMicros();
+
+      bool useDMA = false;
+#ifdef USE_DMA
+      if (dma_.available && len <= dma_.bufsize && len >= dma_.threshold) {
+        mutex_lock guard(dma_.lock);
+        if (isTracerEnabled())
+          start = Env::Default()->NowMicros();
+        //start0 = Env::Default()->NowMicros();
+        useDMA = true;
+
+        assert(len < 256 * 1024 * 1024);
+        struct {
+          uint64_t size;
+          uint64_t vevma;
+        } tmp;
+        tmp.size = len;
+        tmp.vevma = ve_addr;
+        Args a(&tmp, sizeof(tmp));
+
+        memcpy(dma_.shmptr, vh_buff, len);
+        Status s = call_and_wait(dma_.sym_dma_read, a);
+        if (!s.ok())
+          return s;
+        rc = 0;
+      } else {
+        if (isTracerEnabled())
+          start = Env::Default()->NowMicros();
+        rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
+      }
+
+      if (isTracerEnabled()) {
+        end = Env::Default()->NowMicros();
+        callbackTracer(start, end, 0); // 0: HtoD
+      }
+#else
       if (isTracerEnabled()) {
         uint64_t start = Env::Default()->NowMicros();
-        //uint64_t t_memcpy = 0;
-#ifdef USE_DMA
-        if (dma_available_ && len > 1024*1024) {
-          //VLOG(0) << "VEO::write_mem: dma 1";
-          mutex_lock guard(dma_lock_);
-          //VLOG(0) << "VEO::write_mem: dma 2";
-
-          assert(len < 256 * 1024 * 1024);
-          struct {
-            uint64_t size;
-            uint64_t vevma;
-          } tmp;
-          tmp.size = len;
-          tmp.vevma = ve_addr;
-          Args a;
-          a.set(&tmp, sizeof(tmp));
-
-          //uint64_t ss = Env::Default()->NowMicros();
-          memcpy(shmptr_, vh_buff, len);
-          //uint64_t ee = Env::Default()->NowMicros();
-          //t_memcpy = ee - ss;
-          //VLOG(0) << "VEO::write_mem: dma 3";
-          Status s = call_and_wait(sym_write_mem_, a);
-          //VLOG(0) << "VEO::write_mem: dma 4";
-          if (!s.ok())
-            return s;
-          rc = 0;
-        } else {
-          rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
-        }
-#else
         rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
-#endif
         uint64_t end = Env::Default()->NowMicros();
         callbackTracer(start, end, 0); // 0: HtoD
-        //VLOG(0) << "VEO::write_mem: len=" << len << " time(us)=" << (end - start) << " memcpy=" << t_memcpy;
       } else
         rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
+#endif
+
+      //uint64_t end0 = Env::Default()->NowMicros();
+      //VLOG(0) << "VEO::write_mem: len=" << len << " time(us)=" << (end0 - start0) << " useDMA=" << useDMA;
 
       if (rc == 0)
         return Status::OK();
@@ -276,11 +284,14 @@ class VEO {
     void* cb_data_;
 
 #ifdef USE_DMA
-    uint64_t dma_threshold_;
-    bool dma_available_;
-    mutex dma_lock_;
-    uint64_t sym_write_mem_;
-    void* shmptr_;
+    struct {
+      bool available;
+      size_t bufsize;
+      uint64_t threshold;
+      mutex lock;
+      uint64_t sym_dma_read;
+      void* shmptr;
+    } dma_;
 
     Status init_dma(veo_proc_handle* proc, uint64_t lib_id);
 #endif
@@ -645,29 +656,31 @@ Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
   if (const char* tmp = getenv("TF_DMA_BUF_SIZE")) {
     size = atoi(tmp);
   }
+  dma_.bufsize = size;
 
   VLOG(2) << "VEO::init: buffer size for DMA is " << size
     << " bytes. Can be changed by TF_DMA_BUF_SIZE";
 
   if (size == 0) {
-    VLOG(2) << "VEO::init: DMA is disable by a user";
-    dma_available_ = false;
+    VLOG(2) << "VEO::init: DMA is disabled by a user";
+    dma_.available = false;
     return Status::OK();
   }
 
+  // VE DMA uses hugetable.
+  // To enable hugetable, `echo 1024 > /proc/sys/vm/nr_hugepages`
   int shmid = shmget(IPC_PRIVATE, size, SHM_HUGETLB | IPC_CREAT | IPC_EXCL | 0600);
   VLOG(2) << "VEO::init: shmid=" << shmid;
   if (shmid == -1) {
-    // when hugetable is not enabled, DMA is not avaiable
-    // To enable hugetable, `echo 1024 > /proc/sys/vm/nr_hugepages`
+    // When hugetable is not available, DMA is disabled.
     VLOG(2) << "VEO:init: DMA is not avaiable";
-    dma_available_ = false;
+    dma_.available = false;
     return Status::OK();
   }
-  dma_available_ = true;
+  dma_.available = true;
 
-  shmptr_ = shmat(shmid, NULL, 0);
-  if (shmptr_ == (void*)-1) {
+  dma_.shmptr = shmat(shmid, NULL, 0);
+  if (dma_.shmptr == (void*)-1) {
     return errors::Internal("shmat failed");
   }
 
@@ -675,19 +688,21 @@ Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
     return errors::Internal("shmctl failed");
   }
 
-  dma_threshold_ = 1 * 1024 * 1024; // 1MB
+  dma_.threshold = 256 * 1024;
   if (const char* tmp = getenv("TF_DMA_THRESHOLD")) {
-    dma_threshold_ = atoi(tmp);
+    dma_.threshold = atoi(tmp);
   }
 
-  VLOG(2) << "VEO::init: dma_threshold is " << dma_threshold_ 
+  VLOG(2) << "VEO::init: dma_threshold is " << dma_.threshold 
     << " bytes. Can be changed by TF_DMA_THRESHOLD"; 
 
-  sym_write_mem_ = veo_get_sym(proc, lib_id, "vetfkl_write_mem");
-  uint64_t sym_init_dma = veo_get_sym(proc, lib_id, "vetfkl_init_dma");
+  dma_.sym_dma_read = veo_get_sym(proc, lib_id, "vetfkl_dma_read");
 
-  VLOG(2) << "VEO:init:: sym_write_mem_=" << sym_write_mem_;
-  VLOG(2) << "VEO:init:: sym_init_dma=" << sym_init_dma;
+  // call init_dma on VE
+  uint64_t sym_dma_init = veo_get_sym(proc, lib_id, "vetfkl_dma_init");
+
+  VLOG(2) << "VEO:init:: sym_dma_read=" << dma_.sym_dma_read;
+  VLOG(2) << "VEO:init:: sym_dma_init=" << sym_dma_init;
 
   struct {
     int32_t shmid;
@@ -697,10 +712,8 @@ Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
   tmp.shmid = shmid;
   tmp.size = size;
 
-  Args a;
-  a.set(&tmp, sizeof(tmp));
-
-  return call_and_wait(sym_init_dma, a);
+  Args a(&tmp, sizeof(tmp));
+  return call_and_wait(sym_dma_init, a);
 }
 #endif // USE_DMA
 
