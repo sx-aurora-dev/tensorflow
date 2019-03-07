@@ -110,14 +110,14 @@ class VEO {
       uint64_t start = 0, end = 0; // initialize to suppress warning
       //uint64_t start0 = Env::Default()->NowMicros();
 
-      bool useDMA = false;
+      //bool useDMA = false;
 #ifdef USE_DMA
       if (dma_.available && len <= dma_.bufsize && len >= dma_.threshold) {
         mutex_lock guard(dma_.lock);
+        //VLOG(2) << "VEO::write_mem: after dma lock";
         if (isTracerEnabled())
           start = Env::Default()->NowMicros();
-        //start0 = Env::Default()->NowMicros();
-        useDMA = true;
+        //start0 = Env::Default()->NowMicros(); useDMA = true;
 
         assert(len < 256 * 1024 * 1024);
         struct {
@@ -446,6 +446,7 @@ class VEOAsync : public VEOLock
     }
 
     virtual Status write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) override {
+      //VLOG(2) << "VEOAsync::write_mem";
       Status s = sync();
       if (!s.ok())
         return s;
@@ -1044,13 +1045,15 @@ void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device
   const void* in = DMAHelper::base(cpu_tensor);
   void* out = DMAHelper::base(device_tensor);
 
-  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: in=" << in << " out=" << out;
+  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: in=" << in
+    << " out=" << out << " size=" << cpu_tensor->TotalBytes();
 #if 0
   VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: proc_pid_=" << getpid() << " tid=" << syscall(SYS_gettid);
 #endif
 
   Status s = veo_->write_mem((uint64_t)out, in, cpu_tensor->TotalBytes());
   done(s);
+  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: done";
 }
 
 void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,

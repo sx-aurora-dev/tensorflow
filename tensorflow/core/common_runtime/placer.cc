@@ -38,10 +38,6 @@ limitations under the License.
 #include "tensorflow/core/util/dump_graph.h"
 #include "tensorflow/core/util/port.h"
 
-#ifdef DEBUG_VE
-#include <string>
-#endif
-
 namespace tensorflow {
 
 namespace {
@@ -179,9 +175,6 @@ Status Placer::Run() {
 
     // Provide the default, if necessary.
     if (assigned_device == -1) {
-#ifdef DEBUG_VE
-      VLOG(2) << "Assigne default device: " << (*devices)[0]->name() << " devices.size=" << devices->size();
-#endif
       assigned_device = graph_->InternDeviceName((*devices)[0]->name());
     }
 
