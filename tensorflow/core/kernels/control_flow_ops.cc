@@ -231,9 +231,6 @@ MergeOp::MergeOp(OpKernelConstruction* context) : OpKernel(context) {
 }
 
 void MergeOp::Compute(OpKernelContext* context) {
-#ifdef DEBUG_VE
-  VLOG(2) << __PRETTY_FUNCTION__;
-#endif
   bool input_seen = false;
   for (int i = 0; i < context->num_inputs(); ++i) {
     if (context->has_input(i)) {
@@ -255,9 +252,6 @@ void MergeOp::Compute(OpKernelContext* context) {
       value_index->scalar<int32>()() = i;
     }
   }
-#ifdef DEBUG_VE
-  VLOG(2) << __PRETTY_FUNCTION__ << " done";
-#endif
 }
 
 REGISTER_KERNEL_BUILDER(Name("Merge").Device(DEVICE_CPU), MergeOp);

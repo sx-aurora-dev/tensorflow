@@ -86,7 +86,7 @@ void LogMessage::GenerateLogMessage() {
   strftime(time_buffer, time_buffer_size, "%Y-%m-%d %H:%M:%S",
            localtime(&now_seconds));
 
-#ifdef DEBUG_VE
+#ifdef TENSORFLOW_USE_VE
   fprintf(stderr, "%s.%06d: %c %s:%d] %08lx %s\n", time_buffer, micros_remainder,
           "IWEF"[severity_], fname_, line_, pthread_self(), str().c_str());
 #else

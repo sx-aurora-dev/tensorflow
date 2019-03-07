@@ -102,7 +102,7 @@ build --define=LIBDIR=$(PREFIX)/lib
 build --define=INCLUDEDIR=$(PREFIX)/include
 
 # Enable VectorEngine
-build:ve --copt=-DTENSORFLOW_USE_VE --copt=-DDEBUG_VE --define=using_ve=true
+build:ve --copt=-DTENSORFLOW_USE_VE --copt=-DDEVICE_ASSIGN_LOG --define=using_ve=true
 
 # Default options should come above this line
 
