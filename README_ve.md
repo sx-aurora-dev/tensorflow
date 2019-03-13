@@ -2,14 +2,25 @@
 
 We have tested on CentOS 7.5 and:
 
-- ncc/nc++: 2.0.8
-- llvm: a47a7dea63d3d654795d28daa2fdbf1d885ceca6
-- clang: 580c9d41f8b253c1cb2011461683c91d1e4d3d2e
-- veos: 2.0.1 (installed from https://sx-aurora.github.io/posts/VEOS-yum-repository)
-- veoffload: 2.0.0 (installed from https://sx-aurora.github.io/posts/VEOS-yum-repository)
+- ncc/nc++: 2.1.24
+- llvm: 8f59d33af8df96e611d03aadf44197fd9daf4ddc
+- clang: 1ee1b45d097dac40bdaa19e565ed609e72567567
+- veos: 2.0.3
+- veoffload: 2.0.3
 - bazel: 0.19.2
 
+We have installed VEOS and veoffload using [VEOS yum Repository on the
+Web](https://sx-aurora.github.io/posts/VEOS-yum-repository/).
+
 ## Setup
+
+## Enable Huge Page for DMA
+
+If huge page is enabled on VH, data is transfered using [VE
+DMA](https://veos-sxarr-nec.github.io/libsysve/group__vedma.html).  Here is an
+example to enable huge pages.
+
+    % echo 1024 > /proc/sys/vm/nr_hugepages
 
 ### Install required packages
 
@@ -17,9 +28,6 @@ We have tested on CentOS 7.5 and:
 % yum install centos-releas-scl
 % yum install rh-python35 devtoolset-8 rh-git29 veoffload-devel veoffload-veorun-devel
 ```
-
-Note that veoffload-devel and veoffload-veorun-devel are included veos software
-packages, or provided above yum repository.
 
 Install bazel-0.19.2.
 
@@ -53,7 +61,7 @@ $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
 ```
 
-You can see tensorflow package in current direcotry.
+You can see a tensorflow package in current direcotry.
 
 Build keras.
 
@@ -61,7 +69,7 @@ Build keras.
 (tmp)% python setup.py bdist_wheel
 ```
 
-You can find package in `dist` directory.
+You can find a package in `dist` directory.
 
 ### Install packages 
 
