@@ -772,8 +772,8 @@ VEO::~VEO() {
   VLOG(2) << "VEO::~VEO";
   veo_context_close(ctx_);
   veo_proc_destroy(proc_);
-#ifdef USE_DMS
-  shmdt(shmptr_);
+#ifdef USE_DMA
+  shmdt(dma_.shmptr);
 #endif
 }
 
@@ -1063,6 +1063,9 @@ void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, Str
 
   const void* in = DMAHelper::base(device_tensor);
   void* out = DMAHelper::base(cpu_tensor);
+
+  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: in=" << in
+    << " out=" << out << " size=" << device_tensor->TotalBytes();
 
   Status s = veo_->read_mem(out, (uint64_t)in, device_tensor->TotalBytes());
   done(s);
