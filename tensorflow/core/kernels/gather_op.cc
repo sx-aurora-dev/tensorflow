@@ -26,6 +26,10 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/util.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -166,5 +170,127 @@ TF_CALL_complex128(REGISTER_GATHER_GPU);
 
 #undef REGISTER_GATHER_ALL_INDICES
 #undef REGISTER_GATHER_FULL
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T, typename Index>
+class VEGatherOp : public VEOpKernel {
+ public:
+  //   QUESTION: It'd be nice to support DT_INT16, DT_UINT8,
+  //   etc. here for the type of the second input argument.  Should
+  //   we have the framework do some sort of integer promotion
+  //   automatically, or should that be something that users have to
+  //   do explicitly with a conversion operator in the graph?
+  explicit VEGatherOp(OpKernelConstruction* c) : VEOpKernel(c) {}
+
+  void Compute(OpKernelContext* c) override {
+    const Tensor& params = c->input(0);
+    const Tensor& indices = c->input(1);
+    OP_REQUIRES(
+        c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+        errors::InvalidArgument("params must be at least 1 dimensional"));
+
+    // GatherV2 added an axis argument. For backwards compatibility with Gather,
+    // fall back to axis 0 if the op does not have an axis input.
+    int64 axis = 0;
+    if (c->num_inputs() == 3) {
+      const Tensor& axis_tensor = c->input(2);
+      OP_REQUIRES(c, TensorShapeUtils::IsScalar(axis_tensor.shape()),
+                  errors::InvalidArgument("axis must be scalar"));
+
+      if (axis_tensor.dtype() == DT_INT32) {
+        axis = axis_tensor.scalar<int32>()();
+      } else if (axis_tensor.dtype() == DT_INT64) {
+        axis = axis_tensor.scalar<int64>()();
+      } else {
+        OP_REQUIRES(c, false,
+                    errors::InvalidArgument("axis must be int32 or int64."));
+      }
+    }
+
+    OP_REQUIRES(
+        c, axis >= -params.dims() && axis < params.dims(),
+        errors::InvalidArgument("Expected axis in the range [", -params.dims(),
+                                ", ", params.dims(), "), but got ", axis));
+    if (axis < 0) {
+      axis = params.dims() + axis;
+    }
+
+    // Check that we have enough index space
+    const int64 gather_dim_size = params.dim_size(axis);
+    const int64 N = indices.NumElements();
+    OP_REQUIRES(
+        c, gather_dim_size <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("params.shape[", axis, "] too large for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", gather_dim_size, " > ",
+                                std::numeric_limits<Index>::max()));
+
+    // The result shape is params.shape[0:axis] + indices.shape +
+    // params.shape[axis + 1:].
+    TensorShape result_shape;
+    int64 outer_size = 1;
+    int64 inner_size = 1;
+    for (int i = 0; i < axis; i++) {
+      result_shape.AddDim(params.dim_size(i));
+      outer_size *= params.dim_size(i);
+    }
+    result_shape.AppendShape(indices.shape());
+    for (int i = axis + 1; i < params.dims(); i++) {
+      result_shape.AddDim(params.dim_size(i));
+      inner_size *= params.dim_size(i);
+    }
+
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(c, c->allocate_output(0, result_shape, &out));
+    if (N > 0 && outer_size > 0 && inner_size > 0) {
+
+      functor::VEGatherFunctor<T, Index> functor ;
+#if 0	// FIXME : check bad_i
+      int64 bad_i = functor(c, &params, &indices, out, gather_dim_size, inner_size, N) ;
+
+      OP_REQUIRES(
+          c, bad_i < 0,
+          errors::InvalidArgument(
+              "indices", SliceDebugString(indices.shape(), bad_i), " = ",
+              indices_flat(bad_i), " is not in [0, ", gather_dim_size, ")"));
+#else
+      functor(c, &params, &indices, out, gather_dim_size, inner_size, N) ;
+#endif
+    }
+  }
+};
+
+#define VE_REGISTER_GATHER_FULL(type, index_type)                      \
+  REGISTER_KERNEL_BUILDER(Name("Gather")                               \
+                              .Device(DEVICE_VE)                       \
+                              .TypeConstraint<type>("Tparams")         \
+                              .TypeConstraint<index_type>("Tindices"), \
+                          VEGatherOp<type, index_type>);               \
+  REGISTER_KERNEL_BUILDER(Name("GatherV2")                             \
+                              .Device(DEVICE_VE)                       \
+                              .TypeConstraint<type>("Tparams")         \
+                              .TypeConstraint<index_type>("Tindices")  \
+                              .HostMemory("axis"),                     \
+                          VEGatherOp<type, index_type>)
+
+#define VE_REGISTER_GATHER_ALL_INDICES(type) 	\
+  VE_REGISTER_GATHER_FULL(type, int32);    	\
+  VE_REGISTER_GATHER_FULL(type, int64)
+
+
+//TF_CALL_bool(VE_REGISTER_GATHER_ALL_INDICES);
+//TF_CALL_int32(VE_REGISTER_GATHER_ALL_INDICES);
+//TF_CALL_int64(VE_REGISTER_GATHER_ALL_INDICES);
+//TF_CALL_half(VE_REGISTER_GATHER_ALL_INDICES);
+TF_CALL_float(VE_REGISTER_GATHER_ALL_INDICES);
+TF_CALL_double(VE_REGISTER_GATHER_ALL_INDICES);
+//TF_CALL_complex64(VE_REGISTER_GATHER_ALL_INDICES);
+//TF_CALL_complex128(VE_REGISTER_GATHER_ALL_INDICES);
+
+#undef VE_REGISTER_GATHER_ALL_INDICES
+#undef VE_REGISTER_GATHER_FULL
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
