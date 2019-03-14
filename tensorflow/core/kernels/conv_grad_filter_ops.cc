@@ -1095,10 +1095,10 @@ class Conv2DVEBackpropFilterOp : public OpKernel {
                 errors::InvalidArgument("Sliding window strides field must "
                                         "specify 4 dimensions"));
     OP_REQUIRES(
-        context, (strides_[0] == 1 && strides_[3] == 1),
+        context, (strides_[0] == 1 && strides_[1] == 1),
         errors::InvalidArgument("Current implementation does not yet support "
                                 "strides in the batch and depth dimensions."));
-    OP_REQUIRES(context, strides_[1] > 0 && strides_[2] > 0,
+    OP_REQUIRES(context, strides_[2] > 0 && strides_[3] > 0,
                 errors::InvalidArgument(
                     "Row and column strides should be larger than 0."));
     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
@@ -1106,7 +1106,7 @@ class Conv2DVEBackpropFilterOp : public OpKernel {
     OP_REQUIRES(context, dilations_.size() == 4,
                 errors::InvalidArgument("Sliding window dilations field must "
                                         "specify 4 dimensions"));
-    OP_REQUIRES(context, (dilations_[0] == 1 && dilations_[3] == 1),
+    OP_REQUIRES(context, (dilations_[0] == 1 && dilations_[1] == 1),
                 errors::InvalidArgument(
                     "Current implementation does not yet support "
                     "dilations in the batch and depth dimensions."));
