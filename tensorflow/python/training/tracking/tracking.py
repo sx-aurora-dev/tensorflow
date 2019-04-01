@@ -93,7 +93,7 @@ class AutoTrackable(base.Trackable):
 
   def _list_functions_for_serialization(self):
     """Return a dict of `Function`s of a trackable."""
-    functions = dict()
+    functions = {}
     for attribute_name in dir(self):
       try:
         attribute_value = getattr(self, attribute_name, None)
@@ -165,17 +165,9 @@ class TrackableResource(base.Trackable):
     raise NotImplementedError("TrackableResource._create_resource not "
                               "implemented.")
 
-  # This method will be removed soon.
-  def create_resource(self):
-    return self._create_resource()
-
   def _initialize(self):
     """A function that initializes the resource. Optional."""
     pass
-
-  # This method will be removed soon.
-  def initialize(self):
-    return self._initialize()
 
   @property
   def resource_handle(self):
