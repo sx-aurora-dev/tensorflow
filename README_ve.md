@@ -46,7 +46,7 @@ $ scl enable rh-python35 devtoolset-8 rh-git29 bash
 $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
-(tmp)$ pip install -U six numpy wheel Keras-Preprocessing
+(tmp)$ pip install -U six numpy wheel Keras-Preprocessing setuptools
 ```
 
 ### Build source code
