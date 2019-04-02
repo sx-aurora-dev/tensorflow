@@ -304,7 +304,7 @@ Follow these steps to get the pushbutton yes/no example working on Apollo 3:
         this one second
     5.  The debugger will print out four numbers. They are the probabilites for
         1.  no speech
-        2.  unkown speech
+        2.  unknown speech
         3.  yes
         4.  no
     6.  The EVB LEDs will indicate detection.
@@ -923,7 +923,7 @@ bottlenecks, and then add specialized implementations in their own folders.
 These don't need to be platform specific, they can also be broken out by which
 library they rely on for example. [Here's where we do that for the CMSIS
 implementation of integer fast-fourier
-transforms](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/experimental/micro/examples/micro_speech/CMSIS/preprocessor.cc).
+transforms](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/experimental/micro/examples/micro_speech/simple_features/simple_features_generator.cc).
 This more complex case shows that you can also add helper source files alongside
 the main implementation, as long as you
 [mention them in the platform-specific makefile](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/experimental/micro/examples/micro_speech/CMSIS/Makefile.inc).

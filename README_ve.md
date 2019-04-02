@@ -7,7 +7,7 @@ We have tested on CentOS 7.5 and:
 - clang: 1ee1b45d097dac40bdaa19e565ed609e72567567
 - veos: 2.0.3
 - veoffload: 2.0.3
-- bazel: 0.19.2
+- bazel: 0.24.0
 
 We have installed VEOS and veoffload using [VEOS yum Repository on the
 Web](https://sx-aurora.github.io/posts/VEOS-yum-repository/).
@@ -29,12 +29,12 @@ example to enable huge pages.
 % yum install rh-python35 devtoolset-8 rh-git29 veoffload-devel veoffload-veorun-devel
 ```
 
-Install bazel-0.19.2.
+Install bazel.
 
 ```
-% wget https://vbatts.fedorapeople.org/bazel-0.19.2-1.fc28.src.rpm
-% rpmbuild --rebuild bazel-0.19.2-1.fc28.src.rpm
-% rpm -Uvh --oldpackage bazel-0.19.2-1.el7.centos.x86_64.rpm
+% cd /etc/yum.repos.d
+% wget https://copr.fedorainfracloud.org/coprs/vbatts/bazel/repo/epel-7/vbatts-bazel-epel-7.repo
+% yum install bazel
 ```
 
 ### Create virtualenv with python 3.5
@@ -74,29 +74,32 @@ You can find a package in `dist` directory.
 ### Install packages 
 
 ```
-(tmp)% pip install -U tensorflow_ve-1.12.0-cp35-cp35m-linux_x86_64.whl
+(tmp)% pip install -U tensorflow_ve-1.13.1-cp35-cp35m-linux_x86_64.whl
 (tmp)% pip install -U Keras-2.2.4-py3-none-any.whl
 ```
-
-### Install llvm
-
-llvm is used to build vetfkenel and vednn.
-Install llvm for VE from [[https://github.com/SXAuroraTSUBASAResearch/llvm]].
-
 ## Run samples
 
 Work in the virtualenv.
 
 ```
 (tmp)% cd <working directory>
+(tmp)% git clone <url of sampels> samples
+(tmp)% samples
+(tmp)% python mnist_cnn.py
+```
+
+
+## (option) Build vetfkernel and vednn
+
+llvm is used to build vetfkenel and vednn.
+Install llvm for VE from [[https://github.com/SXAuroraTSUBASAResearch/llvm]].
+
+```
+(tmp)% cd <working directory>
 (tmp)% git clone <url of vetfkernel> vetfkernel
 (tmp)% git clone <url of vednn> vetfkernel/libs/vednn
-(tmp)% git clone <url of sampels> samples
 (tmp)% cd vetfkernel
 (tmp)% (mkdir build && cd build && cmake3 .. && make)
-(tmp)% cd ../samples
-(tmp)% ln -s ../vetfkernel/build/veorun_tf veorun_tf
-(tmp)% ./run.sh keras.sample.py
 ```
 
 You can use the llvm that is installed into non-standard directory by setting

@@ -29,7 +29,7 @@ from tensorflow.python.eager import context
 from tensorflow.python.framework import errors
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import callbacks as cbks
-from tensorflow.python.keras.engine import distributed_training_utils
+from tensorflow.python.keras.distribute import distributed_training_utils
 from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.utils.generic_utils import make_batches
 from tensorflow.python.keras.utils.generic_utils import slice_arrays
@@ -279,8 +279,9 @@ def model_iteration(model,
             elif step > 0:
               steps_per_epoch = step
               aggregator.num_samples_or_steps = steps_per_epoch
-              progbar.params['steps'] = steps_per_epoch
-              progbar.progbar.target = steps_per_epoch
+              if mode == ModeKeys.TRAIN:
+                progbar.params['steps'] = steps_per_epoch
+                progbar.progbar.target = steps_per_epoch
           else:
             # We ran out of batches while the user passed an iterator (legacy).
             callbacks.model.stop_training = True

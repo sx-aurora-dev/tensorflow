@@ -78,10 +78,22 @@ def convert_structure_to_signature(structure, arg_names=None):
     Identical structure that has TensorSpec objects instead of Tensors and
     UknownArgument instead of any unsupported types.
   """
-
-  def encode_arg(arg, name=None):
+  def encode_arg(arg, path):
     """A representation for this argument, for converting into signatures."""
     if isinstance(arg, ops.Tensor):
+      user_specified_name = None
+      try:
+        user_specified_name = compat.as_str(
+            arg.op.get_attr("_user_specified_name"))
+      except ValueError:
+        pass
+
+      if path and user_specified_name and user_specified_name != path[0]:
+        # The user has explicitly named the argument differently than the name
+        # of the function argument.
+        name = user_specified_name
+      else:
+        name = "/".join([str(p) for p in path])
       return tensor_spec.TensorSpec(arg.shape, arg.dtype, name)
     if isinstance(arg, (
         int,
@@ -107,10 +119,7 @@ def convert_structure_to_signature(structure, arg_names=None):
         ((arg_names[path[0]],) + path[1:], arg) for path, arg in flattened
     ]
 
-  mapped = [
-      encode_arg(arg, "/".join([str(p) for p in path]))
-      for path, arg in flattened
-  ]
+  mapped = [encode_arg(arg, path) for path, arg in flattened]
   return nest.pack_sequence_as(structure, mapped)
 
 
@@ -174,6 +183,7 @@ class FuncGraph(ops.Graph):
     self.structured_input_signature = None
     self.structured_outputs = None
     self._weak_variables = []
+    self._watched_variables = weakref.WeakSet()
     self.outer_graph = ops.get_default_graph()
     self.captures = py_collections.OrderedDict()
     # Inherit capture-by-value from outer graph.
@@ -195,12 +205,13 @@ class FuncGraph(ops.Graph):
 
     if context.executing_eagerly():
       self.seed = context.global_seed()
-      device_type = context.context().device_spec.device_type
-      self._xla_compile = (device_type == "TPU" or device_type == "XLA_GPU"
-                           or device_type == "XLA_CPU")
+      # [for tf-data user migration from TF1.0 to 2.0] seed_used keep track of
+      # any None op_seed for random_op in the function, in which case we end up
+      # using function seed, which could be unintended behavior for the op.
+      self._seed_used = False
     else:
       self.seed = graph.seed
-      self._xla_compile = getattr(graph, "_xla_compile", False)
+      self._seed_used = False
       # TODO(allenl): Figure out if we can remove colocation stack
       # specialization (currently used in cond_v2), here and in the cache key.
       self._colocation_stack = graph._colocation_stack.copy()  # pylint: disable=protected-access
@@ -218,6 +229,12 @@ class FuncGraph(ops.Graph):
 
   def __str__(self):
     return "FuncGraph(name=%s, id=%s)" % (self.name, id(self))
+
+  def watch_variable(self, v):
+    """Marks the variable v as accessed while building this graph."""
+    while self is not None and isinstance(self, FuncGraph):
+      self._watched_variables.add(v)
+      self = self.outer_graph
 
   def control_dependencies(self, control_inputs):
     """Handles control dependencies.
@@ -283,11 +300,10 @@ class FuncGraph(ops.Graph):
       # restored.
       old_device_stack = self._device_function_stack
       if context.executing_eagerly():
-        if self._distribution_strategy_stack or self._xla_compile:
+        if self._distribution_strategy_stack:
           self._add_device_to_stack(context.context().device_name)
       else:
         if (self._distribution_strategy_stack
-            or self._xla_compile
             or device_stack_has_callable(graph._device_function_stack)):
           # Hard-code devices from device functions in the function body
           self._device_function_stack = graph._device_function_stack.copy()
@@ -375,7 +391,7 @@ class FuncGraph(ops.Graph):
       self,
       op_type,
       inputs,
-      dtypes,  # pylint: disable=redefined-outer-name
+      dtypes=None,  # pylint: disable=redefined-outer-name
       input_types=None,
       name=None,
       attrs=None,
@@ -392,8 +408,8 @@ class FuncGraph(ops.Graph):
       op_type: The `Operation` type to create. This corresponds to the
         `OpDef.name` field for the proto that defines the operation.
       inputs: A list of `Tensor` objects that will be inputs to the `Operation`.
-      dtypes: A list of `DType` objects that will be the types of the tensors
-        that the operation produces.
+      dtypes: (Optional) A list of `DType` objects that will be the types of the
+        tensors that the operation produces.
       input_types: (Optional.) A list of `DType`s that will be the types of
         the tensors that the operation consumes. By default, uses the base
         `DType` of each input in `inputs`. Operations that expect
@@ -458,6 +474,15 @@ class FuncGraph(ops.Graph):
     Returns:
       Tensor from this FuncGraph.
     """
+    # Note: _forward_func_graph is currently only set when building the gradient
+    # graph graph of a defun call. If the backwards graph tries to capture
+    # tensors those will be captured first in the forward graph. This
+    # makes sure that any tensor needed by a custom_gradient is correctly
+    # captured.
+    if (getattr(tensor, "graph", None) is not self and
+        hasattr(self, "_forward_func_graph") and
+        isinstance(self._forward_func_graph, FuncGraph)):
+      tensor = self._forward_func_graph.capture(tensor)
     if isinstance(tensor, ops.EagerTensor):
       if name is None:
         name = str(ops.uid())
@@ -653,7 +678,6 @@ def func_graph_from_py_func(name,
         x = a.mark_as_return(x)
       return x
 
-    this_tape = tape.push_new_tape()
     try:
       if autograph:
         from tensorflow.python import autograph  # pylint: disable=g-import-not-at-top
@@ -669,9 +693,7 @@ def func_graph_from_py_func(name,
           return autograph.converted_call(
               original_func, None,
               autograph.ConversionOptions(
-                  verbose=autograph.Verbosity.BRIEF,
                   recursive=True,
-                  strip_decorators=(def_function.function,),
                   optional_features=autograph_options,
                   force_conversion=True,
               ), args, kwargs)
@@ -679,7 +701,8 @@ def func_graph_from_py_func(name,
         # Wrapping around a decorator allows checks like tf_inspect.getargspec
         # to be accurate.
         converted_func = tf_decorator.make_decorator(original_func, wrapper)
-        tf_decorator.rewrap(python_func, original_func, converted_func)
+        python_func = tf_decorator.rewrap(python_func, original_func,
+                                          converted_func)
 
       func_outputs = python_func(*func_args, **func_kwargs)
 
@@ -690,12 +713,11 @@ def func_graph_from_py_func(name,
       check_mutation(func_args_before, func_args)
       check_mutation(func_kwargs_before, func_kwargs)
     finally:
-      tape.pop_tape(this_tape)
       current_scope.set_use_resource(default_use_recource)
 
     # Variables in `func_args`, `func_kwargs` should be explicit inputs
     # to the function, not captured inputs.
-    tape_variables = this_tape.watched_variables()
+    graph_variables = list(func_graph._watched_variables)  # pylint: disable=protected-access
     arg_variables = set()
     inputs = []
     for arg in nest.flatten(func_args) + nest.flatten(func_kwargs):
@@ -710,7 +732,7 @@ def func_graph_from_py_func(name,
         inputs.append(resource_placeholder)
       elif isinstance(arg, ops.Tensor):
         inputs.append(arg)
-    variables = [v for v in tape_variables if v not in arg_variables]
+    variables = [v for v in graph_variables if v not in arg_variables]
     func_graph.inputs = inputs + list(func_graph.captures.values())
 
     func_graph.structured_outputs = func_outputs
@@ -880,7 +902,16 @@ def _get_defun_inputs(args, names, structure, flat_shapes=None):
              flat_shapes))
     shapes_iter = iter(flat_shapes)
   for arg_value, name in zip(args, names):
-    for arg in nest.flatten(arg_value):
+    flattened = nest.flatten(arg_value)
+    tensor_specs = [
+        arg for arg in flattened if isinstance(arg, tensor_spec.TensorSpec)
+    ]
+    specified_names = [arg.name for arg in tensor_specs if arg.name]
+    if specified_names and len(specified_names) < len(tensor_specs):
+      raise ValueError("If specifying TensorSpec names for nested structures, "
+                       "either zero or all names have to be specified.")
+
+    for arg in flattened:
       # We have a shape entry for each arg, regadless of whether it's a real
       # Tensor or not.  For non-tensor entries it should be None.
       shape = next(shapes_iter)

@@ -135,6 +135,9 @@ function prepare_src() {
   cp tensorflow/tools/pip_package/MANIFEST.in ${TMPDIR}
   cp tensorflow/tools/pip_package/README ${TMPDIR}
   cp tensorflow/tools/pip_package/setup.py ${TMPDIR}
+
+  mkdir -p ${TMPDIR}/tensorflow/aux-bin
+  cp -v third_party/veoffload/veorun_tf ${TMPDIR}/tensorflow/aux-bin
 }
 
 function build_wheel() {
