@@ -77,25 +77,29 @@ You can find a package in `dist` directory.
 (tmp)% pip install -U tensorflow_ve-1.13.1-cp35-cp35m-linux_x86_64.whl
 (tmp)% pip install -U Keras-2.2.4-py3-none-any.whl
 ```
-
-### Install llvm
-
-llvm is used to build vetfkenel and vednn.
-Install llvm for VE from [[https://github.com/SXAuroraTSUBASAResearch/llvm]].
-
 ## Run samples
 
 Work in the virtualenv.
 
 ```
 (tmp)% cd <working directory>
+(tmp)% git clone <url of sampels> samples
+(tmp)% samples
+(tmp)% python mnist_cnn.py
+```
+
+
+## (option) Build vetfkernel and vednn
+
+llvm is used to build vetfkenel and vednn.
+Install llvm for VE from [[https://github.com/SXAuroraTSUBASAResearch/llvm]].
+
+```
+(tmp)% cd <working directory>
 (tmp)% git clone <url of vetfkernel> vetfkernel
 (tmp)% git clone <url of vednn> vetfkernel/libs/vednn
-(tmp)% git clone <url of sampels> samples
 (tmp)% cd vetfkernel
 (tmp)% (mkdir build && cd build && cmake3 .. && make)
-(tmp)% cd ../samples
-(tmp)% python mnist_cnn.py
 ```
 
 You can use the llvm that is installed into non-standard directory by setting
