@@ -82,7 +82,9 @@ void VEOpKernelHelper::Call(OpKernelContext* context,
     context->SetStatus(s);
 }
 
-template Status VEOpKernelHelper::Args::addArg<bool>(const bool& i) ;
+template Status VEOpKernelHelper::Args::addArg<bool>(const bool& v) ;
+template Status VEOpKernelHelper::Args::addArg<int64>(const int64& v) ;
+template Status VEOpKernelHelper::Args::addArg<float>(const float& v) ;
 
 }; // namespace tensorflow
 
