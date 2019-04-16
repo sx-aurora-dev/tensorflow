@@ -308,7 +308,7 @@ class VESparseTensorDenseMatMulOp : public VEOpKernel {
 
      if (a_shape->dim_size(0) > 0) {
 
- 
+//       printf("c %d, r %d\n",a_shape_t(1),a_shape_t(0)); 
 
        ArgsImpl<> Args = ArgsImpl<>() ;
 
@@ -316,9 +316,9 @@ class VESparseTensorDenseMatMulOp : public VEOpKernel {
 
        Args.addArg<Tensor>(*a_indices) ;
 
-       Args.addArg<int64>(a_shape->shape().dim_size(0)) ;
+       Args.addArg<int64>(a_shape_t(1)) ;
 
-       Args.addArg<int64>(a_shape->shape().dim_size(1)) ;
+       Args.addArg<int64>(a_shape_t(0)) ;
 
        Args.addArg<Tensor>(*b) ;
 
