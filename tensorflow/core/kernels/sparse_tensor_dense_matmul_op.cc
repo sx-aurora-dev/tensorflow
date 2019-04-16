@@ -24,6 +24,13 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/kernels/fill_functor.h"
 
+
+#ifdef TENSORFLOW_USE_VE
+  #include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
+
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -43,6 +50,8 @@ class SparseTensorDenseMatMulOp : public OpKernel {
     const Tensor* a_values;
     const Tensor* a_shape;
     const Tensor* b;
+
+
     OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices));
     OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values));
     OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape));
@@ -148,6 +157,7 @@ class SparseTensorDenseMatMulOp : public OpKernel {
     MAYBE_ADJOINT(true, true);
 
 #undef MAYBE_ADJOINT
+
   }
 
  private:
@@ -164,6 +174,7 @@ class SparseTensorDenseMatMulOp : public OpKernel {
           .HostMemory("a_shape"),                \
       SparseTensorDenseMatMulOp<CPUDevice, TypeT, TypeIndex>);
 
+
 #define REGISTER_KERNELS_CPU(T) \
   REGISTER_CPU(T, int64);       \
   REGISTER_CPU(T, int32)
@@ -173,6 +184,178 @@ REGISTER_KERNELS_CPU(double);
 REGISTER_KERNELS_CPU(int32);
 REGISTER_KERNELS_CPU(complex64);
 REGISTER_KERNELS_CPU(complex128);
+
+
+
+#ifdef TENSORFLOW_USE_VE
+
+
+#if 1
+
+template <typename T, typename Tindices>
+class VESparseTensorDenseMatMulOp : public VEOpKernel {
+ public:
+  explicit VESparseTensorDenseMatMulOp(OpKernelConstruction* ctx)
+      : VEOpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("adjoint_a", &adjoint_a_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("adjoint_b", &adjoint_b_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor* a_indices;
+    const Tensor* a_values;
+    const Tensor* a_shape;
+    const Tensor* b;
+
+    OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices));
+    OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values));
+    OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape));
+    OP_REQUIRES_OK(ctx, ctx->input("b", &b));
+
+#if 0
+// Check that the dimensions of the two matrices are valid.
+       OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(b->shape()),
+                errors::InvalidArgument("Tensor 'b' is not a matrix"));
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsVector(a_shape->shape()),
+                errors::InvalidArgument("Tensor 'a_shape' is not a vector"));
+
+    OP_REQUIRES(
+        ctx, a_shape->NumElements() == 2,
+        errors::InvalidArgument("Tensor 'a_shape' must have 2 elements"));
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsVector(a_values->shape()),
+                errors::InvalidArgument("Tensor 'a_values' is not a vector"));
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(a_indices->shape()),
+                errors::InvalidArgument("Tensor 'a_indices' is not a matrix"));
+#endif
+
+    const int64 nnz = a_indices->shape().dim_size(0);
+
+#if 0
+    OP_REQUIRES(ctx, nnz == a_values->NumElements(),
+                errors::InvalidArgument("Number of rows of a_indices does not "
+                                        "match number of entries in a_values"));
+
+    OP_REQUIRES(
+        ctx, a_indices->shape().dim_size(1) == a_shape->NumElements(),
+        errors::InvalidArgument("Number of columns of a_indices does not match "
+                                "number of entries in a_shape"));
+#endif
+
+
+    auto a_shape_t = a_shape->vec<int64>();
+    const int64 outer_left = (adjoint_a_) ? a_shape_t(1) : a_shape_t(0);
+    const int64 outer_right =
+        (adjoint_b_) ? b->shape().dim_size(0) : b->shape().dim_size(1);
+    const int64 inner_left = (adjoint_a_) ? a_shape_t(0) : a_shape_t(1);
+    const int64 inner_right =
+        (adjoint_b_) ? b->shape().dim_size(1) : b->shape().dim_size(0);
+
+    OP_REQUIRES(
+        ctx, inner_right == inner_left,
+        errors::InvalidArgument(
+            "Cannot multiply A and B because inner dimension does not match: ",
+            inner_left, " vs. ", inner_right,
+            ".  Did you forget a transpose?  "
+            "Dimensions of A: [",
+            a_shape_t(0), ", ", a_shape_t(1),
+            ").  Dimensions of B: ", b->shape().DebugString()));
+
+    if (std::is_same<Device, GPUDevice>::value) {
+      // The GPU implementation is optimized to use 32 bit indexing, so
+      // give a friendly error to the programmer early on if they
+      // exceed.
+
+      const int int32max = std::numeric_limits<int>::max();
+      OP_REQUIRES(
+          ctx,
+          (FastBoundsCheck(inner_left, int32max) &&
+           FastBoundsCheck(inner_right, int32max) &&
+           FastBoundsCheck(outer_left, int32max) &&
+           FastBoundsCheck(outer_right, int32max) &&
+           FastBoundsCheck(b->NumElements(), int32max) &&
+           FastBoundsCheck(outer_left * outer_right, int32max) &&
+           FastBoundsCheck(a_values->NumElements(), int32max)),
+          errors::InvalidArgument("Cannot use GPU for > 2^31 entry inputs"));
+      OP_REQUIRES(ctx, FastBoundsCheck(nnz * outer_right, int32max),
+                  errors::InvalidArgument(
+                      "Cannot use GPU when output.shape[1] * nnz(a) > 2^31"));
+    }
+
+    TensorShape out_shape({outer_left, outer_right});
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, out_shape, &out));
+
+    if (out->NumElements() == 0) {
+      // If a has shape [0, x] or b has shape [x, 0], the output shape
+      // is a 0-element matrix, so there is nothing to do.
+      return;
+    }
+
+#if 0
+    if (a_values->NumElements() == 0 || b->NumElements() == 0) {
+      // If a has shape [x, 0] and b has shape [0, y], the
+      // output shape is [x, y] where x and y are non-zero, so we fill
+      // the output with zeros.
+      functor::SetZeroFunctor<Device, T> f;
+      f(ctx->eigen_device<Device>(), out->flat<T>());
+      return;
+    }
+#endif
+
+
+     if (a_shape->dim_size(0) > 0) {
+
+ 
+
+       ArgsImpl<> Args = ArgsImpl<>() ;
+
+       Args.addArg<Tensor>(*a_values) ;
+
+       Args.addArg<Tensor>(*a_indices) ;
+
+       Args.addArg<Tensor>(*a_shape) ;
+
+       Args.addArg<Tensor>(*b) ;
+
+
+       Call(ctx, "SparseTensorDenseMatMul", Args);
+
+     }
+
+
+
+
+  }
+
+ private:
+  bool adjoint_a_;
+  bool adjoint_b_;
+};
+
+
+
+
+
+#endif
+
+
+
+
+
+  REGISTER_KERNEL_BUILDER(                       \
+      Name("SparseTensorDenseMatMul")            \
+          .Device(DEVICE_VE)                    \
+          .TypeConstraint<float>("T")            \
+          .TypeConstraint<int64>("Tindices") \
+          .HostMemory("a_shape"),                \
+      VESparseTensorDenseMatMulOp<float, int64>);
+
+#endif // TENSORFLOW_USE_VE
+
+
 
 #if GOOGLE_CUDA
 
