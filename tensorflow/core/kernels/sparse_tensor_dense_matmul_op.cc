@@ -320,6 +320,8 @@ class VESparseTensorDenseMatMulOp : public VEOpKernel {
 
        Args.addArg<Tensor>(*b) ;
 
+       Args.addArg<Tensor>(*out) ;
+
 
        Call(ctx, "SparseTensorDenseMatMul", Args);
 
