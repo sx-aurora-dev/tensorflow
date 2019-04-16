@@ -316,9 +316,9 @@ class VESparseTensorDenseMatMulOp : public VEOpKernel {
 
        Args.addArg<Tensor>(*a_indices) ;
 
-       Args.addArg<int64>(a_shape->dim_size[0]) ;
+       Args.addArg<int64>(a_shape->shape().dim_size(0)) ;
 
-       Args.addArg<int64>(a_shape->dim_size[1]) ;
+       Args.addArg<int64>(a_shape->shape().dim_size(1)) ;
 
        Args.addArg<Tensor>(*b) ;
 
