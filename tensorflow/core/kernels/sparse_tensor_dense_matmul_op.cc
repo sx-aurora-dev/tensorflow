@@ -190,7 +190,7 @@ REGISTER_KERNELS_CPU(complex128);
 #ifdef TENSORFLOW_USE_VE
 
 
-#if 1
+
 
 template <typename T, typename Tindices>
 class VESparseTensorDenseMatMulOp : public VEOpKernel {
@@ -324,6 +324,9 @@ class VESparseTensorDenseMatMulOp : public VEOpKernel {
 
        Args.addArg<Tensor>(*out) ;
 
+       Args.addArg<int64>(adjoint_a_);
+
+
 
        Call(ctx, "SparseTensorDenseMatMul", Args);
 
@@ -343,7 +346,7 @@ class VESparseTensorDenseMatMulOp : public VEOpKernel {
 
 
 
-#endif
+
 
 
 
