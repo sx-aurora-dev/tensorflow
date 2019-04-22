@@ -341,6 +341,7 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
 
 REGISTER_KERNEL(VE, float);
 REGISTER_KERNEL(VE, double);
+REGISTER_KERNEL(VE, int64);
 #endif // TENSORFLOW_USE_VE
 
 #undef REGISTER_KERNEL
