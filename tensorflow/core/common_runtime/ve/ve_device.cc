@@ -867,8 +867,7 @@ class VEDevice : public LocalDevice {
              Allocator* cpu_allocator) :
       LocalDevice(options,
                   Device::BuildDeviceAttributes(name, "VE",
-                                                //Bytes(256 << 20),
-                                                Bytes(256 << 30),
+                                                Bytes(256 << 20),
                                                 DeviceLocality())),
       ve_allocator_(ve_allocator),
       cpu_allocator_(cpu_allocator) {}
@@ -1021,7 +1020,7 @@ class VEDeviceFactory : public DeviceFactory {
       return s;
 
     //size_t total_memory = 20UL*1024*1024*1024;
-    size_t total_memory = 40UL*1024*1024*1024;
+    size_t total_memory = 44UL*1024*1024*1024;
     Allocator* ve_allocator = new VEBFCAllocator(total_memory, true, "VE_0_bfc", veo);
 
     int numa_node = 0;
