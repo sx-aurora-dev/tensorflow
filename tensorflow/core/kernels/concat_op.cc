@@ -29,10 +29,11 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/types.h"
 
+
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
-#endif  // TENSORFLOW_USE_VE
+#endif
 
 namespace tensorflow {
 
@@ -378,15 +379,13 @@ REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
 
 #ifdef TENSORFLOW_USE_VE
 
-#define MAX_CONCAT_SIZE	16
-
 template <typename T, AxisArgumentName AxisArgName>
-class VEConcatBaseOp : public OpKernel {
+class VEConcatBaseOp : public VEOpKernel {
  public:
   typedef std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>
       ConstMatrixVector;
 
-  explicit VEConcatBaseOp(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit VEConcatBaseOp(OpKernelConstruction* c) : VEOpKernel(c) {}
 
   void Compute(OpKernelContext* c) override {
     const Tensor* concat_dim_tensor;
@@ -494,42 +493,21 @@ class VEConcatBaseOp : public OpKernel {
 
       uint64_t n_input = inputs_flat.size() ;
 
-      OP_REQUIRES(
-          c, n_input <= MAX_CONCAT_SIZE,
-          errors::InvalidArgument(
-              "VEConcatOp does not support more than ",
-	      MAX_CONCAT_SIZE, " input tensors."));
+      ArgsImpl<> Args = ArgsImpl<>() ;
 
-      struct {
-        int dtype;
-        uint64_t n_input;
-        uint64_t outputs_flat_dim0;
-        uint64_t outputs_flat_dim1;
-        uint64_t output_ptr;
-        uint64_t array[2*MAX_CONCAT_SIZE] ;
-      } args;
-
-      uint64_t arg_size = sizeof(args) - 2 * sizeof(uint64_t) * ( MAX_CONCAT_SIZE - n_input)  ;
-
-      args.dtype = values[0].dtype() ;
-      args.n_input = n_input ;
-      args.outputs_flat_dim0 = inputs_flat_dim0 ;
-      args.outputs_flat_dim1 = output_dim1 ;
-      args.output_ptr = (uint64_t)DMAHelper::base(output);
-
-      uint64_t *input_ptrs  = args.array ;
-      uint64_t *input_dim1s = args.array + n_input ;
+      Args.addArg<int64>((int64)(values[0].dtype())) ;
+      Args.addArg<uint64>(n_input) ;
+      Args.addArg<uint64>(inputs_flat_dim0) ;
+      Args.addArg<uint64>(output_dim1) ;
+      Args.addArg<uint64>((uint64)(DMAHelper::base(output))) ;
 
       for (int i = 0; i < n_input; ++i) {
 	const auto& input = inputs_flat[i] ;
-        input_ptrs[i] =  (uint64_t)DMAHelper::base(&values[i]) ;
-        input_dim1s[i] = inputs_flat[i]->dimension(1); ;
+	Args.addArg<uint64>((uint64)(DMAHelper::base(&values[i]))) ;
+	Args.addArg<uint64>((uint64)(inputs_flat[i]->dimension(1))) ;
       }
 
-      VEDeviceContext* vectx = c->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute("Concat", (void*)&args, arg_size);
-      if (!s.ok())
-        c->SetStatus(s);
+      Call(c, "Concat", Args);
     }
   }
 };
