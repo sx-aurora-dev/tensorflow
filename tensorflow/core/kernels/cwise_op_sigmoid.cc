@@ -27,6 +27,10 @@ REGISTER3(UnaryOp, GPU, "Sigmoid", functor::sigmoid, float, Eigen::half,
 REGISTER(UnaryOp, SYCL, "Sigmoid", functor::sigmoid, float);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Sigmoid, float);
+#endif
+
 REGISTER5(SimpleBinaryOp, CPU, "SigmoidGrad", functor::sigmoid_grad, float,
           Eigen::half, double, complex64, complex128);
 #if GOOGLE_CUDA
@@ -36,5 +40,9 @@ REGISTER3(SimpleBinaryOp, GPU, "SigmoidGrad", functor::sigmoid_grad, float,
 #ifdef TENSORFLOW_USE_SYCL
 REGISTER(SimpleBinaryOp, SYCL, "SigmoidGrad", functor::sigmoid_grad, float);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(SigmoidGrad, float, float, float);
+#endif
 
 }  // namespace tensorflow
