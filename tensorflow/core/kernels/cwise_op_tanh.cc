@@ -28,10 +28,19 @@ REGISTER3(UnaryOp, GPU, "Tanh", functor::tanh, float, Eigen::half, double);
 REGISTER2(UnaryOp, SYCL, "Tanh", functor::tanh, float, double);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Tanh, float);
+#endif
+
 REGISTER5(SimpleBinaryOp, CPU, "TanhGrad", functor::tanh_grad, float,
           Eigen::half, double, complex64, complex128);
 #if GOOGLE_CUDA
 REGISTER3(SimpleBinaryOp, GPU, "TanhGrad", functor::tanh_grad, float,
           Eigen::half, double);
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(TanhGrad, float, float, float);
+#endif
+
 }  // namespace tensorflow
