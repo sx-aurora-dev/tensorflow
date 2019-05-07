@@ -274,7 +274,7 @@ class AddNOp<VEDevice, T> : public OpKernel {
       Tensor* output = nullptr;
       OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input0.shape(), &output));
 
-#define MAX_INPUTS 16
+#define MAX_INPUTS 32
       struct {
         int output_type;
         uint64_t out;
