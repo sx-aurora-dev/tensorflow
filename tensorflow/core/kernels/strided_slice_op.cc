@@ -572,6 +572,130 @@ REGISTER_KERNEL_BUILDER(Name("ResourceStridedSliceAssign")
 #ifdef TENSORFLOW_USE_VE
 
 template <typename T>
+class VEStridedSliceOp : public VEOpKernel {
+ public:
+  explicit VEStridedSliceOp(OpKernelConstruction* context) : VEOpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("begin_mask", &begin_mask));
+    OP_REQUIRES_OK(context, context->GetAttr("end_mask", &end_mask));
+    OP_REQUIRES_OK(context, context->GetAttr("ellipsis_mask", &ellipsis_mask));
+    OP_REQUIRES_OK(context, context->GetAttr("new_axis_mask", &new_axis_mask));
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("shrink_axis_mask", &shrink_axis_mask));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    TensorShape processing_shape, final_shape;
+    bool is_identity = true;
+    bool slice_dim0 = true;
+    bool is_simple_slice = true;
+    gtl::InlinedVector<int64, 4> begin;
+    gtl::InlinedVector<int64, 4> end;
+    gtl::InlinedVector<int64, 4> strides;
+
+    OP_REQUIRES_OK(
+        context, ValidateStridedSliceOp(
+                     &context->input(1), &context->input(2), context->input(3),
+                     context->input(0).shape(), begin_mask, end_mask,
+                     ellipsis_mask, new_axis_mask, shrink_axis_mask,
+                     &processing_shape, &final_shape, &is_identity,
+                     &is_simple_slice, &slice_dim0, &begin, &end, &strides));
+    const Tensor& input = context->input(0);
+
+    // Optimization #1, slice is a no-op plus reshape
+    if (is_identity) {
+      VLOG(1) << "Strided slice identity ";
+      Tensor tmp;
+      OP_REQUIRES(context, tmp.CopyFrom(input, final_shape),
+                  errors::Internal("Copy failed"));
+      context->set_output(0, tmp);
+      return;
+    }
+
+    // Optimization #2, slice is memory contiguous (only occurs in dim 0)
+    if (slice_dim0 && IsDim0SliceAligned<T>(input.shape(), begin[0], end[0])) {
+      OP_REQUIRES(context, input.dims() >= 1,
+                  errors::InvalidArgument(
+                      "Input must have rank at least 1, got: ", input.dims()));
+      // Otherwise, is_identity should be true.
+      VLOG(1) << "Strided slice dim 0: " << input.shape().DebugString();
+      // To tolerate begin[0] > end[0] (a 0-output slice), we min(begin, end).
+      Tensor slice = input.Slice(std::min(begin[0], end[0]), end[0]);
+      Tensor tmp;
+      OP_REQUIRES(context, tmp.CopyFrom(slice, final_shape),
+                  errors::Internal("Copy failed"));
+      context->set_output(0, tmp);
+      return;
+    }
+
+    Tensor* result = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, final_shape, &result));
+    //const int input_dims = input.dims();
+    const int processing_dims = processing_shape.dims();
+
+    if (processing_shape.num_elements() > 0) {
+#define MAX_HANDLE_DIM 3
+
+      // FIXME : implement larger dim
+      if( processing_dims <= MAX_HANDLE_DIM ) {
+
+        ArgsImpl<> Args = ArgsImpl<>() ;
+        Args.addArg<int64>(processing_dims) ;
+
+        Args.addArg<Tensor>(input) ;
+        Args.addArg<Tensor>(*result) ;
+
+        for(int64_t i=0; i<processing_dims; i++) {
+          Args.addArg<int64>((int64)begin[i]) ;
+        }
+        for(int64_t i=0; i<processing_dims; i++) {
+          Args.addArg<int64>((int64)end[i]) ;
+        }
+        for(int64_t i=0; i<processing_dims; i++) {
+          Args.addArg<int64>((int64)strides[i]) ;
+        }
+
+        Call(context, "StridedSlice", Args);
+
+        return ;
+      }
+
+      OP_REQUIRES(
+          context, false,
+          errors::Unimplemented("Unhandled input dimensions ", processing_shape));
+
+#undef MAX_HANDLE_DIM
+
+#if 0
+
+#define HANDLE_DIM(NDIM)                                                       \
+  if (processing_dims == NDIM) {                                               \
+    HandleStridedSliceCase<Device, T, NDIM>(context, begin, end, strides,      \
+                                            processing_shape, is_simple_slice, \
+                                            result);                           \
+    return;                                                                    \
+  }
+
+      HANDLE_DIM(1);
+      HANDLE_DIM(2);
+      HANDLE_DIM(3);
+      HANDLE_DIM(4);
+      HANDLE_DIM(5);
+      HANDLE_DIM(6);
+      HANDLE_DIM(7);
+
+#undef HANDLE_DIM
+#endif
+
+
+    }
+  }
+
+ private:
+  int32 begin_mask, end_mask;
+  int32 ellipsis_mask, new_axis_mask, shrink_axis_mask;
+};
+
+template <typename T>
 class VEStridedSliceGradOp : public VEOpKernel {
  public:
   explicit VEStridedSliceGradOp(OpKernelConstruction* context)
@@ -698,8 +822,15 @@ class VEStridedSliceGradOp : public VEOpKernel {
   int32 ellipsis_mask, new_axis_mask, shrink_axis_mask;
 };
 
-// [todo] impl StridedSlice/StridedSliceAssign/ResourceStridedSliceAssign for VE
+// [todo] impl StridedSliceAssign/ResourceStridedSliceAssign for VE
 #define REGISTER_VE(type)                                        \
+  REGISTER_KERNEL_BUILDER(Name("StridedSlice")                   \
+			      .Device(DEVICE_VE)                 \
+			      .TypeConstraint<type>("T")         \
+			      .HostMemory("begin")               \
+			      .HostMemory("end")                 \
+			      .HostMemory("strides"),            \
+			  VEStridedSliceOp<type>)                \
   REGISTER_KERNEL_BUILDER(Name("StridedSliceGrad")               \
                               .Device(DEVICE_VE)                 \
                               .TypeConstraint<type>("T")         \
