@@ -1,7 +1,9 @@
+#if 0
 #include <stdlib.h>
 #include <memory>
 
-#include "tensorflow/core/platform/device_tracer.h"
+//#include "tensorflow/core/platform/device_tracer.h"
+#include "tensorflow/core/profiler/internal/profiler_interface.h"
 #include "tensorflow/core/common_runtime/step_stats_collector.h"
 #include "tensorflow/core/framework/step_stats.pb.h"
 #if 0
@@ -113,7 +115,7 @@ TraceCollectorImpl *GlobalDefaultTraceCollector() {
 } // namespace
 #endif // copy from device_tracer.cc
 
-class VEDeviceTracer : public DeviceTracer {
+class VEDeviceTracer : public profiler::ProfilerInterface {
   public:
     VEDeviceTracer();
 
@@ -302,3 +304,4 @@ std::unique_ptr<DeviceTracer> CreateDeviceTracer() {
 }
 
 } // tensorflow
+#endif
