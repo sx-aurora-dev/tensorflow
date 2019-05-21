@@ -3285,6 +3285,7 @@ cc_library(
         ":ve_runtime",
         "//third_party/veoffload",
         "//tensorflow/core:stream_executor",
+        "//tensorflow/core/profiler/internal:profiler_interface",
         ],
     alwayslink = 1,
 )

@@ -1,4 +1,3 @@
-#if 0
 #include <stdlib.h>
 #include <memory>
 
@@ -87,11 +86,6 @@ class TraceCollectorImpl : public tracing::TraceCollector {
     return active_trace_session_.load(std::memory_order_relaxed);
   }
 
-  bool IsEnabledForActivities(bool is_expensive) const override {
-    // We don't do anything with 'Activities' so we are never 'enabled'.
-    return false;
-  }
-
   void Start() {
     DCHECK(!active_trace_session_)
         << "Unexpected active trace session detected. ";
@@ -119,11 +113,12 @@ class VEDeviceTracer : public profiler::ProfilerInterface {
   public:
     VEDeviceTracer();
 
-    ~VEDeviceTracer() { VLOG(2) << "~VEDeviceTracer"; }
+    ~VEDeviceTracer() override { VLOG(2) << "~VEDeviceTracer"; }
 
     Status Start() override;
     Status Stop() override;
-    Status Collect(StepStatsCollector *collector) override;
+    Status Collect(StepStatsCollector* collector);
+    Status CollectData(RunMetadata* run_metadata) override;
 
   private:
     struct KernelRecords {
@@ -232,6 +227,13 @@ Status VEDeviceTracer::Stop() {
   return Status::OK(); 
 }
 
+Status VEDeviceTracer::CollectData(RunMetadata* run_metadata) {
+  StepStatsCollector collector(run_metadata->mutable_step_stats());
+  TF_RETURN_IF_ERROR(Collect(&collector));
+  collector.Finalize();
+  return Status::OK();
+}
+
 Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
   VLOG(2) << "VEDeviceTracer::Collect: kernel_records_.size=" << kernel_records_.size();
 
@@ -290,8 +292,8 @@ Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
 }
 
 
-std::unique_ptr<DeviceTracer> CreateDeviceTracer() {
-
+std::unique_ptr<profiler::ProfilerInterface> CreateDeviceTracer(
+        const ProfilerContext*) {
   if (const char* tmp = getenv("VE_NODE_NUMBER")) {
     if (atoi(tmp) < 0) {
       return nullptr;
@@ -299,9 +301,20 @@ std::unique_ptr<DeviceTracer> CreateDeviceTracer() {
   }
   
   VLOG(2) << "CreateDeviceTracer(VE)";
-  std::unique_ptr<DeviceTracer> tracer(new VEDeviceTracer());
+  std::unique_ptr<profiler::ProfilerInterface> tracer(new VEDeviceTracer());
   return tracer;
 }
 
-} // tensorflow
+auto register_device_tracer_factory = [] {
+  RegisterProfilerFactory(&CreateDeviceTracer);
+#if 0
+  bool enable;
+  TF_CHECK_OK(ReadBoolFromEnvVar("TF_ENABLE_OSS_GPU_PROFILER", true, &enable));
+  if (enable) {
+    RegisterProfilerFactory(&CreateDeviceTracer);
+  }
 #endif
+  return 0;
+}();
+
+} // tensorflow
