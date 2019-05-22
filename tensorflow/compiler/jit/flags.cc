@@ -36,6 +36,10 @@ std::once_flag flags_init;
 
 bool SetterForXlaAutoJitFlag(const string& value) {
   int32 opt_level;
+  // We need to use the mark_for_compilation_flags directly here instead of
+  // going via GetMarkForCompilationPassFlags() to avoid infinite recursion. The
+  // latter will try to setup and parse flags, which would bring us back to this
+  // setter.
   if (absl::SimpleAtoi(value, &opt_level)) {
     mark_for_compilation_flags->xla_auto_jit_flag
         .optimization_level_single_gpu = opt_level;
@@ -142,12 +146,12 @@ void AllocateAndParseFlags() {
 
        Flag("tf_introduce_floating_point_jitter_to_tensors",
             setter_for_jitter_tensor_names, "",
-            "The amount of jitter to introduce.  This amount is added to each "
-            "element in the tensors named in `tensor_names."),
+            "The Tensors to add the jitter to.  The tensors are named in the "
+            "TensorId format of <node name>:<output idx>."),
        Flag("tf_introduce_floating_point_jitter_amount",
             &jitter_flags->jitter_amount,
-            "The Tensors to add the jitter to.  The tensors are named in the "
-            "TensorId format of <node name>:<output idx>.")});
+            "The amount of jitter to introduce.  This amount is added to each "
+            "element in the tensors named in `tensor_names.")});
 
   AppendMarkForCompilationPassFlagsInternal(flag_list);
   xla::ParseFlagsFromEnvAndDieIfUnknown("TF_XLA_FLAGS", *flag_list);
@@ -155,9 +159,14 @@ void AllocateAndParseFlags() {
 
 }  // namespace
 
-const BuildXlaOpsPassFlags& GetBuildXlaOpsPassFlags() {
+bool SetXlaAutoJitFlagFromFlagString(const string& value) {
   std::call_once(flags_init, &AllocateAndParseFlags);
-  return *build_ops_flags;
+  return SetterForXlaAutoJitFlag(value);
+}
+
+BuildXlaOpsPassFlags* GetBuildXlaOpsPassFlags() {
+  std::call_once(flags_init, &AllocateAndParseFlags);
+  return build_ops_flags;
 }
 
 MarkForCompilationPassFlags* GetMarkForCompilationPassFlags() {

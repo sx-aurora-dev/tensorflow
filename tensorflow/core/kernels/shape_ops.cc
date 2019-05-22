@@ -68,7 +68,7 @@ REGISTER_KERNEL_BUILDER(Name("Shape")
                         ShapeOp<int64>);
 #endif  // TENSORFLOW_USE_SYCL
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU_KERNEL(type)                                \
   REGISTER_KERNEL_BUILDER(Name("Shape")                          \
                               .Device(DEVICE_GPU)                \
@@ -106,7 +106,7 @@ REGISTER_KERNEL_BUILDER(Name("Shape")
                             .TypeConstraint<int64>("out_type"),
                         ShapeOp<int64>);
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_VE
 REGISTER_KERNEL_BUILDER(Name("Shape")
@@ -146,7 +146,7 @@ REGISTER_KERNEL_BUILDER(Name("ShapeN")
                         ShapeNOp<int64>);
 #endif
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU_KERNEL(type)                                \
   REGISTER_KERNEL_BUILDER(Name("ShapeN")                         \
                               .Device(DEVICE_GPU)                \
@@ -182,7 +182,7 @@ REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .TypeConstraint<int32>("T")
                             .TypeConstraint<int64>("out_type"),
                         ShapeNOp<int64>);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 #define REGISTER_SYCL_KERNEL(type)                               \
@@ -248,7 +248,7 @@ REGISTER_KERNEL_BUILDER(Name("Rank")
                         RankOp);
 #endif  // TENSORFLOW_USE_SYCL
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU_KERNEL(type)                        \
   REGISTER_KERNEL_BUILDER(Name("Rank")                   \
                               .Device(DEVICE_GPU)        \
@@ -276,7 +276,7 @@ REGISTER_KERNEL_BUILDER(Name("Rank")
                             .HostMemory("output"),
                         RankOp);
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 // Size ------------------------------------------
 REGISTER_KERNEL_BUILDER(Name("Size")
@@ -290,7 +290,7 @@ REGISTER_KERNEL_BUILDER(Name("Size")
                             .TypeConstraint<int64>("out_type"),
                         SizeOp<int64>);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU_KERNEL(type)                                \
   REGISTER_KERNEL_BUILDER(Name("Size")                           \
                               .Device(DEVICE_GPU)                \
@@ -327,7 +327,7 @@ REGISTER_KERNEL_BUILDER(Name("Size")
                             .HostMemory("output"),
                         SizeOp<int64>);
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 #define REGISTER_SYCL_KERNEL(type)                               \
@@ -393,7 +393,7 @@ REGISTER_KERNEL_BUILDER(Name("ExpandDims")
                             .TypeConstraint<int64>("Tdim"),
                         ExpandDimsOp<int64>);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU_KERNEL(type)                            \
   REGISTER_KERNEL_BUILDER(Name("ExpandDims")                 \
                               .Device(DEVICE_GPU)            \
@@ -427,7 +427,7 @@ REGISTER_KERNEL_BUILDER(Name("ExpandDims")
                             .HostMemory("dim")
                             .HostMemory("output"),
                         ExpandDimsOp<int64>);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 #define REGISTER_SYCL_KERNEL(type)                           \
@@ -481,7 +481,7 @@ REGISTER_KERNEL_BUILDER(Name("ExpandDims")
 // Squeeze ---------------------------------------
 REGISTER_KERNEL_BUILDER(Name("Squeeze").Device(DEVICE_CPU), SqueezeOp);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU_KERNEL(type)                                   \
   REGISTER_KERNEL_BUILDER(                                          \
       Name("Squeeze").Device(DEVICE_GPU).TypeConstraint<type>("T"), \
@@ -499,7 +499,7 @@ REGISTER_KERNEL_BUILDER(Name("Squeeze")
                             .HostMemory("input")
                             .HostMemory("output"),
                         SqueezeOp);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #if TENSORFLOW_USE_SYCL
 #define REGISTER_SYCL_KERNEL(type)                                   \
@@ -607,7 +607,7 @@ REGISTER_GPU_KERNEL(Variant);
 
 #undef REGISTER_GPU_KERNEL
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 // A special GPU kernel for int32 and bool.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel
 // registration requires all int32 inputs and outputs to be in host memory.

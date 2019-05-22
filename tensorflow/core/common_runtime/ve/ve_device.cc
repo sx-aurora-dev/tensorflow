@@ -841,8 +841,8 @@ class VEDeviceContextImpl : public VEDeviceContext {
     VEDeviceContextImpl(VEO* veo) : veo_(veo) {}
 
     virtual void CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
-                                       Tensor* device_tensor,
-                                       StatusCallback done) const override;
+                                       Tensor* device_tensor, StatusCallback done,
+                                       bool sync_dst_compute = true) const override;
 
     virtual void CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
                                        Device* device, Tensor* cpu_tensor,
@@ -1031,6 +1031,18 @@ class VEDeviceFactory : public DeviceFactory {
     devices->push_back(std::move(device));
     return Status::OK();
   }
+
+  Status ListPhysicalDevices(std::vector<string>* devices) {
+    int nodeid = 0;
+    if (const char* tmp = getenv("VE_NODE_NUMBER")) {
+      nodeid = atoi(tmp);
+    }
+    if (nodeid > 0) {
+      const string device_name = strings::StrCat("/physical_device:VE:", nodeid);
+      devices->push_back(device_name);
+    }
+    return Status::OK();
+  }
 };
 
 } // namespace
@@ -1039,7 +1051,8 @@ REGISTER_LOCAL_DEVICE_FACTORY("VE", VEDeviceFactory, 220);
 
 void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device* device,
                                                 Tensor* device_tensor,
-                                                StatusCallback done) const {
+                                                StatusCallback done,
+                                                bool sync_dst_compute) const {
   VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice";
 
   const void* in = DMAHelper::base(cpu_tensor);
