@@ -306,6 +306,29 @@ TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_SYCL_REF_KERNEL);
 #undef REGISTER_SYCL_REF_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                        \
+  REGISTER_KERNEL_BUILDER(Name("Merge")                   \
+                              .Device(DEVICE_VE)        \
+                              .TypeConstraint<type>("T")  \
+                              .HostMemory("value_index"), \
+                          MergeOp);
+REGISTER_VE_KERNEL(bool);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+
+#define REGISTER_VE_REF_KERNEL(type)                    \
+  REGISTER_KERNEL_BUILDER(Name("RefMerge")                \
+                              .Device(DEVICE_VE)        \
+                              .TypeConstraint<type>("T")  \
+                              .HostMemory("value_index"), \
+                          MergeOp);
+REGISTER_VE_REF_KERNEL(bool);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_REF_KERNEL);
+
+#undef REGISTER_VE_KERNEL
+#undef REGISTER_VE_REF_KERNEL
+#endif  // TENSORFLOW_USE_VE
+
 // Special GPU kernels for int32 and string.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel
 // registration requires all int32 inputs and outputs to be in host memory.
@@ -356,7 +379,26 @@ REGISTER_SYCL_HOST_KERNEL(ResourceHandle);
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-REGISTER_KERNEL_BUILDER(Name("Merge").Device(DEVICE_VE), MergeOp);
+#define REGISTER_VE_HOST_KERNEL(type)                   \
+  REGISTER_KERNEL_BUILDER(Name("Merge")                   \
+                              .Device(DEVICE_VE)        \
+                              .HostMemory("inputs")       \
+                              .HostMemory("output")       \
+                              .HostMemory("value_index")  \
+                              .TypeConstraint<type>("T"), \
+                          MergeOp);                       \
+  REGISTER_KERNEL_BUILDER(Name("RefMerge")                \
+                              .Device(DEVICE_VE)        \
+                              .HostMemory("inputs")       \
+                              .HostMemory("output")       \
+                              .HostMemory("value_index")  \
+                              .TypeConstraint<type>("T"), \
+                          MergeOp)
+
+REGISTER_VE_HOST_KERNEL(int32);
+REGISTER_VE_HOST_KERNEL(string);
+REGISTER_VE_HOST_KERNEL(ResourceHandle);
+#undef REGISTER_VE_HOST_KERNEL
 #endif
 
 void EnterOp::Compute(OpKernelContext* context) {
@@ -426,6 +468,47 @@ REGISTER_SYCL_HOST_KERNEL(ResourceHandle);
 #undef REGISTER_SYCL_HOST_KERNEL
 #undef REGISTER_SYCL_HOST_REF_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type) \
+  REGISTER_KERNEL_BUILDER(         \
+      Name("Enter").Device(DEVICE_VE).TypeConstraint<type>("T"), EnterOp)
+REGISTER_VE_KERNEL(bool);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+
+#define REGISTER_VE_REF_KERNEL(type) \
+  REGISTER_KERNEL_BUILDER(             \
+      Name("RefEnter").Device(DEVICE_VE).TypeConstraint<type>("T"), EnterOp)
+REGISTER_VE_REF_KERNEL(bool);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_REF_KERNEL);
+
+#undef REGISTER_VE_KERNEL
+#undef REGISTER_VE_REF_KERNEL
+#define REGISTER_VE_HOST_KERNEL(type)                   \
+  REGISTER_KERNEL_BUILDER(Name("Enter")                   \
+                              .Device(DEVICE_VE)        \
+                              .HostMemory("data")         \
+                              .HostMemory("output")       \
+                              .TypeConstraint<type>("T"), \
+                          EnterOp)
+
+#define REGISTER_VE_HOST_REF_KERNEL(type)               \
+  REGISTER_KERNEL_BUILDER(Name("RefEnter")                \
+                              .Device(DEVICE_VE)        \
+                              .HostMemory("data")         \
+                              .HostMemory("output")       \
+                              .TypeConstraint<type>("T"), \
+                          EnterOp)
+
+REGISTER_VE_HOST_KERNEL(int32);
+REGISTER_VE_HOST_REF_KERNEL(int32);
+REGISTER_VE_HOST_KERNEL(string);
+REGISTER_VE_HOST_REF_KERNEL(string);
+REGISTER_VE_HOST_KERNEL(ResourceHandle);
+
+#undef REGISTER_VE_HOST_KERNEL
+#undef REGISTER_VE_HOST_REF_KERNEL
+#endif  // TENSORFLOW_USE_VE
 
 // Special GPU kernels for int32 and string.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel
@@ -512,6 +595,37 @@ REGISTER_SYCL_HOST_KERNEL(int32);
 REGISTER_SYCL_HOST_KERNEL(string);
 #undef REGISTER_SYCL_HOST_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                         \
+  REGISTER_KERNEL_BUILDER(                                                 \
+      Name("Exit").Device(DEVICE_VE).TypeConstraint<type>("T"), ExitOp); \
+  REGISTER_KERNEL_BUILDER(                                                 \
+      Name("RefExit").Device(DEVICE_VE).TypeConstraint<type>("T"), ExitOp);
+REGISTER_VE_KERNEL(bool);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+
+#undef REGISTER_VE_KERNEL
+#undef REGISTER_VE_REF_KERNEL
+
+#define REGISTER_VE_HOST_KERNEL(type)                   \
+  REGISTER_KERNEL_BUILDER(Name("Exit")                    \
+                              .Device(DEVICE_VE)        \
+                              .HostMemory("data")         \
+                              .HostMemory("output")       \
+                              .TypeConstraint<type>("T"), \
+                          ExitOp);                        \
+  REGISTER_KERNEL_BUILDER(Name("RefExit")                 \
+                              .Device(DEVICE_VE)        \
+                              .HostMemory("data")         \
+                              .HostMemory("output")       \
+                              .TypeConstraint<type>("T"), \
+                          ExitOp)
+
+REGISTER_VE_HOST_KERNEL(int32);
+REGISTER_VE_HOST_KERNEL(string);
+#undef REGISTER_VE_HOST_KERNEL
+#endif  // TENSORFLOW_USE_VE
 
 // Special GPU kernels for int32 and string.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel
@@ -617,6 +731,36 @@ REGISTER_SYCL_HOST_KERNEL(int32);
 REGISTER_SYCL_HOST_KERNEL(string);
 #undef REGISTER_SYCL_HOST_KERNEL
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                            \
+  REGISTER_KERNEL_BUILDER(                                                    \
+      Name("NextIteration").Device(DEVICE_VE).TypeConstraint<type>("T"),    \
+      NextIterationOp);                                                       \
+  REGISTER_KERNEL_BUILDER(                                                    \
+      Name("RefNextIteration").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      NextIterationOp)
+REGISTER_VE_KERNEL(bool);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+
+#undef REGISTER_VE_KERNEL
+
+#define REGISTER_VE_HOST_KERNEL(type)                     \
+  REGISTER_KERNEL_BUILDER(Name("NextIteration")           \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("data")         \
+                              .HostMemory("output")       \
+                              .TypeConstraint<type>("T"), \
+                          NextIterationOp);               \
+  REGISTER_KERNEL_BUILDER(Name("RefNextIteration")        \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("data")         \
+                              .HostMemory("output")       \
+                              .TypeConstraint<type>("T"), \
+                          NextIterationOp)
+REGISTER_VE_HOST_KERNEL(int32);
+REGISTER_VE_HOST_KERNEL(string);
+#endif //TENSORFLOW_USE_VE
 
 LoopCondOp::LoopCondOp(OpKernelConstruction* context) : OpKernel(context) {}
 LoopCondOp::~LoopCondOp() = default;
