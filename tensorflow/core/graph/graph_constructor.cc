@@ -1152,7 +1152,7 @@ Status GraphConstructor::Convert() {
     LOG(WARNING) << "processed=" << processed;
     for (int64 i = 0; i < node_defs_.size(); i++) {
       if (pending_count_[i] != 0) {
-#if 1
+#if 0
         LOG(WARNING) << "PENDING: node" << i << " " << SummarizeNodeDef(*node_defs_[i])
                      << " WITH PENDING COUNT = " << pending_count_[i];
 #else
@@ -1311,7 +1311,7 @@ Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,
 
 Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
                               const GraphDef& gdef, Graph* g) {
-  LOG(WARNING) << __FUNCTION__;
+  VLOG(1) << __FUNCTION__;
   ShapeRefiner refiner(gdef.versions().producer(), g->op_registry());
   return GraphConstructor::Construct(
       opts, gdef.node(), &gdef.versions(), &gdef.library(), g, &refiner,
