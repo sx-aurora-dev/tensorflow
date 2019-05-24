@@ -110,10 +110,10 @@ want to add new kernels or write more efficient kernels, you can build
 veorun_tf by yourself.
 
 llvm-ve is required to build veorun_tf because intrinsic functions provided by
-llvm-ve are used to write efficient kernels.
+llvm-ve are being used to write efficient kernels.
 
 You can install the rpm package for llvm-ve. See [our
-post](https://sxauroratsubasaresearch.github.io/blog/post/2019-05-22-llvm-rpm/).
+post](https://sx-aurora-dev.github.io/blog/post/2019-05-22-llvm-rpm/).
 
 ```
 (tmp)% cd <working directory>
@@ -123,12 +123,10 @@ post](https://sxauroratsubasaresearch.github.io/blog/post/2019-05-22-llvm-rpm/).
 (tmp)% (mkdir build && cd build && cmake3 -DLLVM_DIR=/opt/nec/nosupport/llvm-ve/lib/cmake/llvm .. && make)
 ```
 
-You can use the llvm that is installed into different directory by setting
-LLVM_DIR when you build vetfkernel. You can also specify version of ncc/nc++.
+You can specify version of ncc/nc++.
 
 ```
 (tmp)% (cd build && cmake3 \
-        -DLLVM_DIR=/opt/nec/nosupport/llvm-ve/lib/cmake/llvm \
         -DNCC=/opt/nec/ve/bin/ncc-2.0.8 \
         -DNCXX=/opt/nec/ve/bin/nc++-2.0.8 .. && make)
 ```
