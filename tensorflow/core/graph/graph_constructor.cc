@@ -351,20 +351,13 @@ void GraphConstructor::UpdatePendingCountAndReady(int processed) {
   bool is_next_iteration = IsNextIteration(*node_defs_[processed]);
   for (size_t i = 0; i < outputs_[processed].size(); ++i) {
     const int output = outputs_[processed][i];
-    VLOG(1) << __FUNCTION__ << ": successor" << i << " is node" << output << " "
-        << SummarizeNodeDef(*node_defs_[output])
-        << " current_pending_count=" << pending_count_[output];
     bool is_next_iteration_to_merge_edge =
         is_next_iteration && IsMerge(*node_defs_[output]);
-    VLOG(1) << __FUNCTION__ 
-        << ": is_next_iteration_to_merge_edge=" << is_next_iteration_to_merge_edge;
     if (!is_next_iteration_to_merge_edge) {
       int* current_pending_count = &pending_count_[output];
       CHECK_GT(*current_pending_count, 0);
       (*current_pending_count)--;
       if (*current_pending_count == 0) {
-        VLOG(1) << __FUNCTION__ << ":"
-            << " NewReady " << SummarizeNodeDef(*node_defs_[output]);
         ready_.insert(output);
       }
     }
@@ -984,17 +977,6 @@ void GraphConstructor::PrintCycles() {
 }
 
 Status GraphConstructor::Convert() {
-#if 1
-  VLOG(1) << __PRETTY_FUNCTION__;
-  VLOG(1) << "node_defs_.size()=" << node_defs_.size()
-      << " importing=" << opts_.importing;
-  for (int i = 0; i < node_defs_.size(); ++i) {
-    VLOG(1) << __FUNCTION__ << ":"
-        << " Input node" << i
-        << " " << SummarizeNodeDef(*node_defs_[i])
-        << " pending_count=" << pending_count_[i];
-  }
-#endif
   // Import functions before adding nodes, since imported nodes may refer to
   // functions
   if (library_) {
@@ -1064,8 +1046,6 @@ Status GraphConstructor::Convert() {
 
     DCHECK_EQ(node_def->input_size(), input_already_exists.size());
     TF_RETURN_IF_ERROR(ValidateColocationConstraints(*node_def));
-    VLOG(1) << __FUNCTION__ << ": ReadyNode "
-        << SummarizeNodeDef(*node_def);
     for (int i = 0; i < node_def->input_size(); ++i) {
       TensorId tensor_id = ParseTensorName(node_def->input(i));
       Node* src_node;
@@ -1149,16 +1129,10 @@ Status GraphConstructor::Convert() {
   if (processed < node_defs_.size()) {
     LOG(WARNING) << "IN " << __func__ << " " << (node_defs_.size() - processed)
                  << " NODES IN A CYCLE";
-    LOG(WARNING) << "processed=" << processed;
     for (int64 i = 0; i < node_defs_.size(); i++) {
       if (pending_count_[i] != 0) {
-#if 0
-        LOG(WARNING) << "PENDING: node" << i << " " << SummarizeNodeDef(*node_defs_[i])
-                     << " WITH PENDING COUNT = " << pending_count_[i];
-#else
         LOG(WARNING) << "PENDING: " << SummarizeNodeDef(*node_defs_[i])
                      << " WITH PENDING COUNT = " << pending_count_[i];
-#endif
       }
     }
     PrintCycles();
@@ -1311,7 +1285,6 @@ Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,
 
 Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
                               const GraphDef& gdef, Graph* g) {
-  VLOG(1) << __FUNCTION__;
   ShapeRefiner refiner(gdef.versions().producer(), g->op_registry());
   return GraphConstructor::Construct(
       opts, gdef.node(), &gdef.versions(), &gdef.library(), g, &refiner,

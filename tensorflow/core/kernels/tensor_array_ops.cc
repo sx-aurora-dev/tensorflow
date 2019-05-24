@@ -524,38 +524,6 @@ REGISTER_GPU(bfloat16);
 
 #endif  // GOOGLE_CUDA
 
-#if 0
-#if TENSORFLOW_USE_VE
-
-#define REGISTER_VE(type)                                      \
-  REGISTER_KERNEL_BUILDER(Name("TensorArrayWrite")              \
-                              .Device(DEVICE_VE)               \
-                              .TypeConstraint<type>("T")        \
-                              .HostMemory("handle")             \
-                              .HostMemory("index"),             \
-                          TensorArrayWriteOp<VEDevice, type>); \
-  REGISTER_KERNEL_BUILDER(Name("TensorArrayWriteV2")            \
-                              .Device(DEVICE_VE)               \
-                              .TypeConstraint<type>("T")        \
-                              .HostMemory("handle")             \
-                              .HostMemory("index"),             \
-                          TensorArrayWriteOp<VEDevice, type>); \
-  REGISTER_KERNEL_BUILDER(Name("TensorArrayWriteV3")            \
-                              .Device(DEVICE_VE)               \
-                              .TypeConstraint<type>("T")        \
-                              .HostMemory("handle")             \
-                              .HostMemory("index"),             \
-                          TensorArrayWriteOp<VEDevice, type>);
-
-TF_CALL_VE_NUMBER_TYPES(REGISTER_VE);
-TF_CALL_complex64(REGISTER_VE);
-TF_CALL_complex128(REGISTER_VE);
-REGISTER_VE(bfloat16);
-#undef REGISTER_VE
-
-#endif  // TENSORFLOW_USE_VE
-#endif
-
 // READ ***********************************************************************
 
 template <typename Device, typename T>
