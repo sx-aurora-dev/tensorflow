@@ -265,6 +265,37 @@ REGISTER_GPU(bfloat16);
 
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+
+#define REGISTER_VE(type)                                   \
+  REGISTER_KERNEL_BUILDER(Name("TensorArray")                \
+                              .Device(DEVICE_VE)            \
+                              .TypeConstraint<type>("dtype") \
+                              .HostMemory("size")            \
+                              .HostMemory("handle"),         \
+                          TensorArrayOp);                    \
+  REGISTER_KERNEL_BUILDER(Name("TensorArrayV2")              \
+                              .Device(DEVICE_VE)            \
+                              .TypeConstraint<type>("dtype") \
+                              .HostMemory("size")            \
+                              .HostMemory("handle"),         \
+                          TensorArrayOp);                    \
+  REGISTER_KERNEL_BUILDER(Name("TensorArrayV3")              \
+                              .Device(DEVICE_VE)            \
+                              .TypeConstraint<type>("dtype") \
+                              .HostMemory("size")            \
+                              .HostMemory("handle"),         \
+                          TensorArrayOp);
+
+TF_CALL_GPU_NUMBER_TYPES(REGISTER_VE);
+TF_CALL_complex64(REGISTER_VE);
+TF_CALL_complex128(REGISTER_VE);
+TF_CALL_int64(REGISTER_VE);
+REGISTER_VE(bfloat16);
+#undef REGISTER_VE
+
+#endif  // TENSORFLOW_USE_VE
+
 // GRADIENT *******************************************************************
 // Note that this op may have an optional third input. If present, it represents
 // a shape value. It indicates that element shape of this gradient array is that
@@ -492,6 +523,38 @@ REGISTER_GPU(bfloat16);
 #undef REGISTER_GPU
 
 #endif  // GOOGLE_CUDA
+
+#if 0
+#if TENSORFLOW_USE_VE
+
+#define REGISTER_VE(type)                                      \
+  REGISTER_KERNEL_BUILDER(Name("TensorArrayWrite")              \
+                              .Device(DEVICE_VE)               \
+                              .TypeConstraint<type>("T")        \
+                              .HostMemory("handle")             \
+                              .HostMemory("index"),             \
+                          TensorArrayWriteOp<VEDevice, type>); \
+  REGISTER_KERNEL_BUILDER(Name("TensorArrayWriteV2")            \
+                              .Device(DEVICE_VE)               \
+                              .TypeConstraint<type>("T")        \
+                              .HostMemory("handle")             \
+                              .HostMemory("index"),             \
+                          TensorArrayWriteOp<VEDevice, type>); \
+  REGISTER_KERNEL_BUILDER(Name("TensorArrayWriteV3")            \
+                              .Device(DEVICE_VE)               \
+                              .TypeConstraint<type>("T")        \
+                              .HostMemory("handle")             \
+                              .HostMemory("index"),             \
+                          TensorArrayWriteOp<VEDevice, type>);
+
+TF_CALL_VE_NUMBER_TYPES(REGISTER_VE);
+TF_CALL_complex64(REGISTER_VE);
+TF_CALL_complex128(REGISTER_VE);
+REGISTER_VE(bfloat16);
+#undef REGISTER_VE
+
+#endif  // TENSORFLOW_USE_VE
+#endif
 
 // READ ***********************************************************************
 
@@ -1435,6 +1498,24 @@ REGISTER_KERNEL_BUILDER(Name("TensorArraySizeV3")
                             .HostMemory("handle")
                             .HostMemory("size"),
                         TensorArraySizeOp);
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("TensorArraySize")
+                            .Device(DEVICE_VE)
+                            .HostMemory("handle")
+                            .HostMemory("size"),
+                        TensorArraySizeOp);
+REGISTER_KERNEL_BUILDER(Name("TensorArraySizeV2")
+                            .Device(DEVICE_VE)
+                            .HostMemory("handle")
+                            .HostMemory("size"),
+                        TensorArraySizeOp);
+REGISTER_KERNEL_BUILDER(Name("TensorArraySizeV3")
+                            .Device(DEVICE_VE)
+                            .HostMemory("handle")
+                            .HostMemory("size"),
+                        TensorArraySizeOp);
+#endif // TENSORFLOW_USE_VE
 
 // CLOSE
 // **********************************************************************

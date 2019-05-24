@@ -82,6 +82,7 @@ GraphExecutionState::~GraphExecutionState() {
 /* static */ Status GraphExecutionState::MakeForBaseGraph(
     GraphDef* graph_def, const GraphExecutionStateOptions& options,
     std::unique_ptr<GraphExecutionState>* out_state) {
+  VLOG(2) << __FUNCTION__;
 #ifndef __ANDROID__
   VLOG(4) << "Graph proto is \n" << graph_def->DebugString();
 #endif  // __ANDROID__
@@ -107,6 +108,7 @@ GraphExecutionState::~GraphExecutionState() {
     const BuildGraphOptions& subgraph_options,
     std::unique_ptr<GraphExecutionState>* out_state,
     std::unique_ptr<ClientGraph>* out_client_graph) {
+  VLOG(2) << __FUNCTION__;
   DCHECK(options.session_options->config.graph_options().place_pruned_graph());
   // NOTE(mrry): This makes a copy of `graph_def`, which is
   // regrettable. We could make `GraphDef` objects sharable between
@@ -547,6 +549,7 @@ Status GraphExecutionState::PruneGraph(
 
 Status GraphExecutionState::InitBaseGraph(const BuildGraphOptions& options) {
   const GraphDef* graph_def = &original_graph_def_;
+  VLOG(2) << __FUNCTION__;
 
   std::unique_ptr<Graph> new_graph(new Graph(OpRegistry::Global()));
   GraphConstructorOptions opts;

@@ -137,6 +137,9 @@ bool NeedSameDeviceSendRecv(const Edge* edge, const GraphInfo& info) {
       DCHECK(src_it != info.output_types.end());
       auto dst_it = info.input_types.find({dst->id(), dst_port});
       DCHECK(dst_it != info.input_types.end());
+      VLOG(1) << __FUNCTION__ << ":"
+          << " src_memory_type=" << src_it->second
+          << " dst_memory_type=" << dst_it->second;
       return src_it->second != dst_it->second;
     }
   }
@@ -976,6 +979,8 @@ void SetIncarnation(const PartitionOptions& opts, GraphDef* gdef) {
 
 Status Partition(const PartitionOptions& opts, Graph* g,
                  std::unordered_map<string, GraphDef>* partitions) {
+  VLOG(1) << __FUNCTION__ << ":"
+      " g->num_ndoes=" << g->num_nodes();
   Status status;
   partitions->clear();
 
@@ -1054,6 +1059,11 @@ Status Partition(const PartitionOptions& opts, Graph* g,
       }
     }
 
+    VLOG(1) << __FUNCTION__ << ":"
+        << " dst=" << SummarizeNode(*dst)
+        << " dst->in_edges().size=" << dst->in_edges().size()
+        << " inputs.size=" << inputs.size();
+
     if (num_input_edges != dst->num_inputs()) {
       return errors::InvalidArgument("Incomplete graph, missing ",
                                      (dst->num_inputs() - num_input_edges),
@@ -1074,6 +1084,8 @@ Status Partition(const PartitionOptions& opts, Graph* g,
             !IsRefType(src->output_type(edge->src_output()))) {
           ref_control_inputs.push_back(src->name());
         }
+        VLOG(1) << __FUNCTION__ << ":"
+            << "continue after AddInput";
         continue;
       }
 
