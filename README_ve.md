@@ -130,3 +130,9 @@ You can specify version of ncc/nc++.
         -DNCC=/opt/nec/ve/bin/ncc-2.0.8 \
         -DNCXX=/opt/nec/ve/bin/nc++-2.0.8 .. && make)
 ```
+
+Your veorun_tf can be used by setting VEORUN_BIN.
+
+```
+(tmp)% VEORUN_BIN=<path to your veorun_tf> python ...
+```
