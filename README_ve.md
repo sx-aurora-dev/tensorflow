@@ -30,7 +30,7 @@ example to enable huge pages.
 ### Install required packages
 
 ```
-% yum install centos-releas-scl
+% yum install centos-release-scl
 % yum install rh-python36 veoffload veoffload-veorun
 ```
 
