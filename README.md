@@ -1,14 +1,7 @@
-# Tensorflow for SX-Aurora TSUBASA
+# TensorFlow for SX-Aurora TSUBASA
 
-This repository includes tensorflow with SX-Aurora TSUBASA's VectorEngine support(ve-tf).
-
-We have four repositories:
-- [tensorflow](http://socsv218.svp.cl.nec.co.jp:3002/ve-tensorflow/tensorflow) (here)
-- [vetfkernel](http://socsv218:3002/ve-tensorflow/vetfkernel)
-- [vednn](http://socsv218:3002/ve-tensorflow/vednn)
-- [samples](http://socsv218:3002/ve-tensorflow/samples)
-
-If you are a developper, see [[README_ve.md]] for details.
+This repository includes TensorFlow with SX-Aurora TSUBASA's VectorEngine
+support. See [[README_ve.dm]] for details.
 
 
 <div align="center">
