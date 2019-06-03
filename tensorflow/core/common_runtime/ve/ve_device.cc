@@ -13,8 +13,6 @@
 
 #define VEO_ASYNC
 
-#define LOCK_VEO2
-
 #define USE_DMA
 #ifdef USE_DMA
 #include <sys/ipc.h>
@@ -297,53 +295,6 @@ class VEO {
 #endif
 };
 
-#ifdef LOCK_VEO2
-class VEOLock : public VEO {
-  public:
-    virtual uint64_t alloc_mem(size_t size) override {
-      //VLOG(2) << "VEOLock::alloc_mem: this=" << this;
-      mutex_lock guard(lock_);
-      return VEO::alloc_mem(size);
-    }
-
-    virtual int free_mem(uint64_t addr) override {
-      mutex_lock guard(lock_);
-      return VEO::free_mem(addr);
-    }
-
-    virtual Status write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) override {
-      mutex_lock guard(lock_);
-      return VEO::write_mem(ve_addr, vh_buff, len);
-    }
-
-    virtual Status read_mem(void* vh_buff, uint64_t ve_addr, size_t len) override {
-      mutex_lock guard(lock_);
-      return VEO::read_mem(vh_buff, ve_addr, len);
-    }
-
-    virtual Status compute(const std::string& name, const void* arg, size_t len,
-                   const OpKernel* op) override {
-      //VLOG(2) << "VEOLock::compute: this=" << this;
-      mutex_lock guard(lock_);
-      return VEO::compute(name, arg, len, op);
-    }
-
-  protected:
-    virtual uint64_t call(uint64_t sym, const Args& a) override {
-      mutex_lock guard(lock_);
-      return VEO::call(sym, a);
-    }
-
-    virtual Status wait(uint64_t req_id, uint64_t* pRetval = NULL) override {
-      mutex_lock guard(lock_);
-      return VEO::wait(req_id, pRetval);
-    }
-
-  private:
-    mutex lock_;
-};
-#endif
-
 class KernelStack
 {
   public:
@@ -419,7 +370,7 @@ class KernelStack
 };
 
 #ifdef VEO_ASYNC
-class VEOAsync : public VEOLock
+class VEOAsync : public VEO
 {
   public:
     VEOAsync()  {
@@ -663,7 +614,7 @@ Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
     << " bytes. Can be changed by TF_DMA_BUF_SIZE";
 
   if (size == 0) {
-    VLOG(2) << "VEO::init: DMA is disabled by a user";
+    LOG(WARNING) << "VE: DMA is disabled because TF_DMA_BUF_SIZE is 0 byte";
     dma_.available = false;
     return Status::OK();
   }
@@ -674,7 +625,7 @@ Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
   VLOG(2) << "VEO::init: shmid=" << shmid;
   if (shmid == -1) {
     // When hugetable is not available, DMA is disabled.
-    VLOG(2) << "VEO:init: DMA is not avaiable";
+    LOG(WARNING) << "VE: DMA is disable because shmget with SHM_HUGETLB was failed";
     dma_.available = false;
     return Status::OK();
   }
@@ -956,14 +907,6 @@ class VEOFactory {
       if (!veo_) {
 #if defined(VEO_ASYNC)
         veo_ = new VEOAsync;
-#elif defined(LOCK_VEO2)
-        if (getenv("TF_NOLOCK_VEO2")) {
-          VLOG(2) << "VEOFactory: create VEO";
-          veo_ = new VEO;
-        } else {
-          VLOG(2) << "VEOFactory: create VEOLock";
-          veo_ = new VEOLock;
-        }
 #else
         veo_ = new VEO;
 #endif

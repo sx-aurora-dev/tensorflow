@@ -1,6 +1,53 @@
-# Tensroflow for VE
+# TensroFlow with VE support
 
-Prebuild packages will be available soon.
+You can use prebuild packages if you are interested in using TF on SX-Aurora.
+You can also modifiy the source code and build it.
+
+## Using prebuild packages
+
+We are providing two whl files on github.
+
+- tensorflow_ve-1.13.1-cp36-cp36m-linux_x86_64.whl
+- Keras-2.2.4-py3-none-any.whl
+
+We have tested on CentOS 7.5 and:
+
+- veos: 2.0.3
+- veoffload: 2.0.3
+- python: 3.6
+
+### Enable Huge Page for DMA
+
+If huge page is enabled on VH, data is transfered using [VE
+DMA](https://veos-sxarr-nec.github.io/libsysve/group__vedma.html).  Here is an
+example to enable huge pages.
+
+    % echo 1024 > /proc/sys/vm/nr_hugepages
+
+### Install required packages
+
+```
+% yum install centos-releas-scl
+% yum install rh-python36 veoffload veoffload-veorun
+```
+
+### Create virtualenv with python 3.6
+
+Create virtualenv and update packages after enabling scl, then install prebuild
+packages.
+
+```
+$ scl enable rh-python36 bash
+$ virtualenv ~/.virtualenvs/tmp
+$ source ~/.virtualenvs/tmp/bin/activate
+(tmp)$ pip install -U pip
+(tmp)$ pip install -U six numpy wheel Keras-Preprocessing setuptools
+(tmp)% pip install -U tensorflow_ve-1.13.1-cp36-cp36m-linux_x86_64.whl
+(tmp)% pip install -U Keras-2.2.4-py3-none-any.whl
+```
+
+Now you can run your scripts.
+
 
 ## Building TensorFlow
 
@@ -18,19 +65,11 @@ Web](https://sx-aurora.github.io/posts/VEOS-yum-repository/).
 
 ### Setup
 
-#### Enable Huge Page for DMA
-
-If huge page is enabled on VH, data is transfered using [VE
-DMA](https://veos-sxarr-nec.github.io/libsysve/group__vedma.html).  Here is an
-example to enable huge pages.
-
-    % echo 1024 > /proc/sys/vm/nr_hugepages
-
-#### Install required packages
+Install required packages and create virtualenv as described above. In
+addition, you have to install devtoolset-8 and rh-git29.
 
 ```
-% yum install centos-releas-scl
-% yum install rh-python36 devtoolset-8 rh-git29 veoffload-devel veoffload-veorun-devel
+$ yum install devtoolset-8 rh-git29
 ```
 
 Install java-11-openjdk that is required by bazel.
@@ -45,18 +84,6 @@ Install bazel. 0.24.1 or higher is required.
 % cd /etc/yum.repos.d
 % wget https://copr.fedorainfracloud.org/coprs/vbatts/bazel/repo/epel-7/vbatts-bazel-epel-7.repo
 % yum install bazel
-```
-
-#### Create virtualenv with python 3.6
-
-Create virtualenv and update packages after enabling scl.
-
-```
-$ scl enable rh-python36 devtoolset-8 rh-git29 bash
-$ virtualenv ~/.virtualenvs/tmp
-$ source ~/.virtualenvs/tmp/bin/activate
-(tmp)$ pip install -U pip
-(tmp)$ pip install -U six numpy wheel Keras-Preprocessing setuptools
 ```
 
 ### Build source code
@@ -81,25 +108,6 @@ Build keras.
 
 You can find a package in `dist` directory.
 
-### Install packages 
-
-```
-(tmp)% pip install -U tensorflow_ve-1.13.1-cp36-cp36m-linux_x86_64.whl
-(tmp)% pip install -U Keras-2.2.4-py3-none-any.whl
-```
-
-### Run samples
-
-Work in the virtualenv.
-
-```
-(tmp)% cd <working directory>
-(tmp)% git clone <url of sampels> samples
-(tmp)% samples
-(tmp)% python mnist_cnn.py
-```
-
-
 ## (option) Build veorun_tf
 
 `veorun_tf` is an executable for VE and includes kernel implementaions that are
@@ -110,7 +118,7 @@ want to add new kernels or write more efficient kernels, you can build
 veorun_tf by yourself.
 
 llvm-ve is required to build veorun_tf because intrinsic functions provided by
-llvm-ve are being used to write efficient kernels.
+llvm-ve are used to write efficient kernels.
 
 You can install the rpm package for llvm-ve. See [our
 post](https://sx-aurora-dev.github.io/blog/post/2019-05-22-llvm-rpm/).
