@@ -16,6 +16,9 @@ We have tested on CentOS 7.5 and:
 - veoffload: 2.0.3
 - python: 3.6
 
+We have installed VEOS and veoffload using [VEOS yum Repository on the
+Web](https://sx-aurora.github.io/posts/VEOS-yum-repository/).
+
 ### Enable Huge Page for DMA
 
 If huge page is enabled on VH, data is transfered using [VE
@@ -51,25 +54,20 @@ Now you can run your scripts.
 
 ## Building TensorFlow
 
-We have tested on CentOS 7.5 and:
+We have tested on above envirionement with:
 
-- ncc/nc++: 2.1.27
-- llvm/clang: 1.1.0
-- veos: 2.0.3
-- veoffload: 2.0.3
-- bazel: 0.25.2
-- python: 3.6
+- bazel 0.25.2
+- gcc 8.2.1 (devtoolset-8)
+- git 2.9.3 (rh-git29)
 
-We have installed VEOS and veoffload using [VEOS yum Repository on the
-Web](https://sx-aurora.github.io/posts/VEOS-yum-repository/).
 
 ### Setup
 
 Install required packages and create virtualenv as described above. In
-addition, you have to install devtoolset-8 and rh-git29.
+addition, you have to install some packages.
 
 ```
-$ yum install devtoolset-8 rh-git29
+$ yum install devtoolset-8 rh-git29 veoffload-devel veoffload-veorun-devel
 ```
 
 Install java-11-openjdk that is required by bazel.
@@ -78,7 +76,7 @@ Install java-11-openjdk that is required by bazel.
 - http://mirror.centos.org/centos/7/updates/x86_64/Packages/java-11-openjdk-devel-11.0.3.7-0.el7_6.x86_64.rpm
 - http://mirror.centos.org/centos/7/updates/x86_64/Packages/java-11-openjdk-headless-11.0.3.7-0.el7_6.x86_64.rpm
 
-Install bazel. 0.24.1 or higher is required.
+Install bazel.
 
 ```
 % cd /etc/yum.repos.d
@@ -144,3 +142,9 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 ```
 (tmp)% VEORUN_BIN=<path to your veorun_tf> python ...
 ```
+
+We have tested on above envirionement with:
+
+- llvm-ve 1.1.0
+- ncc/nc++ 2.1.1
+
