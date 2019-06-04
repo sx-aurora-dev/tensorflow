@@ -54,7 +54,7 @@ Now you can run your scripts.
 
 ## Building TensorFlow
 
-We have tested on above envirionement with:
+We have tested on above envirionment with:
 
 - bazel 0.25.2
 - gcc 8.2.1 (devtoolset-8)
@@ -143,7 +143,7 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 (tmp)% VEORUN_BIN=<path to your veorun_tf> python ...
 ```
 
-We have tested on above envirionement with:
+We have tested on above envirionment with:
 
 - llvm-ve 1.1.0
 - ncc/nc++ 2.1.1
