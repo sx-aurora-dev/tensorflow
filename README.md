@@ -1,7 +1,7 @@
 # TensorFlow for SX-Aurora TSUBASA
 
 This repository includes TensorFlow with SX-Aurora TSUBASA's VectorEngine
-support. See [[README_ve.md]] for details.
+support. See [README_ve.md](README_ve.md) for details.
 
 
 <div align="center">
