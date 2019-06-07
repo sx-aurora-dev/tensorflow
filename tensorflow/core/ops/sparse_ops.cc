@@ -82,7 +82,7 @@ REGISTER_OP("SparseAdd")
       return Status::OK();
     });
 
-REGISTER_OP("VESparseTensor")
+REGISTER_OP("ConvertVESparseTensor")
     .Input("indices: Tindices")
     .Input("values: T")
     .Input("shape: int64")

@@ -2155,9 +2155,9 @@ def convert_ve_sparse_tensor_imp(
                                 shape,
                                 name=None
                                 ):
-    with ops.name_scope(name, "VESparseTensor",
+    with ops.name_scope(name, "ConvertVESparseTensor",
                         [indices,values,shape]) as name:
-      return gen_sparse_ops.ve_sparse_tensor(
+      return gen_sparse_ops.convert_ve_sparse_tensor(
                                 indices=indices,
                                 values=values,
                                 shape=shape)

@@ -22,9 +22,9 @@ namespace tensorflow {
 #if 0
 //for CPU
 template <typename T, typename Tindices>
-class VESparseTensorCPUOp : public OpKernel {
+class ConvertVESparseTensorCPUOp : public OpKernel {
 public:
-    explicit VESparseTensorCPUOp(OpKernelConstruction* ctx)
+    explicit ConvertVESparseTensorCPUOp(OpKernelConstruction* ctx)
         : OpKernel(ctx) {
 
         fprintf(stderr,"test\n");
@@ -76,20 +76,20 @@ public:
 
 
 REGISTER_KERNEL_BUILDER(                       \
-        Name("VESparseTensor")            \
+        Name("ConvertVESparseTensor")            \
         .Device(DEVICE_CPU)                    \
         .TypeConstraint<float>("T") \
         .TypeConstraint<int64>("Tindices")            \
         .HostMemory("shape"),                \
-        VESparseTensorCPUOp<float, int64>);
+        ConvertVESparseTensorCPUOp<float, int64>);
 
 #endif
 
 //for VE
 template <typename T, typename Tindices>
-class VESparseTensorOp : public VEOpKernel {
+class ConvertVESparseTensorOp : public VEOpKernel {
 public:
-    explicit VESparseTensorOp(OpKernelConstruction* ctx)
+    explicit ConvertVESparseTensorOp(OpKernelConstruction* ctx)
         : VEOpKernel(ctx) {
 
         convert_flag = true;
@@ -194,12 +194,12 @@ private:
 
 
 REGISTER_KERNEL_BUILDER(                       \
-        Name("VESparseTensor")            \
+        Name("ConvertVESparseTensor")            \
         .Device(DEVICE_VE)                    \
         .TypeConstraint<float>("T") \
         .TypeConstraint<int64>("Tindices")            \
         .HostMemory("shape"),                \
-        VESparseTensorOp<float, int64>);
+        ConvertVESparseTensorOp<float, int64>);
 
 #endif
 

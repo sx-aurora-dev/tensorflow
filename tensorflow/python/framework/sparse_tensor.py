@@ -99,18 +99,9 @@ class SparseTensor(_TensorLike, composite_tensor.CompositeTensor):
 
   @classmethod
   def from_value(cls, sparse_tensor_value):
-    print("from_value: use ve sparse = {}".format(cls.use_ve_sparse))
     if not is_sparse(sparse_tensor_value):
       raise TypeError("Neither a SparseTensor nor SparseTensorValue: %s." %
                       sparse_tensor_value)
-    if(cls.use_ve_sparse):
-        return SparseTensor(
-            indices=sparse_tensor_value.indices,
-            values=sparse_tensor_value.values,
-            dense_shape=sparse_tensor_value.dense_shape,
-            use_ve_sparse=True,
-            ve_indices=cls.ve_indices,
-            ve_values=cls.ve_values)
     return SparseTensor(
         indices=sparse_tensor_value.indices,
         values=sparse_tensor_value.values,
@@ -282,7 +273,7 @@ class SparseTensor(_TensorLike, composite_tensor.CompositeTensor):
     _override_helper(SparseTensor, operator, func)
 
   def _to_components(self):
-    return (self._ve_indices, self._ve_values, self._dense_shape)
+    return (self._indices, self._values, self._dense_shape)
 
   @classmethod
   def _from_components(cls, components, metadata):
@@ -305,7 +296,7 @@ class SparseTensor(_TensorLike, composite_tensor.CompositeTensor):
 
   @property
   def _is_graph_tensor(self):
-    return hasattr(self._ve_values, "graph")
+    return hasattr(self._values, "graph")
 
   def consumers(self):
     return self._consumers()
