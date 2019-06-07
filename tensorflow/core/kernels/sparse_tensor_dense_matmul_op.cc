@@ -165,6 +165,9 @@ private:
     bool adjoint_b_;
 };
 
+
+
+
 #define REGISTER_CPU(TypeT, TypeIndex)           \
     REGISTER_KERNEL_BUILDER(                       \
     Name("SparseTensorDenseMatMul")            \
@@ -187,8 +190,8 @@ REGISTER_KERNELS_CPU(complex128);
 
 
 
-#ifdef TENSORFLOW_USE_VE
 
+#ifdef TENSORFLOW_USE_VE
 
 
 
@@ -243,6 +246,7 @@ public:
                     errors::InvalidArgument("Number of columns of a_indices does not match "
                                             "number of entries in a_shape"));
 #endif
+
 
 
         auto a_shape_t = a_shape->vec<int64>();

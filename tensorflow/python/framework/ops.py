@@ -65,6 +65,8 @@ from tensorflow.python.util.deprecation import deprecated_args
 from tensorflow.python.util.lazy_loader import LazyLoader
 from tensorflow.python.util.tf_export import tf_export
 
+
+
 # This is to avoid a circular dependency: ops -> tensor_spec -> ops
 tensor_spec = LazyLoader(
     "tensor_spec", globals(),
@@ -1025,6 +1027,9 @@ _tensor_conversion_func_registry = {
 _tensor_conversion_func_cache = {}
 _tensor_conversion_func_lock = threading.Lock()
 register_dense_tensor_like_type(Tensor)
+
+
+
 
 
 @tf_export(v1=["convert_to_tensor"])
@@ -6724,3 +6729,16 @@ def _is_keras_symbolic_tensor(x):
 
 
 register_tensor_conversion_function(Operation, _operation_conversion_error)
+
+
+
+from tensorflow.python.ops import sparse_ops
+
+@tf_export(v1=["convert_to_ve_sparse_tensor"])
+def convert_to_ve_sparse_tensor(indices,values,dense_shape):
+
+  return internal_convert_to_ve_sparse_tensor(indices,values,dense_shape)
+
+def internal_convert_to_ve_sparse_tensor(indices,values,dense_shape):
+  return sparse_ops.convert_ve_sparse_tensor_imp(indices,values,dense_shape)
+
