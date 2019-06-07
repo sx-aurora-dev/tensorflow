@@ -417,7 +417,7 @@ class VESliceOp : public OpKernel {
     if (output_shape.num_elements() > 0) {
 
 // todo : add larger dim
-#define MAX_INPUT_DIMS 2
+#define MAX_INPUT_DIMS 4
 
       OP_REQUIRES(
           context, input_dims <= MAX_INPUT_DIMS ,
