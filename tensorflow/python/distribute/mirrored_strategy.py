@@ -217,7 +217,6 @@ def _create_mirrored_variable(strategy, device_map, logical_device,  # pylint: d
   elif synchronization == variable_scope.VariableSynchronization.ON_READ:
     # Variables that are to be synced on read are replica local.
     is_sync_on_read = True
-    kwargs["trainable"] = False
   elif (synchronization == variable_scope.VariableSynchronization.ON_WRITE or
         synchronization == variable_scope.VariableSynchronization.AUTO):
     # `AUTO` synchronization for `MirroredStrategy` is `ON_WRITE`.
@@ -615,6 +614,21 @@ class MirroredExtended(distribute_lib.StrategyExtendedV1):
   def _experimental_make_numpy_dataset(self, numpy_input, session):
     return numpy_dataset.one_host_numpy_dataset(
         numpy_input, self._host_input_device, session)
+
+  def _experimental_distribute_datasets_from_function(self, dataset_fn):
+    input_contexts = []
+    num_workers = self._input_workers.num_workers
+    for i in range(num_workers):
+      input_contexts.append(distribute_lib.InputContext(
+          num_input_pipelines=num_workers,
+          input_pipeline_id=i,
+          num_replicas_in_sync=self._num_replicas_in_sync))
+
+    return input_lib.DistributedDatasetsFromFunction(
+        dataset_fn,
+        self._input_workers,
+        input_contexts,
+        self._container_strategy())
 
   # TODO(priyag): Deal with OutOfRange errors once b/111349762 is fixed.
   def _experimental_run_steps_on_iterator(self, fn, iterator, iterations,

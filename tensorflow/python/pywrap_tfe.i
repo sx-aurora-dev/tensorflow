@@ -14,12 +14,15 @@ limitations under the License.
 ==============================================================================*/
 
 %include "tensorflow/python/platform/base.i"
+%include "tensorflow/c/tf_datatype.h"
 %include "tensorflow/c/tf_status.h"
 
 %ignore "";
 
 %rename("%s") TF_SetXlaEnableLazyCompilation;
-%rename("%s") TF_SetXLaAutoJitMode;
+%rename("%s") TF_SetXlaAutoJitMode;
+%rename("%s") TF_SetXlaConstantFoldingDisabled;
+%rename("%s") TF_GetXlaConstantFoldingDisabled;
 %rename("%s") TF_SetXlaMinClusterSize;
 %rename("%s") TFE_NewContext;
 %rename("%s") TFE_DeleteContext;

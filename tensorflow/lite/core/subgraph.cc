@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "tensorflow/lite/core/subgraph.h"
 
-#include <complex>
-
 #include "tensorflow/lite/arena_planner.h"
 #include "tensorflow/lite/c/c_api_internal.h"
 #include "tensorflow/lite/context_util.h"
@@ -24,6 +22,7 @@ limitations under the License.
 #include "tensorflow/lite/graph_info.h"
 #include "tensorflow/lite/minimal_logging.h"
 #include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/util.h"
 
 namespace tflite {
 
@@ -455,40 +454,9 @@ TfLiteStatus Subgraph::BytesRequired(TfLiteType type, const int* dims,
   TF_LITE_ENSURE(context_, bytes != nullptr);
   size_t count = 1;
   for (int k = 0; k < dims_size; k++) count *= dims[k];
-  switch (type) {
-    case kTfLiteFloat32:
-      *bytes = sizeof(float) * count;
-      break;
-    case kTfLiteInt16:
-      *bytes = sizeof(int16_t) * count;
-      break;
-    case kTfLiteInt32:
-      *bytes = sizeof(int32_t) * count;
-      break;
-    case kTfLiteUInt8:
-      *bytes = sizeof(uint8_t) * count;
-      break;
-    case kTfLiteInt64:
-      *bytes = sizeof(int64_t) * count;
-      break;
-    case kTfLiteBool:
-      *bytes = sizeof(bool) * count;
-      break;
-    case kTfLiteComplex64:
-      *bytes = sizeof(std::complex<float>) * count;
-      break;
-    case kTfLiteInt8:
-      *bytes = sizeof(int8_t) * count;
-      break;
-    case kTfLiteFloat16:
-      *bytes = sizeof(TfLiteFloat16) * count;
-      break;
-    default:
-      ReportError(
-          "Only float32, int8, int16, int32, int64, uint8, bool, complex64 "
-          "supported currently.");
-      return kTfLiteError;
-  }
+  size_t type_size = 0;
+  TF_LITE_ENSURE_OK(context_, GetSizeOfType(context_, type, &type_size));
+  *bytes = type_size * count;
   return kTfLiteOk;
 }
 
@@ -598,6 +566,7 @@ TfLiteStatus Subgraph::AddNodeWithParameters(
   }
 
   node.delegate = nullptr;
+  // Copying of registration is required to support unresolved custom ops.
   node_and_reg.second = *registration;
   execution_plan_.push_back(new_node_index);
   return kTfLiteOk;
@@ -629,6 +598,28 @@ TfLiteStatus Subgraph::ResizeInputTensor(int tensor_index,
 
   state_ = kStateUninvokable;
   return ResizeTensorImpl(tensor, ConvertVectorToTfLiteIntArray(dims));
+}
+
+TfLiteStatus Subgraph::OpPrepare(const TfLiteRegistration& op_reg,
+                                 TfLiteNode* node) {
+  if (op_reg.prepare == nullptr) {
+    // Check if it's an unresolved custom op.
+    if (op_reg.builtin_code == BuiltinOperator_CUSTOM &&
+        op_reg.custom_name != nullptr && op_reg.invoke == &UnresolvedOpInvoke) {
+      if (IsFlexOp(op_reg.custom_name)) {
+        ReportError(
+            "Regular TensorFlow ops are not supported by this interpreter. "
+            "Make sure you invoke the Flex delegate before inference.");
+      } else {
+        ReportError("Encountered unresolved custom op: %s.",
+                    op_reg.custom_name);
+      }
+      return kTfLiteError;
+    }
+    // Resolved ops can have a null Prepare function.
+    return kTfLiteOk;
+  }
+  return op_reg.prepare(context_, node);
 }
 
 TfLiteStatus Subgraph::PrepareOpsStartingAt(

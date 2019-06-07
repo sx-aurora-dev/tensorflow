@@ -8,9 +8,8 @@ package(
         "//nlp/projects/atc/tf/ops:__pkg__",
         "//tensorflow:internal",
     ],
+    licenses = ["notice"],  # Apache 2.0
 )
-
-licenses(["notice"])  # Apache 2.0
 
 exports_files(["LICENSE"])
 
@@ -41,7 +40,6 @@ py_library(
         ":ragged_string_ops",
         ":ragged_tensor",
         ":ragged_tensor_shape",
-        ":ragged_tensor_spec",
         ":ragged_tensor_value",
         ":ragged_util",
         ":ragged_where_op",
@@ -433,18 +431,6 @@ py_library(
         "//tensorflow/python:util",
         "//tensorflow/python:variables",
         "//third_party/py/numpy",
-    ],
-)
-
-py_library(
-    name = "ragged_tensor_spec",
-    srcs = ["ragged_tensor_spec.py"],
-    srcs_version = "PY2AND3",
-    deps = [
-        ":ragged_tensor",
-        "//tensorflow/python:dtypes",
-        "//tensorflow/python:tensor_shape",
-        "//tensorflow/python:tensor_spec",
     ],
 )
 

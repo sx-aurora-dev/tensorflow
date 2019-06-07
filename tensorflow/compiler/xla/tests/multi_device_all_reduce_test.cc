@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "absl/types/span.h"
 #include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/compiler/xla/service/gpu/nccl_all_reduce_thunk.h"
 #include "tensorflow/compiler/xla/service/hlo_parser.h"
@@ -21,12 +22,14 @@ limitations under the License.
 #include "tensorflow/compiler/xla/test_helpers.h"
 #include "tensorflow/compiler/xla/tests/hlo_test_base.h"
 #include "tensorflow/compiler/xla/tests/test_macros.h"
+#include "tensorflow/core/lib/core/blocking_counter.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/lib/core/threadpool.h"
 
 // Tests cross-GPU all-reduce operatons.
 //
-// This test requires multiple GPUs.  For instructions on running this within
-// Google, see go/multi-gpu-unit-test.
+// This test requires at least four GPUs.  For instructions on running this
+// within Google, see go/multi-gpu-unit-test.
 
 namespace xla {
 namespace {
@@ -36,8 +39,9 @@ using ::testing::UnorderedElementsAre;
 
 class MultiDeviceAllReduceTest : public HloTestBase {
  protected:
-  std::unique_ptr<HloModule> MakeCrsModule(int64 num_elems,
-                                           const HloModuleConfig& config) {
+  std::unique_ptr<HloModule> MakeCrsModule(
+      int64 num_elems, std::vector<std::vector<int64>> replica_groups,
+      const HloModuleConfig& config) {
     const char* kTemplate = R"(
       HloModule test
 
@@ -49,12 +53,21 @@ class MultiDeviceAllReduceTest : public HloTestBase {
 
       ENTRY test_computation {
         p = f32[NUM_ELEMS] parameter(0)
-        ROOT crs = f32[NUM_ELEMS] all-reduce(p), to_apply=add
+        ROOT crs = f32[NUM_ELEMS] all-reduce(p), replica_groups=REPLICA_GROUPS, to_apply=add
       }
     )";
+    std::vector<string> replica_group_strs;
+    for (const auto& g : replica_groups) {
+      replica_group_strs.push_back(
+          absl::StrFormat("{%s}", absl::StrJoin(g, ",")));
+    }
     return ParseHloString(
-               absl::StrReplaceAll(kTemplate,
-                                   {{"NUM_ELEMS", absl::StrCat(num_elems)}}),
+               absl::StrReplaceAll(
+                   kTemplate,
+                   {{"NUM_ELEMS", absl::StrCat(num_elems)},
+                    {"REPLICA_GROUPS",
+                     absl::StrFormat(
+                         "{%s}", absl::StrJoin(replica_group_strs, ", "))}}),
                config)
         .ValueOrDie();
   }
@@ -93,12 +106,13 @@ absl::flat_hash_set<int> OpenNcclChannels() {
 XLA_TEST_F(MultiDeviceAllReduceTest, TwoReplicasOneOperand) {
   auto config = GetModuleConfigForTest();
   config.set_replica_count(2);
-  auto module = MakeCrsModule(/*num_elems=*/3, config);
+  auto module = MakeCrsModule(/*num_elems=*/3, /*replica_groups=*/{}, config);
   auto literal = LiteralUtil::CreateR1<float>({1, 2, 3});
   auto expected = LiteralUtil::CreateR1<float>({2, 4, 6});
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
-                          ExecuteReplicated(std::move(module), {&literal}, 2,
-                                            /*use_threads=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), {&literal}, /*num_replicas=*/2,
+                        /*use_threads=*/true));
   EXPECT_EQ(expected, results[0]);
   EXPECT_EQ(expected, results[1]);
 }
@@ -119,7 +133,7 @@ XLA_TEST_F(MultiDeviceAllReduceTest, AllCombinations) {
     config.set_replica_count(devices.size());
     config.set_static_device_assignment(device_assn);
 
-    auto module = MakeCrsModule(kNumElems, config);
+    auto module = MakeCrsModule(kNumElems, /*replica_groups=*/{}, config);
 
     std::vector<float> input_vec(kNumElems);
     absl::c_iota(input_vec, 0);
@@ -162,7 +176,7 @@ XLA_TEST_F(MultiDeviceAllReduceTest, NcclChannelCaching) {
     auto config = GetModuleConfigForTest();
     config.set_replica_count(devices.size());
     config.set_static_device_assignment(e.device_assn);
-    auto module = MakeCrsModule(kNumElems, config);
+    auto module = MakeCrsModule(kNumElems, /*replica_groups=*/{}, config);
     e.executable =
         test_runner_
             .CreateExecutable(std::move(module), /*run_hlo_passes=*/true)
@@ -208,6 +222,81 @@ XLA_TEST_F(MultiDeviceAllReduceTest, NcclChannelCaching) {
 
   executables[1].executable.reset();
   EXPECT_THAT(OpenNcclChannels(), IsEmpty());
+}
+
+// Runs the same executable many times concurrently.  The all-reduces should not
+// conflict with one another.
+XLA_TEST_F(MultiDeviceAllReduceTest, ManyConcurrentAllReduces) {
+  const int64 kNumElems = 1024;
+  const int64 kNumThreads = 200;
+  const int64 kRunsPerThread = 10;
+
+  auto config = GetModuleConfigForTest();
+  config.set_replica_count(2);
+  auto executable =
+      test_runner_
+          .CreateExecutable(
+              MakeCrsModule(kNumElems, /*replica_groups=*/{}, config),
+              /*run_hlo_passes=*/true)
+          .ValueOrDie();
+  std::vector<int64> devices = {0, 1};
+  auto device_assn = MakeDeviceAssn(devices);
+
+  std::vector<float> input_vec(kNumElems);
+  absl::c_iota(input_vec, 0);
+  auto input_literal = LiteralUtil::CreateR1<float>(input_vec);
+  HloRunner::ReplicatedExecuteOptions opts;
+  opts.num_replicas = devices.size();
+  opts.use_threads = true;
+  opts.arguments.push_back(&input_literal);
+
+  tensorflow::BlockingCounter done(kNumThreads * kRunsPerThread);
+  tensorflow::thread::ThreadPool pool(tensorflow::Env::Default(), TestName(),
+                                      kNumThreads);
+  for (int64 i = 0; i < kNumThreads * kRunsPerThread; ++i) {
+    pool.Schedule([&] {
+      TF_ASSERT_OK(
+          test_runner_.ExecuteReplicated(executable.get(), opts, &device_assn)
+              .status());
+      done.DecrementCount();
+    });
+  }
+  done.Wait();
+}
+
+// Runs an all-reduce with three partitions:
+//  {0}, {1,2}, {3}
+// meaning, the all-reduce is a nop for devices 0 and 3, and only devices 1 and
+// 2 actually exchange data with each other.
+XLA_TEST_F(MultiDeviceAllReduceTest, ThreeReplicaGroups) {
+  // Test a prime number so it's not all powers of 2.
+  const int64 kNumElems = 137;
+
+  auto config = GetModuleConfigForTest();
+  config.set_replica_count(4);
+  auto module = MakeCrsModule(/*num_elems=*/kNumElems,
+                              /*replica_groups=*/{{0}, {1, 2}, {3}}, config);
+  std::vector<float> input_vec(kNumElems);
+  absl::c_iota(input_vec, 0);
+  auto input_literal = LiteralUtil::CreateR1<float>(input_vec);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), {&input_literal}, /*num_replicas=*/4,
+                        /*use_threads=*/true));
+
+  ASSERT_EQ(results.size(), 4);
+
+  std::vector<float> input_vec_doubled;
+  for (float n : input_vec) {
+    input_vec_doubled.push_back(n * 2);
+  }
+  auto input_literal_doubled = LiteralUtil::CreateR1<float>(input_vec_doubled);
+
+  EXPECT_TRUE(LiteralTestUtil::Equal(input_literal, results[0]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(input_literal_doubled, results[1]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(input_literal_doubled, results[2]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(input_literal, results[3]));
 }
 
 }  // namespace

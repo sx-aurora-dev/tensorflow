@@ -119,7 +119,8 @@ Status GpuExecutable::ExecuteThunks(
       op_annotation.emplace(
           thunk->hlo_instruction()->ToString(HloPrintOptions::Canonical()),
           absl::StrCat("#tf_op=", hlo->metadata().op_name(),
-                       ",hlo_op=", hlo->name(), "#"));
+                       ",hlo_op=", hlo->name(),
+                       ",hlo_module=", hlo->GetModule()->name(), "#"));
     }
 
     TF_RETURN_IF_ERROR(thunk->Initialize(*this, executor));
@@ -135,8 +136,10 @@ Status GpuExecutable::ExecuteThunks(
     VLOG(2) << "Executing the thunk for "
             << thunk->hlo_instruction()->ToString() << " on stream "
             << stream_no;
-    TF_RETURN_IF_ERROR(
-        thunk->ExecuteOnStream(buffer_allocations, stream, &profiler));
+    Thunk::ExecuteParams thunk_params{
+        &buffer_allocations, stream, run_options->run_options().run_id(),
+        &profiler, run_options->run_options().device_assignment()};
+    TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(thunk_params));
     if (thunk_schedule_->Depended(thunk)) {
       auto finish_event = absl::make_unique<se::Event>(main_stream->parent());
       finish_event->Init();

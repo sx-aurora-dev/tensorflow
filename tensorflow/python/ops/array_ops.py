@@ -853,21 +853,7 @@ def strided_slice(input_,
       """Closure that holds all the arguments to create an assignment."""
 
       if var is None:
-        if name is None:
-          name = parent_name + "_strided_slice_update"
-
-        return gen_array_ops.tensor_strided_slice_update(
-            input=var,
-            begin=begin,
-            end=end,
-            strides=strides,
-            value=val,
-            name=name,
-            begin_mask=begin_mask,
-            end_mask=end_mask,
-            ellipsis_mask=ellipsis_mask,
-            new_axis_mask=new_axis_mask,
-            shrink_axis_mask=shrink_axis_mask)
+        raise ValueError("Sliced assignment is only supported for variables")
       else:
         if name is None:
           name = parent_name + "_assign"
@@ -3446,8 +3432,16 @@ def gather(params,
   if compat.forward_compatible(2019, 6, 10):
     if axis is None:
       axis = batch_dims
-    return gen_array_ops.gather_v2(
-        params, indices, axis, batch_dims=batch_dims, name=name)
+    if axis != 0:
+      return gen_array_ops.gather_v2(
+          params, indices, axis, batch_dims=batch_dims, name=name)
+    try:
+      # TODO(apassos) find a less bad way of detecting resource variables
+      # without introducing a circular dependency.
+      return params.sparse_read(indices, name=name)
+    except AttributeError:
+      return gen_array_ops.gather_v2(
+          params, indices, axis, name=name)
 
   if batch_dims != 0:
     with ops.name_scope(name, "Gather", [params, indices, axis]):
@@ -3491,7 +3485,7 @@ gather.__doc__ = gather_v2.__doc__ = gen_array_ops.gather_v2.__doc__
 @dispatch.add_dispatch_support
 @deprecation.deprecated(
     "2017-10-25", "`tf.batch_gather` is deprecated, please use `tf.gather` "
-    "with `batch_dims` instead.")  # pylint: disable=missing-docstring
+    "with `batch_dims=-1` instead.")  # pylint: disable=missing-docstring
 def batch_gather(params, indices, name=None):
   """Gather slices from params according to indices with leading batch dims."""
   with ops.name_scope(name, "BatchGather", [params, indices]):
@@ -3927,6 +3921,50 @@ def quantize(input,  # pylint: disable=redefined-builtin
       T,
       mode=mode,
       round_mode=round_mode,
+      name=name)
+
+
+@tf_export("quantization.quantize_and_dequantize")
+def quantize_and_dequantize(input,  # pylint: disable=redefined-builtin
+                            input_min,
+                            input_max,
+                            signed_input=True,
+                            num_bits=8,
+                            range_given=False,
+                            round_mode="HALF_TO_EVEN",
+                            name=None,
+                            narrow_range=False):
+  """Quantizes then dequantizes a tensor.
+
+  Args:
+    input: A `Tensor` to quantize and dequantize.
+    input_min: If range_given=True, the minimum input value that needs to be
+      represented in the quantized representation.
+    input_max: If range_given=True, the maximum input value that needs to be
+      represented in the quantized representation.
+    signed_input: True if the quantization is signed or unsigned.
+    num_bits: The bitwidth of the quantization.
+    range_given: If true use `input_min` and `input_max` for the range of the
+      input, otherwise determine min and max from the input `Tensor`.
+    round_mode: Rounding mode when rounding from float values to quantized ones.
+    name: Optional name for the operation.
+    narrow_range: If true, then the absolute value of the quantized minimum
+      value is the same as the quantized maximum value, instead of 1 greater.
+      i.e. for 8 bit quantization, the minimum value is -127 instead of -128.
+
+  Returns:
+    A `Tensor`. Each element is the result of quantizing and dequantizing the
+    corresponding element of `input`.
+  """
+  return gen_array_ops.quantize_and_dequantize_v2(
+      input,
+      input_min=input_min,
+      input_max=input_max,
+      signed_input=signed_input,
+      num_bits=num_bits,
+      range_given=range_given,
+      round_mode=round_mode,
+      narrow_range=narrow_range,
       name=name)
 
 

@@ -32,6 +32,7 @@ from tensorflow.python.eager import tape
 from tensorflow.python.framework import composite_tensor
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_util
+from tensorflow.python.framework import type_spec
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import gen_resource_variable_ops
@@ -376,6 +377,13 @@ class DistributedDelegate(DistributedValues):
   """A map from device to values; acts as the same type as the values."""
 
   def __getattr__(self, name):
+    # The '_use_resource_variables' and the attrs starts with '_self' are used
+    # for restoring the saved_model proto. At the point these attrs are queried,
+    # the variable has not been initialized. Thus it should not query those of
+    # the underlying components.
+    if name.startswith("_self_") or name == "_use_resource_variables":
+      return super(DistributedDelegate, self).__getattr__(name)
+
     # TODO(priyag): This needs to be made robust against pitfalls from mix use
     # __getattr__ and @property. See b/120402273.
     return getattr(self.get(), name)
@@ -447,30 +455,71 @@ class DistributedDelegate(DistributedValues):
 class PerReplica(DistributedValues, composite_tensor.CompositeTensor):
   """Holds a map from device to unsynchronized values."""
 
-  def _to_components(self):
+  @property
+  def _type_spec(self):
+    value_specs = [type_spec.type_spec_from_value(v) for v in self._values]
+    return PerReplicaSpec(value_specs, self._device_map, self._logical_device)
+
+
+class PerReplicaSpec(type_spec.TypeSpec):
+  """Type specification for a `PerReplica`."""
+
+  __slots__ = ["_value_specs", "_device_map", "_logical_device"]
+
+  value_type = property(lambda self: PerReplica)
+
+  def __init__(self, value_specs, device_map, logical_device):
+    if isinstance(device_map, tuple):
+      device_map = self._deserialize_device_map(device_map)
+    self._value_specs = tuple(value_specs)
+    self._device_map = device_map
+    self._logical_device = logical_device
+
+  def _serialize(self):
+    device_map = self._serialize_device_map(self._device_map)
+    return (self._value_specs, device_map, self._logical_device)
+
+  @property
+  def _component_specs(self):
+    return self._value_specs
+
+  def _to_components(self, value):
     replica_context = distribution_strategy_context.get_replica_context()
     if replica_context is not None and replica_context.num_replicas_in_sync > 1:
       raise ValueError(
           "Flattening a PerReplica to components is not supported in replica "
           "context.")
-    return self._values
+    return value._values  # pylint: disable=protected-access
 
-  def _component_metadata(self):
-    return self._device_map, self._logical_device
+  def _from_components(self, tensor_list):
+    return PerReplica(self._device_map, tensor_list,
+                      logical_device=self._logical_device)
 
-  @classmethod
-  def _from_components(cls, components, metadata):
-    device_map, logical_device = metadata
-    return PerReplica(device_map, components, logical_device=logical_device)
-
-  def _is_graph_tensor(self):
-    return any(hasattr(t, "graph") for t in self._values)
-
-  def _shape_invariant_to_components(self, shape=None):
-    if shape is None:
-      return tuple(v.shape for v in self._values)
+  @staticmethod
+  def _serialize_device_map(device_map):
+    if isinstance(device_map, SingleDeviceMap):
+      return ("single", device_map.all_devices[0])
+    elif isinstance(device_map, ReplicaDeviceMap):
+      return ("replica", device_map.all_devices)
+    elif isinstance(device_map, WorkerDeviceMap):
+      return ("worker", device_map.all_devices,
+              device_map.num_replicas_per_worker)
     else:
-      return tuple(shape for _ in self._values)
+      raise ValueError("PerReplicaSpec does not support device_map type %s"
+                       % type(device_map).__name__)
+
+  @staticmethod
+  def _deserialize_device_map(device_map_info):
+    device_map_type = device_map_info[0]
+    device_map_args = device_map_info[1:]
+    if device_map_type == "single":
+      return SingleDeviceMap(*device_map_args)
+    elif device_map_type == "replica":
+      return ReplicaDeviceMap(*device_map_args)
+    elif device_map_type == "worker":
+      return WorkerDeviceMap(*device_map_args)
+    else:
+      raise ValueError("Unexpected value in state tuple")
 
 
 # Note that unlike PerReplica, Mirrored values inherit from
@@ -894,6 +943,12 @@ def _enclosing_tpu_context():
       tpu_context, control_flow_ops.XLAControlFlowContext):
     tpu_context = tpu_context.outer_context
   return tpu_context
+
+
+def is_distributed_variable(v):
+  """Determine if a variable is ds variable or TPU mirrored variable."""
+  return (isinstance(v, DistributedVariable)
+          or isinstance(v, TPUMirroredVariable))
 
 
 # TODO(jhseu): Deduplicate code. We copy code because we don't want to
