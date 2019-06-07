@@ -431,7 +431,7 @@ Status BaseGPUDevice::Init(const SessionOptions& options) {
   string gpu_thread_mode;
   TF_RETURN_IF_ERROR(
       ReadStringFromEnvVar("TF_GPU_THREAD_MODE", "global", &gpu_thread_mode));
-  gpu_thread_mode = str_util::Lowercase(gpu_thread_mode);
+  gpu_thread_mode = absl::AsciiStrToLower(gpu_thread_mode);
   if (gpu_thread_mode != "global") {
     int64 gpu_thread_count = -1;
     // Default to two threads. One for device compute and another for memory
@@ -511,6 +511,18 @@ Status BaseGPUDevice::FillContextMap(const Graph* graph,
 }
 
 void BaseGPUDevice::Compute(OpKernel* op_kernel, OpKernelContext* context) {
+  profiler::TraceMe activity(
+      [&] {
+        return strings::StrCat("BaseGPUDevice::Compute ", op_kernel->name(),
+                               ":", op_kernel->type_string(),
+                               "#step_id=", context->step_id(),
+                               ",step_container_name=",
+                               context->step_container() == nullptr
+                                   ? "n/a"
+                                   : context->step_container()->name(),
+                               "#");
+      },
+      profiler::GetTFTraceMeLevel(op_kernel->IsExpensive()));
   // NOTE(tucker): We need to discriminate between Eigen GPU
   // operations and all others.  If an operation is Eigen
   // implemented (or otherwise tries to launch a GPU kernel
@@ -659,8 +671,14 @@ void BaseGPUDevice::ComputeAsync(AsyncOpKernel* op_kernel,
   // activity is simple enough that its overhead is negligible.
   profiler::TraceMe activity(
       [&] {
-        return strings::StrCat(op_kernel->name(), ":",
-                               op_kernel->type_string());
+        return strings::StrCat("BaseGPUDevice::ComputeAsync ",
+                               op_kernel->name(), ":", op_kernel->type_string(),
+                               "#step_id=", context->step_id(),
+                               ",step_container_name=",
+                               context->step_container() == nullptr
+                                   ? "n/a"
+                                   : context->step_container()->name(),
+                               "#");
       },
       profiler::GetTFTraceMeLevel(op_kernel->IsExpensive()));
   ScopedActivateExecutorContext scoped_activation{stream->parent()};
@@ -1760,8 +1778,7 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
     std::vector<int> raw_ids(ids->size());
     std::transform(ids->begin(), ids->end(), raw_ids.begin(),
                    [](PlatformGpuId id) -> int { return id.value(); });
-    LOG(INFO) << "Adding visible gpu devices: "
-              << str_util::Join(raw_ids, ", ");
+    LOG(INFO) << "Adding visible gpu devices: " << absl::StrJoin(raw_ids, ", ");
   }
 
   return Status::OK();

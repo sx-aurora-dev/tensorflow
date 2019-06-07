@@ -264,7 +264,6 @@ tf_xla_py_test(
     name = "cond_test",
     size = "small",
     srcs = ["cond_test.py"],
-    disabled_backends = ["cpu_ondemand"],  # b/129021699
     deps = [
         ":xla_test",
         "//tensorflow/compiler/tf2xla/python:xla",
@@ -471,6 +470,9 @@ tf_xla_py_test(
     name = "eager_test",
     size = "medium",
     srcs = ["eager_test.py"],
+    tags = [
+        "multi_and_single_gpu",
+    ],
     deps = [
         ":xla_test",
         "//tensorflow/python:array_ops",
@@ -954,7 +956,7 @@ tf_xla_py_test(
 
 tf_xla_py_test(
     name = "ternary_ops_test",
-    size = "small",
+    size = "medium",
     srcs = ["ternary_ops_test.py"],
     deps = [
         ":xla_test",

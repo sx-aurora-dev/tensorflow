@@ -1,9 +1,8 @@
 load("//tensorflow:tensorflow.bzl", "tf_copts", "tf_kernel_library")
 
-licenses(["notice"])  # Apache 2.0
-
 package(
     default_visibility = ["//tensorflow/compiler/tf2xla:internal"],
+    licenses = ["notice"],  # Apache 2.0
 )
 
 tf_kernel_library(
@@ -57,6 +56,7 @@ tf_kernel_library(
         "matrix_set_diag_op.cc",
         "matrix_triangular_solve_op.cc",
         "mirror_pad_op.cc",
+        "next_after_op.cc",
         "no_op.cc",
         "one_hot_op.cc",
         "pack_op.cc",

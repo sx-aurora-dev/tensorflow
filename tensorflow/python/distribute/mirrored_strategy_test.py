@@ -155,6 +155,16 @@ class MirroredTwoDeviceDistributionTest(
     finally:
       self.set_v2_tensorshape(original_v2)
 
+  def testReplicateDataset(self, distribution):
+    dataset_fn = lambda: dataset_ops.Dataset.range(10)
+    expected_values = [[i, i+1] for i in range(0, 10, 2)]
+    input_fn = self._input_fn_to_test_input_context(
+        dataset_fn,
+        expected_num_replicas_in_sync=2,
+        expected_num_input_pipelines=1,
+        expected_input_pipeline_id=0)
+    self._test_input_fn_iterable(distribution, input_fn, expected_values)
+
   def testMakeInputFnIteratorWithDataset(self, distribution):
     dataset_fn = lambda: dataset_ops.Dataset.range(10)
     expected_values = [[i, i+1] for i in range(0, 10, 2)]
@@ -215,6 +225,9 @@ class MirroredTwoDeviceDistributionTest(
 
   def testSummaryForReplicaZeroOnly(self, distribution):
     self._test_summary_for_replica_zero_only(distribution)
+
+  def testTrainableVariables(self, distribution):
+    self._test_trainable_variable(distribution)
 
 
 def one_device_combinations():
