@@ -2373,7 +2373,6 @@ def sparse_tensor_dense_matmul(sp_a,
   sp_a = _convert_to_sparse_tensor(sp_a)
 
   if(sp_a.use_ve_sparse):
-      print("spmv: use ve sparse = {}".format(sp_a.use_ve_sparse))
       with ops.name_scope(name, "SparseTensorDenseMatMul",
                           [sp_a.ve_indices, sp_a.ve_values, b]) as name:
         b = ops.convert_to_tensor(b, name="b")

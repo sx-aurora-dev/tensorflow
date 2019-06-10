@@ -230,7 +230,6 @@ class SparseTensor(_TensorLike, composite_tensor.CompositeTensor):
     return self._ve_indices.graph
 
   def __str__(self):
-    print("str: use ve sparse = {}".format(self._use_ve_sparse))
     if(self._use_ve_sparse):
         return "VESparseTensor(indices=%s, values=%s, dense_shape=%s)" % (
             self._ve_indices, self._ve_values, self._dense_shape)
@@ -257,7 +256,6 @@ class SparseTensor(_TensorLike, composite_tensor.CompositeTensor):
     Returns:
       A `SparseTensorValue` object.
     """
-    print("eval: use ve sparse = {}".format(self._use_ve_sparse))
     if(self._use_ve_sparse):
         indices, values, dense_shape = _eval_using_default_session(
         [self.ve_indices, self.ve_values, self.dense_shape], feed_dict, self.graph,

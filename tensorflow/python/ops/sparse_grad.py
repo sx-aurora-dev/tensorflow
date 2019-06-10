@@ -184,7 +184,6 @@ def _SparseTensorDenseMatMulGrad(op, grad):
   if adj_b:
     b_grad = array_ops.transpose(b_grad)
 
-  print("grad")
 
   if(use_ve_sparse):
       a_values_grad = math_ops.reduce_sum(b_grad, axis=1)
