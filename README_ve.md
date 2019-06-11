@@ -12,8 +12,8 @@ We are providing two whl files on github.
 
 We have tested on CentOS 7.5 and:
 
-- veos: 2.0.3
-- veoffload: 2.0.3
+- veos: 2.1.0
+- veoffload: 2.1.0
 - python: 3.6
 
 We have installed VEOS and veoffload using [VEOS yum Repository on the
@@ -84,7 +84,7 @@ Install bazel.
 % yum install bazel
 ```
 
-### Build source code
+### Build tensorflow
 
 Build tensorflow with scl and virtualenv.
 
@@ -98,7 +98,9 @@ $ source ~/.virtualenvs/tmp/bin/activate
 
 You can see a tensorflow package in current direcotry.
 
-Build keras.
+## (option) Build keras
+
+Clone https://github.com/sx-aurora-dev/keras.
 
 ```
 (tmp)% python setup.py bdist_wheel
@@ -133,8 +135,8 @@ You can specify version of ncc/nc++.
 
 ```
 (tmp)% (cd build && cmake3 \
-        -DNCC=/opt/nec/ve/bin/ncc-2.0.8 \
-        -DNCXX=/opt/nec/ve/bin/nc++-2.0.8 .. && make)
+        -DNCC=/opt/nec/ve/bin/ncc-2.2.2 \
+        -DNCXX=/opt/nec/ve/bin/nc++-2.2.2 .. && make)
 ```
 
 Your veorun_tf can be used by setting VEORUN_BIN.
@@ -146,5 +148,5 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 We have tested on above envirionment with:
 
 - llvm-ve 1.1.0
-- ncc/nc++ 2.1.1
+- ncc/nc++ 2.2.2
 
