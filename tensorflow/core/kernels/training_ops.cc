@@ -2591,6 +2591,103 @@ REGISTER_KERNELS(GPU, double);
 #undef REGISTER_CPU_KERNELS
 #undef REGISTER_KERNELS
 
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VEApplyMomentumOp : public OpKernel {
+ public:
+  explicit VEApplyMomentumOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_nesterov", &use_nesterov_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const bool sparse = false;
+    auto locks = VEMaybeLockVariableInputMutexesInOrder<T>(
+        ctx, use_exclusive_lock_, sparse, {0, 1});
+
+    Tensor var;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 0, use_exclusive_lock_, sparse, &var));
+    Tensor accum;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 1, use_exclusive_lock_, sparse, &accum));
+    OP_REQUIRES(
+        ctx, var.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(0)));
+    OP_REQUIRES(
+        ctx, accum.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(1)));
+    const Tensor& lr = ctx->input(2);
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr.shape()),
+                errors::InvalidArgument("lr is not a scalar: ",
+                                        lr.shape().DebugString()));
+    const Tensor& grad = ctx->input(3);
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(accum.shape()),
+        errors::InvalidArgument("var and accum do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                accum.shape().DebugString()));
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(grad.shape()),
+        errors::InvalidArgument("var and grad do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                grad.shape().DebugString()));
+
+    const Tensor& momentum = ctx->input(4);
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(momentum.shape()),
+                errors::InvalidArgument("momentum is not a scalar: ",
+                                        momentum.shape().DebugString()));
+
+    struct {
+      int dtype;
+      bool use_nesterov_ ;
+      int64_t num_elements ;
+      uint64_t var_ptr, accum_ptr ;
+      uint64_t lr_ptr, momentum_ptr ;
+      uint64_t grad_ptr;
+    } args;
+
+    args.dtype = var.dtype() ;
+    args.use_nesterov_ = use_nesterov_ ;
+    args.num_elements = var.NumElements() ;
+    args.var_ptr = (uint64_t) DMAHelper::base(&var) ;
+    args.accum_ptr = (uint64_t) DMAHelper::base(&accum) ;
+    args.lr_ptr = (uint64_t) DMAHelper::base(&lr) ;
+    args.momentum_ptr = (uint64_t) DMAHelper::base(&momentum) ;
+    args.grad_ptr = (uint64_t) DMAHelper::base(&grad) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("ApplyMomentum", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+
+    MaybeForwardRefInputToRefOutput(ctx, 0, 0);
+  }
+
+ private:
+  bool use_exclusive_lock_;
+  bool use_nesterov_;
+};
+
+#define REGISTER_VE_KERNELS(T)                                         \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("ApplyMomentum").Device(DEVICE_VE).TypeConstraint<T>("T"),  \
+      VEApplyMomentumOp<T>);                                           \
+  REGISTER_KERNEL_BUILDER(Name("ResourceApplyMomentum")                \
+                              .Device(DEVICE_VE)                       \
+                              .HostMemory("var")                       \
+                              .HostMemory("accum")                     \
+                              .TypeConstraint<T>("T"),                 \
+                          VEApplyMomentumOp<T>);
+
+TF_CALL_float(REGISTER_VE_KERNELS);
+TF_CALL_double(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+#endif
+
 // Note, this op works on cpu only.
 template <typename T, typename Tindex>
 class SparseApplyMomentumOp : public OpKernel {
