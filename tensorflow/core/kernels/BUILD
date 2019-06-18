@@ -7789,7 +7789,10 @@ cc_library(
         "//tensorflow/core:lib",
         "//third_party/eigen3",
         "@gemmlowp",
-    ],
+    ] + if_ve([
+        "//tensorflow/core:ve_runtime",
+        "//tensorflow/core:core_cpu_lib",
+    ]),
 )
 
 # Header-only version of cwise_lib for clients that want to use the cwise_ops
