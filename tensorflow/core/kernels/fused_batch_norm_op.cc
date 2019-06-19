@@ -33,6 +33,10 @@ limitations under the License.
 #include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/util/tensor_format.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
@@ -1128,5 +1132,60 @@ REGISTER_KERNEL_BUILDER(Name("FusedBatchNormGradV3")
                         FusedBatchNormGradOpV3<GPUDevice, Eigen::half, float>);
 
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+
+//using VEDevice = Eigen::VEDevice;
+typedef Eigen::VeDevice VEDevice;
+
+namespace functor {
+
+template <typename T, typename U>
+struct FusedBatchNorm<VEDevice, T, U> {
+  void operator()(OpKernelContext* context, const Tensor& x_input,
+                  const Tensor& scale_input, const Tensor& offset_input,
+                  const Tensor& estimated_mean_input,
+                  const Tensor& estimated_variance_input, U epsilon,
+                  Tensor* y_output, Tensor* batch_mean_output,
+                  Tensor* batch_var_output, Tensor* saved_mean_output,
+                  Tensor* saved_var_output, TensorFormat tensor_format,
+                  ScratchAllocator* reserve_space_allocator,
+                  ScratchAllocator* workspace_allocator, bool is_training) {
+
+    OP_REQUIRES(context, tensor_format == FORMAT_NCHW,
+                errors::Internal("The VE implementation of FusedBatchNorm "
+                                 "only supports NCHW tensor format for now."));
+#if 0
+    fprintf(stderr, "FusedBatchNorm<VEDevice>: is_training=%d epsilon=%f"
+            " reserve_space_allocator=%p\n",
+            is_training, epsilon, reserve_space_allocator);
+#endif
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(x_input);
+    args.addArg<Tensor>(scale_input);
+    args.addArg<Tensor>(offset_input);
+    args.addArg<Tensor>(estimated_mean_input);
+    args.addArg<Tensor>(estimated_variance_input);
+    args.addArg<Tensor>(*y_output);
+    args.addArg<Tensor>(*batch_mean_output);
+    args.addArg<Tensor>(*saved_mean_output);
+    args.addArg<Tensor>(*batch_var_output);
+    args.addArg<Tensor>(*saved_var_output); // 9
+    args.addArg<U>(epsilon); // 10
+    args.addArg<bool>(is_training); // 11
+    args.addArg<int64>(DataTypeToEnum<T>::value); // 12
+    args.addArg<int64>(DataTypeToEnum<U>::value); // 13
+
+    VEOpKernelHelper::Call(context, "FusedBatchNorm", args);
+  }
+};
+
+} // namespace functor
+
+REGISTER_KERNEL_BUILDER(
+    Name("FusedBatchNorm").Device(DEVICE_VE).TypeConstraint<float>("T"),
+    FusedBatchNormOp<VEDevice, float, float>);
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
