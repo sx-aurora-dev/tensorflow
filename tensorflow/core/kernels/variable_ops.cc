@@ -240,9 +240,20 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
 
 #ifdef TENSORFLOW_USE_VE
 #define REGISTER_VE_KERNEL(type)                                            \
+  REGISTER_KERNEL_BUILDER(                                                 \
+      Name("Variable").Device(DEVICE_GPU).TypeConstraint<type>("dtype"),   \
+      VariableOp);                                                         \
   REGISTER_KERNEL_BUILDER(                                                  \
       Name("VariableV2").Device(DEVICE_VE).TypeConstraint<type>("dtype"),   \
       VariableOp);                                                          \
+  REGISTER_KERNEL_BUILDER(Name("TemporaryVariable")                        \
+                              .Device(DEVICE_VE)                          \
+                              .TypeConstraint<type>("dtype"),              \
+                          TemporaryVariableOp);                            \
+  REGISTER_KERNEL_BUILDER(Name("DestroyTemporaryVariable")                 \
+                              .Device(DEVICE_VE)                          \
+                              .TypeConstraint<type>("T"),                  \
+                          DestroyTemporaryVariableOp);                     \
   REGISTER_KERNEL_BUILDER(Name("IsVariableInitialized")                     \
                               .Device(DEVICE_VE)                          \
                               .TypeConstraint<type>("dtype")                \
