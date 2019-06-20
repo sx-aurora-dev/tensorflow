@@ -698,8 +698,28 @@ class VEBinaryOp : public BinaryOpShared {
         _Tensor out;
 
         Args(const Tensor& in0_, const Tensor in1_, Tensor& out_) :
-          in0(in0_), in1(in1_), out(out_) {}
+          in0(in0_), in1(in1_), out(out_) {
+            if(in0.dims>in1.dims){
+                for(int i = 0; i < in1.dims+1; i++){
+                    in1.dim_size[in0.dims-i] = in1.dim_size[in1.dims-i] ;
+                }
+                for(int i = 0; i < in0.dims-in1.dims; i++){
+                    in1.dim_size[i] = 1;
+                }
+                in1.dims = in0.dims;
+            }
+            if(in0.dims<in1.dims){
+                for(int i = 0; i < in0.dims+1; i++){
+                    in0.dim_size[in1.dims-i] = in0.dim_size[in0.dims-i] ;
+                }
+                for(int i = 0; i < in1.dims-in0.dims; i++){
+                    in0.dim_size[i] = 1;
+                }
+                in0.dims = in1.dims;
+            }
+        }
       } args(state.in0, state.in1, *state.out);
+
 
 
       VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
