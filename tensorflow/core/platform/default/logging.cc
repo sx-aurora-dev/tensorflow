@@ -215,6 +215,11 @@ int64 MinLogLevelFromEnv() {
   return tensorflow::NUM_SEVERITIES;
 #else
   const char* tf_env_var_val = getenv("TF_CPP_MIN_LOG_LEVEL");
+  //fprintf(stderr, "TF_CPP_MIN_LOG_LEVEL: %s\n", tf_env_var_val);
+  if (const char* tmp = getenv("TF_CPP_MIN_LOG_LEVEL_")) {
+    tf_env_var_val = tmp;
+  }
+  //fprintf(stderr, "tf_env_var_val=%s\n", tf_env_var_val);
   return LogLevelStrToInt(tf_env_var_val);
 #endif
 }
