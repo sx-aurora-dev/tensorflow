@@ -70,21 +70,21 @@ void ConcatVE(OpKernelContext* ctx,
   // values.size() > 0
   // Tensors in values have same shape
 
-  VEOpKernelHelper::ArgsImpl<> args;
+  VEOpKernelHelper::ArgsImpl<102400> args;
 
   const Tensor* value_0_t = values[0].AccessTensor(ctx);
 
-  args.addArg<int64>(value_0_t->dtype());
-  args.addArg<uint64>(values.size());
-  args.addArg<uint64>(1); // output_flat_dim0
-  args.addArg<uint64>(0); // output_flat_dim1 (not used)
+  OP_REQUIRES_OK(ctx, args.addArg<int64>(value_0_t->dtype()));
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>(values.size()));
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>(1)); // output_flat_dim0
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>(0)); // output_flat_dim1 (not used)
 
-  args.addArg<uint64>((uint64)DMAHelper::base(&output));
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)DMAHelper::base(&output)));
 
   for (int i = 0; i < values.size(); ++i) {
     const Tensor* value_t = values[i].AccessTensor(ctx);
-    args.addArg<uint64>((uint64)DMAHelper::base(value_t));
-    args.addArg<uint64>(value_t->NumElements());
+    OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)DMAHelper::base(value_t)));
+    OP_REQUIRES_OK(ctx, args.addArg<uint64>(value_t->NumElements()));
   }
 
   VEOpKernelHelper::Call(ctx, "Concat", args);
@@ -140,12 +140,12 @@ struct SplitToVector<VEDevice, T> {
                   TensorArray const* tensor_array,
                   TensorShape const& element_shape)
   {
-    VEOpKernelHelper::ArgsImpl<> args;
-    args.addArg<int64>(num_values); // num_split
-    args.addArg<int64>(1); // prefix_dim_size
-    args.addArg<int64>(num_values); // split_dim_size
-    args.addArg<int64>(element_shape.num_elements()); // suffix_dim_size
-    args.addArg<Tensor>(*tensor_value);
+    VEOpKernelHelper::ArgsImpl<102400> args;
+    OP_REQUIRES_OK(ctx, args.addArg<int64>(num_values)); // num_split
+    OP_REQUIRES_OK(ctx, args.addArg<int64>(1)); // prefix_dim_size
+    OP_REQUIRES_OK(ctx, args.addArg<int64>(num_values)); // split_dim_size
+    OP_REQUIRES_OK(ctx, args.addArg<int64>(element_shape.num_elements())); // suffix_dim_size
+    OP_REQUIRES_OK(ctx, args.addArg<Tensor>(*tensor_value));
 
     VLOG(2) << __FUNCTION__ << "num_values=" << num_values;
 
@@ -157,7 +157,7 @@ struct SplitToVector<VEDevice, T> {
                                                    element_shape,
                                                    &persistent_tensor, 
                                                    &tensor_value_i));
-      args.addArg<Tensor>(*tensor_value_i);
+      OP_REQUIRES_OK(ctx, args.addArg<Tensor>(*tensor_value_i));
       write_values.push_back(persistent_tensor);
     }
 
