@@ -823,6 +823,14 @@ REGISTER_KERNEL_BUILDER(Name("LoopCond")
                         LoopCondOp);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("LoopCond")
+                            .Device(DEVICE_VE)
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        LoopCondOp);
+#endif  // TENSORFLOW_USE_VE
+
 // ControlTrigger kernels
 REGISTER_KERNEL_BUILDER(Name("ControlTrigger").Device(DEVICE_CPU),
                         ControlTriggerOp);

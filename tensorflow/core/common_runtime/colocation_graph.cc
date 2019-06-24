@@ -365,7 +365,7 @@ void Member::Merge(std::vector<Member>* tree, int x_root, int y_root,
   *old_root = &(*tree)[old_root_id];
 
 #ifdef DEVICE_ASSIGN_LOG
-#if 0
+#if 1
   if (!dry_run) {
     string tmp;
     for (auto& deviceType : (*new_root)->supported_device_types())
