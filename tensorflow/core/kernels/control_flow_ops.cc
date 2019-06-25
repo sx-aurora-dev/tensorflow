@@ -209,7 +209,10 @@ REGISTER_SYCL_HOST_REF_KERNEL(string);
                               .TypeConstraint<type>("T"), \
                           SwitchOp)
 
-TF_CALL_ALL_TYPES(REGISTER_VE_SWITCH);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_SWITCH);
+//TF_CALL_ALL_TYPES(REGISTER_VE_SWITCH);
+#undef REGISTER_VE_SWITCH
+
 #endif
 
 class RefSelectOp : public OpKernel {
@@ -822,6 +825,14 @@ REGISTER_KERNEL_BUILDER(Name("LoopCond")
                             .HostMemory("output"),
                         LoopCondOp);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("LoopCond")
+                            .Device(DEVICE_VE)
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        LoopCondOp);
+#endif  // TENSORFLOW_USE_VE
 
 // ControlTrigger kernels
 REGISTER_KERNEL_BUILDER(Name("ControlTrigger").Device(DEVICE_CPU),

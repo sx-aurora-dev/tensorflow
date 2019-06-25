@@ -190,4 +190,20 @@ REGISTER_KERNEL_BUILDER(Name("Unpack")
 #undef REGISTER_SYCL
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("Unpack")
+                            .Device(DEVICE_VE)
+                            .HostMemory("value")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        UnpackOp<CPUDevice, int32>);
+
+REGISTER_KERNEL_BUILDER(Name("Unpack")
+                            .Device(DEVICE_VE)
+                            .HostMemory("value")
+                            .HostMemory("output")
+                            .TypeConstraint<int64>("T"),
+                        UnpackOp<CPUDevice, int64>);
+#endif  // TENSORFLOW_USE_VE
+
 }  // end namespace tensorflow
