@@ -302,9 +302,13 @@ REGISTER_KERNEL_BUILDER(
     Name("Pack").Device(DEVICE_VE).TypeConstraint<float>("T"),
     PackOp<VEDevice, float>) ;
 
-REGISTER_KERNEL_BUILDER(
-    Name("Pack").Device(DEVICE_VE).TypeConstraint<int>("T"),
-    PackOp<VEDevice, int>) ;
+
+REGISTER_KERNEL_BUILDER(Name("Pack")
+                            .Device(DEVICE_VE)
+                            .HostMemory("values")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PackOp<CPUDevice, int32>);
 
 #endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow
