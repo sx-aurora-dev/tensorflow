@@ -13,6 +13,11 @@
 
 #define VEO_ASYNC
 
+#define TF_VE_EXECUTOR
+#ifdef TF_VE_EXECUTOR
+#include "tensorflow/core/lib/strings/str_util.h"
+#endif
+
 #define USE_DMA
 #ifdef USE_DMA
 #include <sys/ipc.h>
@@ -382,6 +387,12 @@ class VEOAsync : public VEO
         currStack_ = new KernelStack(stack_size_);
       }
 
+#ifdef TF_VE_EXECUTOR
+    ~VEOAsync() {
+      thread_done_ = true;
+    }
+#endif
+
     Status init(int nodeid) override {
       Status s = VEO::init(nodeid);
       if (!s.ok())
@@ -393,6 +404,22 @@ class VEOAsync : public VEO
       VLOG(2) << "VEOAsync: sym_noprof=" << std::hex << sym_noprof_;
       if (sym_prof_ == 0 || sym_noprof_ == 0)
         return errors::Internal("Failed to get symbol for vetfkl_entry");
+
+#ifdef TF_VE_EXECUTOR
+      if (char const* tmp = getenv("TF_VE_EXECUTOR")) {
+        std::vector<int32> vals;
+        if (!str_util::SplitAndParseAsInts(tmp, ',', &vals) || vals.size() != 1) {
+          LOG(WARNING) << "Ignored invalid TF_VE_EXECUTOR: " << tmp;
+        } else {
+          ve_executor_threshold_ = vals[0];
+          VLOG(2) << "VEOAsync: StartThread: "
+            << " threshold=" << ve_executor_threshold_;
+          thread_.reset(tensorflow::Env::Default()->StartThread(
+            tensorflow::ThreadOptions(), "ve_sync_thread",
+            std::bind(&VEOAsync::Run, this)));
+        }
+      }
+#endif
       return Status::OK();
     }
 
@@ -415,12 +442,9 @@ class VEOAsync : public VEO
                            const OpKernel* op) override {
       mutex_lock guard(lock_stack_);
 
-#if 0
-      VLOG(2) << "VEOAsync::compute: this=" << this
-        << " currStack_=" << currStack_
-        << " num_kernels=" << currStack_->num_kernels()
-        << " name=" << name << " len=" << len;
-#endif
+      VLOG(2) << "VEOAsync::compute:"
+        << " name=" << name
+        << " num_kernels_in_stack=" << currStack_->num_kernels();
       uint64_t sym = find_kernel_sym(name);
       if (sym == 0)
         return errors::Internal("VEOAsync: VE kernel not found for ", name);
@@ -440,10 +464,17 @@ class VEOAsync : public VEO
       if (ret != 0)
         return errors::Internal("VEOAsync: Failed to push kernel");
 
+#ifdef TF_VE_EXECUTOR
+      if (currStack_->num_kernels() >= ve_executor_threshold_) {
+        VLOG(2) << "VEOAsync::compute: notify executor";
+        executor_cond_.notify_all();
+      }
+#endif
+
       return Status::OK();
     }
 
-    Status sync() override {
+    virtual Status sync() override {
       // Only one thread can sync at once.
       mutex_lock guard_sync(lock_sync_);
 
@@ -461,13 +492,7 @@ class VEOAsync : public VEO
 
       {
         mutex_lock guard_stack(lock_stack_);
-
         currStack_ = nextStack;
-#if 0
-        VLOG(2) << "VEOAsync::sync: this=" << this << " stack=" << stack
-          << " num_kernels=" << n
-          << " currStack_=" << currStack_;
-#endif
       }
 
       // here, curren thread is only one holder of the stack
@@ -511,10 +536,7 @@ class VEOAsync : public VEO
       stack->clear();
       stack_pool_.push_back(stack);
 
-#if 0
-      VLOG(2) << "VEOAsync::sync: done ok=" << s.ok() << " stack=" << stack
-        << " currStack_=" << currStack_;
-#endif
+      VLOG(2) << "VEOAsync::sync: done num_kernels=" << n;
       return s;
     }
 
@@ -528,6 +550,30 @@ class VEOAsync : public VEO
 
     uint64_t sym_prof_;
     uint64_t sym_noprof_;
+
+#ifdef TF_VE_EXECUTOR
+    std::unique_ptr<Thread> thread_;
+    int ve_executor_threshold_ = 1;
+    bool thread_done_ = false;
+    condition_variable executor_cond_;
+    mutex executor_mutex_;
+
+    Status Run() {
+      VLOG(2) << "VEExecturo: begin";
+      while (!thread_done_) {
+        if (currStack_->num_kernels() >= ve_executor_threshold_) {
+          VLOG(2) << "VEExecutor: sync";
+          sync();
+        } else {
+          VLOG(2) << "VEExecutor: sleep";
+          mutex_lock l(executor_mutex_);
+          executor_cond_.wait(l);
+          VLOG(2) << "VEExecutor: woke";
+        }
+      }
+      return Status::OK();
+    }
+#endif
 };
 #endif
 
