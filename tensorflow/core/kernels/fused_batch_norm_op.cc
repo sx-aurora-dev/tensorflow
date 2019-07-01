@@ -1186,6 +1186,169 @@ REGISTER_KERNEL_BUILDER(
     Name("FusedBatchNorm").Device(DEVICE_VE).TypeConstraint<float>("T"),
     FusedBatchNormOp<VEDevice, float, float>);
 
+template <typename T, typename U>
+class FusedBatchNormGradOpBase<VEDevice, T, U> : public OpKernel {
+ protected:
+  explicit FusedBatchNormGradOpBase(OpKernelConstruction* context)
+      : OpKernel(context) {
+    float epsilon;
+    OP_REQUIRES_OK(context, context->GetAttr("epsilon", &epsilon));
+    epsilon_ = U(epsilon);
+    string tensor_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &tensor_format));
+    OP_REQUIRES(context, FormatFromString(tensor_format, &tensor_format_),
+                errors::InvalidArgument("Invalid data format"));
+    OP_REQUIRES_OK(context, context->GetAttr("is_training", &is_training_));
+  }
+
+  virtual void ComputeWithReservedSpace(OpKernelContext* context,
+                                        bool use_reserved_space) {
+    const Tensor& y_backprop = context->input(0);
+    const Tensor& x = context->input(1);
+    const Tensor& scale = context->input(2);
+    // When is_training=True, batch mean and variance/inverted variance are
+    // saved in the forward pass to be reused here. When is_training=False,
+    // population mean and variance need to be forwarded here to compute the
+    // gradients.
+    const Tensor& saved_mean_or_pop_mean = context->input(3);
+    // The Eigen implementation saves variance in the forward pass, while cuDNN
+    // saves inverted variance.
+    const Tensor& saved_maybe_inv_var_or_pop_var = context->input(4);
+
+    OP_REQUIRES(context, y_backprop.dims() == 4,
+                errors::InvalidArgument("input must be 4-dimensional",
+                                        y_backprop.shape().DebugString()));
+    OP_REQUIRES(context, x.dims() == 4,
+                errors::InvalidArgument("input must be 4-dimensional",
+                                        x.shape().DebugString()));
+    OP_REQUIRES(context, scale.dims() == 1,
+                errors::InvalidArgument("scale must be 1-dimensional",
+                                        scale.shape().DebugString()));
+    OP_REQUIRES(
+        context, saved_mean_or_pop_mean.dims() == 1,
+        errors::InvalidArgument("saved mean must be 1-dimensional",
+                                saved_mean_or_pop_mean.shape().DebugString()));
+    OP_REQUIRES(context, saved_maybe_inv_var_or_pop_var.dims() == 1,
+                errors::InvalidArgument(
+                    "saved variance must be 1-dimensional",
+                    saved_maybe_inv_var_or_pop_var.shape().DebugString()));
+
+    Tensor* x_backprop = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, x.shape(), &x_backprop));
+
+    const TensorShape& scale_offset_shape = scale.shape();
+    Tensor* scale_backprop = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(1, scale_offset_shape,
+                                                     &scale_backprop));
+    Tensor* offset_backprop = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(2, scale_offset_shape,
+                                                     &offset_backprop));
+#if 1
+    // Two placeholders for estimated_mean and estimated_variance, which are
+    // used for inference and thus not needed here for gradient computation.
+    // They are filled with zeros so as to avoid NaN outputs.
+    Tensor* placeholder_1 = nullptr;
+    OP_REQUIRES_OK(
+        context, context->allocate_output(3, TensorShape({}), &placeholder_1));
+    Tensor* placeholder_2 = nullptr;
+    OP_REQUIRES_OK(
+        context, context->allocate_output(4, TensorShape({}), &placeholder_2));
+
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    args.addArg<Tensor>(y_backprop); // 0
+    args.addArg<Tensor>(x);
+    args.addArg<Tensor>(scale);
+    args.addArg<Tensor>(saved_mean_or_pop_mean);
+    args.addArg<Tensor>(saved_maybe_inv_var_or_pop_var);
+    args.addArg<Tensor>(*x_backprop); // 5
+    args.addArg<Tensor>(*scale_backprop);
+    args.addArg<Tensor>(*offset_backprop);
+    args.addArg<Tensor>(*placeholder_1);
+    args.addArg<Tensor>(*placeholder_2);
+    args.addArg<U>(epsilon_); // 10
+    args.addArg<int32>((int32)tensor_format_);
+    args.addArg<bool>(is_training_);
+    args.addArg<int64>(DataTypeToEnum<T>::value);
+    args.addArg<int64>(DataTypeToEnum<U>::value); // 14
+
+    VEOpKernelHelper::Call(context, "FusedBatchNormGrad", args);
+#else
+    // Two placeholders for estimated_mean and estimated_variance, which are
+    // used for inference and thus not needed here for gradient computation.
+    // They are filled with zeros so as to avoid NaN outputs.
+    Tensor* placeholder_1 = nullptr;
+    OP_REQUIRES_OK(
+        context, context->allocate_output(3, TensorShape({}), &placeholder_1));
+    functor::SetZeroFunctor<Device, float> f;
+    f(context->eigen_device<Device>(), placeholder_1->flat<U>());
+    Tensor* placeholder_2 = nullptr;
+    OP_REQUIRES_OK(
+        context, context->allocate_output(4, TensorShape({}), &placeholder_2));
+    f(context->eigen_device<Device>(), placeholder_2->flat<U>());
+
+    // If input is empty, set gradients w.r.t scale/offset to zero.
+    if (x.shape().num_elements() == 0) {
+      functor::SetZeroFunctor<Device, U> f;
+      f(context->eigen_device<Device>(), scale_backprop->flat<U>());
+      f(context->eigen_device<Device>(), offset_backprop->flat<U>());
+      return;
+    }
+
+    const Tensor* reserve_space_data = nullptr;
+    functor::CudnnBatchNormAllocatorInTemp<uint8>* workspace_allocator_ptr =
+        nullptr;
+
+#if CUDNN_VERSION >= 7402
+    functor::CudnnBatchNormAllocatorInTemp<uint8> workspace_allocator(context);
+    if (use_reserved_space) {
+      const Tensor& reserve_space = context->input(5);
+      reserve_space_data = &reserve_space;
+      workspace_allocator_ptr = &workspace_allocator;
+    }
+#endif  // CUDNN_VERSION >= 7402
+
+    if (is_training_) {
+      functor::FusedBatchNormGrad<Device, T, U>()(
+          context, y_backprop, x, scale, saved_mean_or_pop_mean,
+          saved_maybe_inv_var_or_pop_var, epsilon_, x_backprop, scale_backprop,
+          offset_backprop, reserve_space_data, workspace_allocator_ptr,
+          tensor_format_);
+    } else {
+      // Necessary layout conversion is currently done in python.
+      CHECK(tensor_format_ == FORMAT_NHWC)
+          << "The implementation of FusedBatchNormGrad with is_training=False "
+             "only support "
+          << "NHWC tensor format for now.";
+      Tensor scratch1, scratch2;
+      OP_REQUIRES_OK(context,
+                     context->allocate_temp(DataTypeToEnum<U>::value,
+                                            scale_offset_shape, &scratch1));
+      OP_REQUIRES_OK(context,
+                     context->allocate_temp(DataTypeToEnum<U>::value,
+                                            scale_offset_shape, &scratch2));
+      functor::FusedBatchNormFreezeGrad<Device, T, U>()(
+          context->eigen_device<Device>(), y_backprop, x, scale,
+          saved_mean_or_pop_mean, saved_maybe_inv_var_or_pop_var, epsilon_,
+          x_backprop, scale_backprop, offset_backprop, scratch1.vec<U>(),
+          scratch2.vec<U>());
+    }
+#endif
+  }
+
+ private:
+  U epsilon_;
+  TensorFormat tensor_format_;
+  bool is_training_;
+};
+
+
+REGISTER_KERNEL_BUILDER(
+    Name("FusedBatchNormGrad").Device(DEVICE_VE).TypeConstraint<float>("T"),
+    FusedBatchNormGradOp<VEDevice, float, float>);
+
+
 #endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
