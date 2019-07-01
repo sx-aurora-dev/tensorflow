@@ -84,6 +84,7 @@ void VEOpKernelHelper::Call(OpKernelContext* context,
 
 template Status VEOpKernelHelper::Args::addArg<bool>  (const bool&   v) ;
 template Status VEOpKernelHelper::Args::addArg<uint64>(const uint64& v) ;
+template Status VEOpKernelHelper::Args::addArg<int32> (const int32&  v) ;
 template Status VEOpKernelHelper::Args::addArg<int64> (const int64&  v) ;
 template Status VEOpKernelHelper::Args::addArg<float> (const float&  v) ;
 
