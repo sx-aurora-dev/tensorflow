@@ -77,7 +77,7 @@ void ConcatVE(OpKernelContext* ctx,
   OP_REQUIRES_OK(ctx, args.addArg<int64>(value_0_t->dtype()));
   OP_REQUIRES_OK(ctx, args.addArg<uint64>(values.size()));
   OP_REQUIRES_OK(ctx, args.addArg<uint64>(1)); // output_flat_dim0
-  OP_REQUIRES_OK(ctx, args.addArg<uint64>(0)); // output_flat_dim1 (not used)
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>(values.size()*value_0_t->NumElements())); // output_flat_dim1
 
   OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)DMAHelper::base(&output)));
 
