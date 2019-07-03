@@ -498,13 +498,15 @@ class VEConcatBaseOp : public VEOpKernel {
       Args.addArg<int64>((int64)(values[0].dtype())) ;
       Args.addArg<uint64>(n_input) ;
       Args.addArg<uint64>(inputs_flat_dim0) ;
-      Args.addArg<uint64>(output_dim1) ;
       Args.addArg<uint64>((uint64)(DMAHelper::base(output))) ;
 
+      uint64_t offset = 0 ;
+      Args.addArg<uint64>(offset) ;
       for (int i = 0; i < n_input; ++i) {
 	const auto& input = inputs_flat[i] ;
 	Args.addArg<uint64>((uint64)(DMAHelper::base(&values[i]))) ;
-	Args.addArg<uint64>((uint64)(inputs_flat[i]->dimension(1))) ;
+	offset += inputs_flat[i]->dimension(1) ;
+	Args.addArg<uint64>(offset) ;
       }
 
       Call(c, "Concat", Args);

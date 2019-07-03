@@ -77,14 +77,16 @@ void ConcatVE(OpKernelContext* ctx,
   OP_REQUIRES_OK(ctx, args.addArg<int64>(value_0_t->dtype()));
   OP_REQUIRES_OK(ctx, args.addArg<uint64>(values.size()));
   OP_REQUIRES_OK(ctx, args.addArg<uint64>(1)); // output_flat_dim0
-  OP_REQUIRES_OK(ctx, args.addArg<uint64>(values.size()*value_0_t->NumElements())); // output_flat_dim1
 
   OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)DMAHelper::base(&output)));
 
+  uint64_t offset = 0 ;
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>(offset));
   for (int i = 0; i < values.size(); ++i) {
     const Tensor* value_t = values[i].AccessTensor(ctx);
     OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)DMAHelper::base(value_t)));
-    OP_REQUIRES_OK(ctx, args.addArg<uint64>(value_t->NumElements()));
+    offset += value_t->NumElements() ;
+    OP_REQUIRES_OK(ctx, args.addArg<uint64>(offset));
   }
 
   VEOpKernelHelper::Call(ctx, "Concat", args);
