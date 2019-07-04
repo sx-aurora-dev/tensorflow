@@ -846,6 +846,11 @@ REGISTER_KERNEL_BUILDER(Name("ControlTrigger").Device(DEVICE_SYCL),
                         ControlTriggerOp);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("ControlTrigger").Device(DEVICE_VE),
+                        ControlTriggerOp);
+#endif
+
 // When called, abort op will abort the current process. This can be used to
 // abort remote PSs when needed.
 class AbortOp : public OpKernel {
