@@ -207,12 +207,67 @@ REGISTER_SYCL_HOST_REF_KERNEL(string);
                               .Device(DEVICE_VE)          \
                               .HostMemory("pred")         \
                               .TypeConstraint<type>("T"), \
+                          SwitchOp)                       \
+  REGISTER_KERNEL_BUILDER(Name("_SwitchN")                \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("output_index") \
+                              .TypeConstraint<type>("T"), \
+                          SwitchNOp)
+
+#define REGISTER_VE_REF_SWITCH(type)                      \
+  REGISTER_KERNEL_BUILDER(Name("RefSwitch")               \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("pred")         \
+                              .TypeConstraint<type>("T"), \
                           SwitchOp)
 
 TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_SWITCH);
-//TF_CALL_ALL_TYPES(REGISTER_VE_SWITCH);
-#undef REGISTER_VE_SWITCH
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE_SWITCH);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_REF_SWITCH);
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE_REF_SWITCH);
+REGISTER_VE_SWITCH(uint64);
+TF_CALL_variant(REGISTER_VE_SWITCH);
 
+#undef REGISTER_VE_SWITCH
+#undef REGISTER_VE_REF_SWITCH
+
+#define REGISTER_VE_HOST_KERNEL(type)                     \
+  REGISTER_KERNEL_BUILDER(Name("Switch")                  \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("data")         \
+                              .HostMemory("pred")         \
+                              .HostMemory("output_false") \
+                              .HostMemory("output_true")  \
+                              .TypeConstraint<type>("T"), \
+                          SwitchOp)                       \
+  REGISTER_KERNEL_BUILDER(Name("_SwitchN")                \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("data")         \
+                              .HostMemory("output_index") \
+                              .HostMemory("outputs")      \
+                              .TypeConstraint<type>("T"), \
+                          SwitchNOp)
+
+#define REGISTER_VE_HOST_REF_KERNEL(type)                 \
+  REGISTER_KERNEL_BUILDER(Name("RefSwitch")               \
+                              .Device(DEVICE_VE)          \
+                              .HostMemory("data")         \
+                              .HostMemory("pred")         \
+                              .HostMemory("output_false") \
+                              .HostMemory("output_true")  \
+                              .TypeConstraint<type>("T"), \
+                          SwitchOp)
+
+REGISTER_VE_HOST_KERNEL(int32);
+REGISTER_VE_HOST_REF_KERNEL(int32);
+REGISTER_VE_HOST_KERNEL(bool);
+REGISTER_VE_HOST_REF_KERNEL(bool);
+REGISTER_VE_HOST_KERNEL(string);
+REGISTER_VE_HOST_REF_KERNEL(string);
+REGISTER_VE_HOST_KERNEL(ResourceHandle);
+
+#undef REGISTER_VE_HOST_KERNEL
+#undef REGISTER_VE_HOST_REF_KERNEL
 #endif
 
 class RefSelectOp : public OpKernel {
