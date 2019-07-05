@@ -733,7 +733,7 @@ class VEBinaryOp : public BinaryOpShared {
     std::string name_;
 };
 
-#define DEFINE_VE_UNRARY_OP(Name) \
+#define DEFINE_VE_UNARY_OP(Name) \
 class VE##Name##Op : public VEUnaryOp { \
   public: \
     explicit VE##Name##Op(OpKernelConstruction* ctx)  \
@@ -741,7 +741,7 @@ class VE##Name##Op : public VEUnaryOp { \
 };
 
 #define REGISTER_VE_UNARY_OP(NAME, T) \
-  DEFINE_VE_UNRARY_OP(NAME); \
+  DEFINE_VE_UNARY_OP(NAME); \
   REGISTER_KERNEL_BUILDER(Name(#NAME) \
                           .Device(DEVICE_VE) \
                           .TypeConstraint<T>("T"), \

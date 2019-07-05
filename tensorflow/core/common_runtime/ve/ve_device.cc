@@ -411,6 +411,7 @@ class VEOAsync : public VEO
         if (!str_util::SplitAndParseAsInts(tmp, ',', &vals) || vals.size() != 1) {
           LOG(WARNING) << "Ignored invalid TF_VE_EXECUTOR: " << tmp;
         } else {
+          ve_executor_enabled_ = true;
           ve_executor_threshold_ = vals[0];
           VLOG(2) << "VEOAsync: StartThread: "
             << " threshold=" << ve_executor_threshold_;
@@ -465,7 +466,8 @@ class VEOAsync : public VEO
         return errors::Internal("VEOAsync: Failed to push kernel");
 
 #ifdef TF_VE_EXECUTOR
-      if (currStack_->num_kernels() >= ve_executor_threshold_) {
+      if (ve_executor_enabled_
+          && currStack_->num_kernels() >= ve_executor_threshold_) {
         VLOG(2) << "VEOAsync::compute: notify executor";
         executor_cond_.notify_all();
       }
@@ -552,6 +554,7 @@ class VEOAsync : public VEO
     uint64_t sym_noprof_;
 
 #ifdef TF_VE_EXECUTOR
+    bool ve_executor_enabled_ = false;
     std::unique_ptr<Thread> thread_;
     int ve_executor_threshold_ = 1;
     bool thread_done_ = false;

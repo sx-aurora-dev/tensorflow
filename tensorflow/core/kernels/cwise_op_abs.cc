@@ -44,4 +44,14 @@ REGISTER_KERNEL_BUILDER(Name("Abs")
                             .TypeConstraint<int32>("T"),
                         UnaryOp<CPUDevice, functor::abs<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#if TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Abs, float);
+REGISTER_KERNEL_BUILDER(Name("Abs")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .TypeConstraint<int32>("T"),
+                        UnaryOp<CPUDevice, functor::abs<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow
