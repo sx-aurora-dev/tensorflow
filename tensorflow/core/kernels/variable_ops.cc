@@ -241,7 +241,7 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
 #ifdef TENSORFLOW_USE_VE
 #define REGISTER_VE_KERNEL(type)                                            \
   REGISTER_KERNEL_BUILDER(                                                 \
-      Name("Variable").Device(DEVICE_GPU).TypeConstraint<type>("dtype"),   \
+      Name("Variable").Device(DEVICE_VE).TypeConstraint<type>("dtype"),   \
       VariableOp);                                                         \
   REGISTER_KERNEL_BUILDER(                                                  \
       Name("VariableV2").Device(DEVICE_VE).TypeConstraint<type>("dtype"),   \
