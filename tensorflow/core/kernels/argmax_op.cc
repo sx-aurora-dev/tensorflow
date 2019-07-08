@@ -283,7 +283,7 @@ class VEArgOp : public OpKernel {
       return;
     }
 
-#define VE_ARGOP_MAX_HANDLE_DIM	3
+#define VE_ARGOP_MAX_HANDLE_DIM	4
     if( input_dims <= VE_ARGOP_MAX_HANDLE_DIM ) {
 
       struct {
