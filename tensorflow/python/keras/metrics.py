@@ -247,6 +247,18 @@ class Metric(Layer):
                  initializer=None,
                  dtype=None):
     """Adds state variable. Only for use by subclasses."""
+    from tensorflow.python.distribute import distribution_strategy_context as ds_context  # pylint:disable=g-import-not-at-top
+    from tensorflow.python.keras.distribute import distributed_training_utils  # pylint:disable=g-import-not-at-top
+
+    if ds_context.has_strategy():
+      strategy = ds_context.get_strategy()
+    else:
+      strategy = None
+
+    # TODO(b/120571621): Make `ON_READ` work with Keras metrics on TPU.
+    if distributed_training_utils.is_tpu_strategy(strategy):
+      synchronization = tf_variables.VariableSynchronization.ON_WRITE
+
     return super(Metric, self).add_weight(
         name=name,
         shape=shape,
@@ -273,12 +285,13 @@ class Reduce(Metric):
     """
     super(Reduce, self).__init__(name=name, dtype=dtype)
     self.reduction = reduction
-    self.total = self.add_weight(
-        'total', initializer=init_ops.zeros_initializer)
-    if reduction in [metrics_utils.Reduction.SUM_OVER_BATCH_SIZE,
-                     metrics_utils.Reduction.WEIGHTED_MEAN]:
-      self.count = self.add_weight(
-          'count', initializer=init_ops.zeros_initializer)
+    with ops.init_scope():
+      self.total = self.add_weight(
+          'total', initializer=init_ops.zeros_initializer)
+      if reduction in [metrics_utils.Reduction.SUM_OVER_BATCH_SIZE,
+                       metrics_utils.Reduction.WEIGHTED_MEAN]:
+        self.count = self.add_weight(
+            'count', initializer=init_ops.zeros_initializer)
 
   def update_state(self, values, sample_weight=None):
     """Accumulates statistics for computing the reduction metric.
@@ -2800,7 +2813,8 @@ cosine_proximity = cosine_similarity
 def clone_metric(metric):
   """Returns a clone of the metric if stateful, otherwise returns it as is."""
   if isinstance(metric, Metric):
-    return metric.__class__.from_config(metric.get_config())
+    with ops.init_scope():
+      return metric.__class__.from_config(metric.get_config())
   return metric
 
 

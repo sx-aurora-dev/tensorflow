@@ -13,48 +13,31 @@ visibility = [
     "//tensorflow_model_optimization:__subpackages__",
     "//third_party/py/cleverhans:__subpackages__",
     "//third_party/py/tensorflow_examples:__subpackages__",
+    "//third_party/py/tf_slim:__subpackages__",
     # TODO(aselle): to pass open source test.
     "//bazel_pip/tensorflow/lite/toco/python:__pkg__",
 ]
 
-package(default_visibility = visibility)
-
-licenses(["notice"])  # Apache 2.0
-
-exports_files(["LICENSE"])
-
-exports_files(["platform/base.i"])
-
-load("//tensorflow:tensorflow.bzl", "if_not_v2")
-load("//tensorflow:tensorflow.bzl", "if_not_windows")
-load("//tensorflow:tensorflow.bzl", "tf_cuda_library")
-load("//tensorflow:tensorflow.bzl", "tf_gen_op_wrapper_py")
-load("//tensorflow:tensorflow.bzl", "py_test")
-load("//tensorflow:tensorflow.bzl", "tf_py_test")
-load("//tensorflow:tensorflow.bzl", "py_tests")
-load("//tensorflow:tensorflow.bzl", "tf_py_build_info_genrule")
+load("//tensorflow:tensorflow.bzl", "if_not_v2", "if_not_windows", "tf_cuda_library", "tf_gen_op_wrapper_py", "py_test", "tf_py_test", "py_tests", "tf_py_build_info_genrule", "tf_cc_shared_object", "tf_custom_op_library_additional_deps_impl")
 load("//tensorflow:tensorflow.bzl", "tf_py_wrap_cc")
-load("//tensorflow:tensorflow.bzl", "tf_cc_shared_object")
-load("//tensorflow:tensorflow.bzl", "tf_native_cc_binary")
-load("//tensorflow:tensorflow.bzl", "tf_custom_op_library_additional_deps_impl")
 load("//tensorflow:tensorflow.bzl", "cuda_py_test")
 load("//tensorflow:tensorflow.bzl", "cuda_py_tests")
-load("//tensorflow/core:platform/default/build_config.bzl", "pyx_library")
-load("//tensorflow/core:platform/default/build_config.bzl", "tf_proto_library")
-load("//tensorflow/core:platform/default/build_config.bzl", "tf_proto_library_py")
-load("//tensorflow/core:platform/default/build_config.bzl", "tf_additional_lib_deps")
-load("//tensorflow/core:platform/default/build_config.bzl", "tf_additional_all_protos")
-load("//tensorflow/core:platform/default/build_config.bzl", "tf_protos_grappler")
-load("//tensorflow/core:platform/default/build_config_root.bzl", "tf_additional_plugin_deps")
+load("//tensorflow/core:platform/default/build_config.bzl", "pyx_library", "tf_proto_library", "tf_proto_library_py", "tf_additional_lib_deps", "tf_additional_all_protos", "tf_protos_grappler")
+load("//tensorflow/core:platform/default/build_config_root.bzl", "tf_additional_plugin_deps", "tf_additional_verbs_deps", "tf_additional_mpi_deps", "tf_additional_gdr_deps", "if_static")
 load("//tensorflow/python:build_defs.bzl", "tf_gen_op_wrapper_private_py")
-load("//tensorflow/core:platform/default/build_config_root.bzl", "tf_additional_verbs_deps")
-load("//tensorflow/core:platform/default/build_config_root.bzl", "tf_additional_mpi_deps")
-load("//tensorflow/core:platform/default/build_config_root.bzl", "tf_additional_gdr_deps")
-load("//tensorflow/core:platform/default/build_config_root.bzl", "if_static")
 load(
     "//third_party/ngraph:build_defs.bzl",
     "if_ngraph",
 )
+
+package(
+    default_visibility = visibility,
+    licenses = ["notice"],  # Apache 2.0
+)
+
+exports_files(["LICENSE"])
+
+exports_files(["platform/base.i"])
 
 py_library(
     name = "python",
@@ -153,6 +136,7 @@ py_library(
         ":platform",
         ":proto_ops",
         ":pywrap_tensorflow",
+        ":rnn_ops_gen",
         ":saver_test_utils",
         ":script_ops",
         ":session_ops",
@@ -418,6 +402,7 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:script_ops_op_lib",
+        "//tensorflow/python:ndarray_tensor",
         "//tensorflow/python/eager:pywrap_tfe_lib",
         "//third_party/py/numpy:headers",
         "//third_party/python_runtime:headers",
@@ -518,7 +503,7 @@ tf_cc_shared_object(
     deps = [
         "//tensorflow/core:framework_headers_lib",
         "//third_party/eigen3",
-        "@protobuf_archive//:protobuf_headers",
+        "@com_google_protobuf//:protobuf_headers",
     ],
 )
 
@@ -1898,6 +1883,10 @@ tf_gen_op_wrapper_private_py(
         "//tensorflow/contrib/quantization:__pkg__",
         "//tensorflow/python/kernel_tests:__pkg__",
     ],
+    deps = [
+        "//tensorflow/c/kernels:bitcast_op_lib",
+        "//tensorflow/core:array_ops_op_lib",
+    ],
 )
 
 tf_gen_op_wrapper_private_py(
@@ -2237,6 +2226,13 @@ tf_gen_op_wrapper_private_py(
 )
 
 tf_gen_op_wrapper_private_py(
+    name = "rnn_ops_gen",
+    visibility = [
+        "//tensorflow/contrib/rnn:__pkg__",
+    ],
+)
+
+tf_gen_op_wrapper_private_py(
     name = "tpu_ops_gen",
     visibility = [
         "//smartass/brain/configure/python:__pkg__",
@@ -2541,6 +2537,7 @@ py_library(
         ":graph_to_function_def",
         ":pywrap_tensorflow",
         ":util",
+        "//tensorflow/python/compat",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/eager:function",
     ],
@@ -3047,6 +3044,9 @@ cuda_py_test(
         "@absl_py//absl/testing:parameterized",
         "//tensorflow/python:client_testlib",
     ],
+    tags = [
+        "no_rocm",
+    ],
     xla_enable_strict_auto_jit = True,
 )
 
@@ -3064,6 +3064,13 @@ py_library(
         "//tensorflow/python/eager:context",
         "//third_party/py/numpy",
     ],
+)
+
+py_library(
+    name = "op_selector",
+    srcs = ["ops/op_selector.py"],
+    srcs_version = "PY2AND3",
+    deps = [":framework_ops"],
 )
 
 py_library(
@@ -3207,7 +3214,6 @@ py_library(
         ":random_ops",
         ":tensor_shape",
         ":tensor_util",
-        "//tensorflow/python/eager:monitoring",
         "//third_party/py/numpy",
     ],
 )
@@ -3548,6 +3554,17 @@ py_library(
         ":math_ops",
         ":platform",
         "//tensorflow/compiler/tf2xla/ops:gen_xla_ops",
+        "@opt_einsum_archive//:opt_einsum",
+    ],
+)
+
+py_library(
+    name = "rnn_grad",
+    srcs = ["ops/rnn_grad.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":framework_for_generated_wrappers",
+        "//tensorflow/python:rnn_ops_gen",
     ],
 )
 
@@ -3585,6 +3602,7 @@ py_library(
         ":partitioned_variables",
         ":proto_ops",
         ":random_ops",
+        ":rnn_grad",
         ":script_ops",
         ":session_ops",
         ":sort_ops",
@@ -3854,6 +3872,20 @@ cuda_py_test(
     xla_enable_strict_auto_jit = True,
 )
 
+py_test(
+    name = "op_selector_test",
+    srcs = ["ops/op_selector_test.py"],
+    python_version = "PY2",
+    srcs_version = "PY2AND3",
+    deps = [
+        ":client_testlib",
+        ":constant_op",
+        ":framework_ops",
+        ":math_ops",
+        ":op_selector",
+    ],
+)
+
 cuda_py_test(
     name = "gradient_checker_v2_test",
     size = "medium",
@@ -4084,10 +4116,22 @@ cuda_py_test(
         ":variables",
         "@absl_py//absl/testing:parameterized",
         "//third_party/py/numpy",
-        "//tensorflow/python/distribute:mirrored_strategy",
     ],
     tags = ["no_windows"],
     xla_enable_strict_auto_jit = True,
+)
+
+py_test(
+    name = "nn_loss_scaling_utilities_test",
+    size = "small",
+    srcs = ["ops/nn_loss_scaling_utilities_test.py"],
+    python_version = "PY2",
+    deps = [
+        ":client_testlib",
+        "//tensorflow/python/distribute:combinations",
+        "//tensorflow/python/distribute:strategy_combinations",
+        "@absl_py//absl/testing:parameterized",
+    ],
 )
 
 cuda_py_test(
@@ -4367,13 +4411,14 @@ py_library(
     srcs_version = "PY2AND3",
     visibility = visibility + [
         "//tensorflow:__pkg__",
+        "//third_party/py/tensorflow_core:__subpackages__",
         "//third_party/py/tf_agents:__subpackages__",
     ],
     deps = [
         "//tensorflow/tools/compatibility:all_renames_v2",
         "//third_party/py/numpy",
+        "@com_google_protobuf//:protobuf_python",
         "@org_python_pypi_backports_weakref",
-        "@protobuf_archive//:protobuf_python",
         "@six_archive//:six",
     ],
 )
@@ -4602,6 +4647,7 @@ cc_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/python:ndarray_tensor",
     ],
 )
 
@@ -6275,6 +6321,7 @@ cuda_py_test(
     tags = [
         "grappler",
         "no_pip",  # tf_optimizer is not available in pip.
+        "notap",  # TODO(b/135924227): Re-enable after fixing flakiness.
     ],
     # This test will not run on XLA because it primarily tests the TF Classic flow.
     xla_enable_strict_auto_jit = False,
@@ -6530,6 +6577,7 @@ cuda_py_test(
     ],
     tags = [
         "grappler",
+        "no_rocm",
     ],
     # This test analyzes the graph, but XLA changes the names of nodes.
     xla_enable_strict_auto_jit = False,
@@ -6627,6 +6675,18 @@ py_library(
     name = "tf2",
     srcs = ["tf2.py"],
     srcs_version = "PY2AND3",
+)
+
+py_test(
+    name = "tf2_test",
+    srcs = ["framework/tf2_test.py"],
+    python_version = "PY3",
+    srcs_version = "PY2AND3",
+    deps = [
+        ":client_testlib",
+        ":tf2",
+        "//tensorflow/python/distribute:combinations",
+    ],
 )
 
 cuda_py_test(
