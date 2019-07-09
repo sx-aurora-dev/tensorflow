@@ -1,13 +1,13 @@
 # TensroFlow with VE support
 
-You can use prebuild packages if you are interested in using TF on SX-Aurora.
+You can use prebuilt packages if you are interested in using TF on SX-Aurora.
 You can also modifiy the source code and build it.
 
-## Using prebuild packages
+## Using prebuilt packages
 
-We are providing two whl files on github.
+We are providing two whl files on github. See "releases" page.
 
-- tensorflow_ve-1.13.1-cp36-cp36m-linux_x86_64.whl
+- tensorflow_ve-1.14.0-cp36-cp36m-linux_x86_64.whl
 - Keras-2.2.4-py3-none-any.whl
 
 We have tested on CentOS 7.5 and:
@@ -25,7 +25,8 @@ If huge page is enabled on VH, data is transfered using [VE
 DMA](https://veos-sxarr-nec.github.io/libsysve/group__vedma.html).  Here is an
 example to enable huge pages.
 
-    % echo 1024 > /proc/sys/vm/nr_hugepages
+    % cat /etc/sysctl.d/90-hugepage.conf
+    vm.nr_hugepages=1024
 
 ### Install required packages
 
@@ -36,7 +37,7 @@ example to enable huge pages.
 
 ### Create virtualenv with python 3.6
 
-Create virtualenv and update packages after enabling scl, then install prebuild
+Create virtualenv and update packages after enabling scl, then install prebuilt
 packages.
 
 ```
@@ -45,7 +46,7 @@ $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
 (tmp)$ pip install -U six numpy wheel Keras-Preprocessing setuptools
-(tmp)% pip install -U tensorflow_ve-1.13.1-cp36-cp36m-linux_x86_64.whl
+(tmp)% pip install -U tensorflow_ve-1.14.0-cp36-cp36m-linux_x86_64.whl
 (tmp)% pip install -U Keras-2.2.4-py3-none-any.whl
 ```
 
@@ -113,7 +114,7 @@ You can find a package in `dist` directory.
 `veorun_tf` is an executable for VE and includes kernel implementaions that are
 called from tf running on CPU through veoffload.
 
-Prebuild veorun_tf is included in source tree of tf and whl packages. If you
+Prebuilt veorun_tf is included in source tree of tf and whl packages. If you
 want to add new kernels or write more efficient kernels, you can build
 veorun_tf by yourself.
 
@@ -125,8 +126,8 @@ post](https://sx-aurora-dev.github.io/blog/post/2019-05-22-llvm-rpm/).
 
 ```
 (tmp)% cd <working directory>
-(tmp)% git clone <url of vetfkernel> vetfkernel
-(tmp)% git clone <url of vednn> vetfkernel/libs/vednn
+(tmp)% git clone https://github.com/sx-aurora-dev/vetfkernel vetfkernel
+(tmp)% git clone https://github.com/sx-aurora-dev/vednn vetfkernel/libs/vednn
 (tmp)% cd vetfkernel
 (tmp)% (mkdir build && cd build && cmake3 -DLLVM_DIR=/opt/nec/nosupport/llvm-ve/lib/cmake/llvm .. && make)
 ```
@@ -147,6 +148,6 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 
 We have tested on above envirionment with:
 
-- llvm-ve 1.1.0
-- ncc/nc++ 2.2.2
+- llvm-ve 1.2.2
+- ncc/nc++ 2.3.0
 
