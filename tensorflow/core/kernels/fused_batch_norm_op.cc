@@ -1392,6 +1392,25 @@ REGISTER_KERNEL_BUILDER(
     Name("FusedBatchNorm").Device(DEVICE_VE).TypeConstraint<float>("T"),
     FusedBatchNormOp<VEDevice, float, float>);
 
+REGISTER_KERNEL_BUILDER(Name("FusedBatchNormV2")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .TypeConstraint<float>("U"),
+                        FusedBatchNormOp<VEDevice, float, float>);
+
+REGISTER_KERNEL_BUILDER(Name("FusedBatchNormV3")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .TypeConstraint<float>("U"),
+                        FusedBatchNormOpV3<VEDevice, float, float>);
+
+REGISTER_KERNEL_BUILDER(Name("_FusedBatchNormEx")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .TypeConstraint<float>("U"),
+                        FusedBatchNormOpEx<VEDevice, float, float>);
+
+
 template <typename T, typename U>
 class FusedBatchNormGradOpBase<VEDevice, T, U> : public OpKernel {
  protected:
@@ -1553,6 +1572,18 @@ class FusedBatchNormGradOpBase<VEDevice, T, U> : public OpKernel {
 REGISTER_KERNEL_BUILDER(
     Name("FusedBatchNormGrad").Device(DEVICE_VE).TypeConstraint<float>("T"),
     FusedBatchNormGradOp<VEDevice, float, float>);
+
+REGISTER_KERNEL_BUILDER(Name("FusedBatchNormGradV2")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .TypeConstraint<float>("U"),
+                        FusedBatchNormGradOp<VEDevice, float, float>);
+
+REGISTER_KERNEL_BUILDER(Name("FusedBatchNormGradV3")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .TypeConstraint<float>("U"),
+                        FusedBatchNormGradOpV3<VEDevice, float, float>);
 
 
 #endif // TENSORFLOW_USE_VE
