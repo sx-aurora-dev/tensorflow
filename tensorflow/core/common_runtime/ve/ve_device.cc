@@ -183,11 +183,11 @@ class VEO {
 
     virtual Status compute(const std::string& name, const void* arg, size_t len,
                            const OpKernel* op) {
-      VLOG(2) << "VEO::compute: name=" << name;
+      VLOG(2) << "VEO::compute: name=" << name << " arg=" << arg << " len=" << len;
       uint64_t sym = find_kernel_sym(name);
 
       Args a;
-      veo_args_set_stack(a.args, VEO_INTENT_OUT, 0, (char*)arg, len);
+      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
       veo_args_set_i64(a.args, 1, len);
       return call_and_wait(sym, a);
     }
@@ -955,7 +955,12 @@ class VEOFactory {
 
       if (!veo_) {
 #if defined(VEO_ASYNC)
-        veo_ = new VEOAsync;
+        if (getenv("TF_VE_SYNC")) {
+          VLOG(2) << "use VEO (not VEOAsync) because TF_VEO_SYNC is set";
+          veo_ = new VEO;
+        } else {
+          veo_ = new VEOAsync;
+        }
 #else
         veo_ = new VEO;
 #endif
