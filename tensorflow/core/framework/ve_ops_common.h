@@ -20,8 +20,26 @@ class VEOpKernelHelper {
           pHeader_->nVariables = 0;
         }
 
+#if 0
         template<typename T>
         Status addArg(const T& v) ;
+#endif
+        template<typename T>
+          Status addArg(const T& v) {
+            size_t size = sizeof(T) ;
+            if (curr_ + sizeof(size_t) + size >= end_)
+              return errors::Internal("buffer is too small");
+
+            *reinterpret_cast<size_t*>(curr_) = size ;
+            curr_ += sizeof(size_t) ;
+
+            *reinterpret_cast<T*>(curr_) = v ;
+            curr_ += size;
+
+            ++pHeader_->nVariables;
+
+            return Status::OK();
+          }
 
         const void* buf() const { return buf_; }
         size_t size() const { return curr_ - reinterpret_cast<uintptr_t>(buf_); }
@@ -69,6 +87,11 @@ class VEOpKernelHelper {
       Call(context, name, ArgsImpl<>(t0, t1), op);
     }
 };
+
+//template<> Status VEOpKernelHelper::Args::addArg<bool>(const bool&);
+#define D(T) template<> Status VEOpKernelHelper::Args::addArg<T>(const T&)
+D(Tensor);
+#undef D
 
 class VEOpKernel : public OpKernel, public VEOpKernelHelper {
   public:

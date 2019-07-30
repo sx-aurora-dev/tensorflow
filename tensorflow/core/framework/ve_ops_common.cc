@@ -35,6 +35,7 @@ Status _Tensor::init(const Tensor& t) {
 
 } // namespace
 
+#if 0
 template<typename T>
 Status VEOpKernelHelper::Args::addArg(const T& v) {
   size_t size = sizeof(T) ;
@@ -51,6 +52,7 @@ Status VEOpKernelHelper::Args::addArg(const T& v) {
 
   return Status::OK();
 }
+#endif
 
 template<>
 Status VEOpKernelHelper::Args::addArg<Tensor>(const Tensor& t) {
@@ -82,11 +84,13 @@ void VEOpKernelHelper::Call(OpKernelContext* context,
     context->SetStatus(s);
 }
 
+#if 0
 template Status VEOpKernelHelper::Args::addArg<bool>  (const bool&   v) ;
 template Status VEOpKernelHelper::Args::addArg<uint64>(const uint64& v) ;
 template Status VEOpKernelHelper::Args::addArg<int32> (const int32&  v) ;
 template Status VEOpKernelHelper::Args::addArg<int64> (const int64&  v) ;
 template Status VEOpKernelHelper::Args::addArg<float> (const float&  v) ;
+#endif
 
 }; // namespace tensorflow
 
