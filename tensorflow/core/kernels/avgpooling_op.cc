@@ -750,11 +750,14 @@ class AvgPoolingGradOp<VEDevice, T> : public OpKernel {
 
     const int window_rows = ksize_[1];
     const int window_cols = ksize_[2];
+#if 0
     const int depth_window = ksize_[3];
+#endif
 
     const int row_stride = stride_[1];
     const int col_stride = stride_[2];
 
+#if 0
     // We (will) use different code for spatial pooling and
     // non-spatial pooling.
     //
@@ -762,6 +765,7 @@ class AvgPoolingGradOp<VEDevice, T> : public OpKernel {
     OP_REQUIRES(context, depth_window == 1,
                 errors::Unimplemented("Non-spatial pooling is not "
                                       "yet supported. Volunteers? :)"));
+#endif
 
     int64 out_height, out_width, pad_rows, pad_cols;
     OP_REQUIRES_OK(context,
