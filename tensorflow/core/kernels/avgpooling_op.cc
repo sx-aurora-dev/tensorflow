@@ -219,7 +219,10 @@ struct Param {
   int64_t ksize[4];
   int64_t stride[4];
   int32_t data_format;
-  int32_t padding;
+  int32_t padding; // Padding
+  int64_t pad_rows;
+  int64_t pad_cols;
+  int32_t pad_depth;
 } __attribute__((__packed__));
 
 template <typename T>
@@ -279,7 +282,10 @@ class AvgPoolingOp<VEDevice, T> : public UnaryOp<T> {
                                                        0, params.forward_output_shape(), &output));
 
 #endif
-      //SpatialAvgPool<Device, T>(context, output, tensor_in, params, padding_);
+
+      param_.pad_rows = params.pad_rows;
+      param_.pad_cols = params.pad_cols;
+      param_.pad_depth = params.pad_depth;
 
       VEOpKernelHelper::ArgsImpl<> args;
       args.addArg<Tensor>(*output);
@@ -744,6 +750,7 @@ class AvgPoolingGradOp<VEDevice, T> : public OpKernel {
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
 #if 0
     output->flat<T>().setZero();
+#endif
 
     const int window_rows = ksize_[1];
     const int window_cols = ksize_[2];
@@ -768,10 +775,13 @@ class AvgPoolingGradOp<VEDevice, T> : public OpKernel {
                    GetWindowedOutputSize(in_cols, window_cols, col_stride,
                                          padding_, &out_width, &pad_cols));
 
+#if 0
     const T* out_backprop_ptr = out_backprop.flat<T>().data();
     T* input_backprop_ptr = output->flat<T>().data();
 #endif
 
+    param_.pad_rows = pad_rows;
+    param_.pad_cols = pad_cols;
 
     VEOpKernelHelper::ArgsImpl<> args;
     args.addArg<Tensor>(*output);
