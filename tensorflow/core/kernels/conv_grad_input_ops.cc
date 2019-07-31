@@ -271,11 +271,11 @@ struct LaunchConv2DBackpropInputOp<VEDevice, T> {
       p.row_padding = std::max<int>(0,
                                     (p.out_bp_param.h - 1) * row_stride +
                                     (p.filter_param.h - 1) * row_dilation + 1 -
-                                    p.in_bp_param.h);
+                                    p.in_bp_param.h) / 2;
       p.col_padding = std::max<int>(0,
                                     (p.out_bp_param.w - 1) * col_stride +
                                     (p.filter_param.w - 1) * col_dilation + 1 -
-                                    p.in_bp_param.w);
+                                    p.in_bp_param.w) / 2;
     }
 
     VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
