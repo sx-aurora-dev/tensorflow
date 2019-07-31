@@ -20,10 +20,6 @@ class VEOpKernelHelper {
           pHeader_->nVariables = 0;
         }
 
-#if 0
-        template<typename T>
-        Status addArg(const T& v) ;
-#endif
         template<typename T>
           Status addArg(const T& v) {
             size_t size = sizeof(T) ;
@@ -88,7 +84,6 @@ class VEOpKernelHelper {
     }
 };
 
-//template<> Status VEOpKernelHelper::Args::addArg<bool>(const bool&);
 #define D(T) template<> Status VEOpKernelHelper::Args::addArg<T>(const T&)
 D(Tensor);
 #undef D

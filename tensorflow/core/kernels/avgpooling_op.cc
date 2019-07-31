@@ -222,7 +222,6 @@ struct Param {
   int32_t padding; // Padding
   int64_t pad_rows;
   int64_t pad_cols;
-  int32_t pad_depth;
 } __attribute__((__packed__));
 
 template <typename T>
@@ -285,7 +284,6 @@ class AvgPoolingOp<VEDevice, T> : public UnaryOp<T> {
 
       param_.pad_rows = params.pad_rows;
       param_.pad_cols = params.pad_cols;
-      param_.pad_depth = params.pad_depth;
 
       VEOpKernelHelper::ArgsImpl<> args;
       args.addArg<Tensor>(*output);
@@ -741,10 +739,8 @@ class AvgPoolingGradOp<VEDevice, T> : public OpKernel {
     for (int64 i = 0; i < tensor_in_shape.NumElements(); ++i) {
       output_shape.AddDim(shape_vec(i));
     }
-#if 0
     const int64 in_rows = output_shape.dim_size(1);
     const int64 in_cols = output_shape.dim_size(2);
-#endif
 
     Tensor* output = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));

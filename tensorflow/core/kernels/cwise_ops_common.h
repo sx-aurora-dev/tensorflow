@@ -705,7 +705,7 @@ class VEBinaryOp : public BinaryOpShared {
               dim_size[i] = t.dim_size(i);
             }
         }
-      };
+      } __attribute__((__packed__));
 
       struct Args {
         _Tensor in0;
@@ -733,7 +733,7 @@ class VEBinaryOp : public BinaryOpShared {
                 in0.dims = in1.dims;
             }
         }
-      } args(state.in0, state.in1, *state.out);
+      } __attribute__((__packed__)) args(state.in0, state.in1, *state.out);
 
 
 
