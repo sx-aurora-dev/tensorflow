@@ -45,7 +45,6 @@ REGISTER_KERNEL_BUILDER(Name("Neg")
 #endif  // TENSORFLOW_USE_VE
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
->>>>>>> upstream/master
 REGISTER6(UnaryOp, GPU, "Neg", functor::neg, float, Eigen::half, double, int64,
           complex64, complex128);
 
