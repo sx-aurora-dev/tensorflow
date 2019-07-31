@@ -35,23 +35,6 @@ Status _Tensor::init(const Tensor& t) {
 
 } // namespace
 
-template<typename T>
-Status VEOpKernelHelper::Args::addArg(const T& v) {
-  size_t size = sizeof(T) ;
-  if (curr_ + sizeof(size_t) + size >= end_)
-    return errors::Internal("buffer is too small");
-
-  *reinterpret_cast<size_t*>(curr_) = size ;
-  curr_ += sizeof(size_t) ;
-
-  *reinterpret_cast<T*>(curr_) = v ;
-  curr_ += size;
-
-  ++pHeader_->nVariables;
-
-  return Status::OK();
-}
-
 template<>
 Status VEOpKernelHelper::Args::addArg<Tensor>(const Tensor& t) {
 
@@ -81,12 +64,6 @@ void VEOpKernelHelper::Call(OpKernelContext* context,
   if (!s.ok())
     context->SetStatus(s);
 }
-
-template Status VEOpKernelHelper::Args::addArg<bool>  (const bool&   v) ;
-template Status VEOpKernelHelper::Args::addArg<uint64>(const uint64& v) ;
-template Status VEOpKernelHelper::Args::addArg<int32> (const int32&  v) ;
-template Status VEOpKernelHelper::Args::addArg<int64> (const int64&  v) ;
-template Status VEOpKernelHelper::Args::addArg<float> (const float&  v) ;
 
 }; // namespace tensorflow
 
