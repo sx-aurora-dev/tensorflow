@@ -650,7 +650,9 @@ class VEUnaryOp : public OpKernel {
       args.in.dtype = inp.dtype();
       args.in.addr = (uint64_t)DMAHelper::base(&inp);
       args.in.nelems = inp.NumElements();
+      args.out.dtype = args.in.dtype;
       args.out.addr = (uint64_t)DMAHelper::base(out);
+      args.out.nelems = args.in.nelems;
 
       VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
       Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args));
