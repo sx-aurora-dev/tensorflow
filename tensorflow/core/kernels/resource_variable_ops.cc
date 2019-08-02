@@ -405,6 +405,21 @@ REGISTER_KERNEL_BUILDER(Name("VariableShape")
 
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("VariableShape")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("out_type")
+                            .HostMemory("output")
+                            .HostMemory("input"),
+                        VariableShapeOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("VariableShape")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int64>("out_type")
+                            .HostMemory("output")
+                            .HostMemory("input"),
+                        VariableShapeOp<int64>);
+#endif
+
 DestroyResourceOp::DestroyResourceOp(OpKernelConstruction* ctx)
     : OpKernel(ctx) {
   OP_REQUIRES_OK(ctx,
