@@ -634,18 +634,17 @@ class VEUnaryOp : public OpKernel {
               {0}, 0, inp.shape(), &out));
 
       struct _Tensor {
-        int dtype;
-        int data_format;
+        int32_t dtype;
         uint64_t addr;
         int32_t dims;
         int64_t nelems;
         int64_t dim_size[8];
-      };
+      } __attribute__((__packed__));
 
       struct {
         _Tensor in;
         _Tensor out;
-      } args;
+      } __attribute__((__packed__)) args;
 
       args.in.dtype = inp.dtype();
       args.in.addr = (uint64_t)DMAHelper::base(&inp);
