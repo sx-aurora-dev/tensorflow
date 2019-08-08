@@ -693,7 +693,7 @@ class VEStridedSliceOp : public VEOpKernel {
     const int processing_dims = processing_shape.dims();
 
     if (processing_shape.num_elements() > 0) {
-#define MAX_HANDLE_DIM 4
+#define MAX_HANDLE_DIM 7
 
       // FIXME : implement larger dim
       if( processing_dims <= MAX_HANDLE_DIM ) {
@@ -825,7 +825,7 @@ class VEStridedSliceGradOp : public VEOpKernel {
     }
 
 
-#define MAX_HANDLE_DIM 4
+#define MAX_HANDLE_DIM 7
     // FIXME : implement larger dim
     if( processing_dims <= MAX_HANDLE_DIM ) {
 
