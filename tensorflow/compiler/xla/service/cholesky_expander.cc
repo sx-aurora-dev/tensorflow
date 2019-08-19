@@ -18,7 +18,6 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/lib/arithmetic.h"
 #include "tensorflow/compiler/xla/client/lib/constants.h"
 #include "tensorflow/compiler/xla/client/lib/loops.h"
 #include "tensorflow/compiler/xla/client/lib/math.h"
@@ -52,11 +51,9 @@ namespace {
 //     l[..., j+1:, j] = (a[..., j+1:, j] - np.dot(l[..., j+1:, :j], row_t)) /
 //                       l[..., j, j]
 //   return l
-// Returns a (result, error) pair.
-std::pair<XlaOp, XlaOp> CholeskyUnblocked(
-    XlaOp a, PrecisionConfig::Precision precision) {
+XlaOp CholeskyUnblocked(XlaOp a, PrecisionConfig::Precision precision) {
   XlaBuilder* builder = a.builder();
-  auto result = [&]() -> StatusOr<std::pair<XlaOp, XlaOp>> {
+  return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape a_shape, builder->GetShape(a));
     const int n_dims = a_shape.rank();
     const int64 n = ShapeUtil::GetDimension(a_shape, -1);
@@ -93,7 +90,6 @@ std::pair<XlaOp, XlaOp> CholeskyUnblocked(
                /*iota_dimension=*/n_dims - 2);
       auto body_a = loop_vars[0];
       auto body_l = loop_vars[1];
-      auto seen_error = loop_vars[2];
 
       // row = l[..., i, :i]
       // select the whole i-th row, then mask out all columns past i-1
@@ -106,10 +102,7 @@ std::pair<XlaOp, XlaOp> CholeskyUnblocked(
       auto diag_dot = BatchDot(row, false, row, true, precision);
       // l[..., i, i] = np.sqrt(a[..., i, i] - np.dot(row,
       //                                              np.swapaxes(row, -1, -2)))
-      auto l_ii = a_ii - diag_dot;
-      seen_error =
-          Or(seen_error, Any(Or(Le(l_ii, ZerosLike(l_ii)), IsNan(l_ii))));
-      l_ii = Sqrt(l_ii);
+      auto l_ii = Sqrt(a_ii - diag_dot);
 
       // a[..., i+1:, i]
       // select the whole i-th column, then mask out all rows above i+1
@@ -131,21 +124,15 @@ std::pair<XlaOp, XlaOp> CholeskyUnblocked(
       // column assign will wrap around and overwrite the diagonal assign.
       body_l = DynamicUpdateSliceInMinorDims(body_l, l_ii, {i, i});
 
-      return std::vector<XlaOp>{body_a, body_l, seen_error};
+      return std::vector<XlaOp>{body_a, body_l};
     };
 
     TF_ASSIGN_OR_RETURN(
         auto cholesky_while,
-        ForEachIndex(n, S32, body_fn, {a, l, ConstantR0<bool>(builder, false)},
-                     "unblocked", builder));
+        ForEachIndex(n, S32, body_fn, {a, l}, "unblocked", builder));
 
-    return std::make_pair(cholesky_while[1], cholesky_while[2]);
-  }();
-  if (!result.ok()) {
-    XlaOp error = builder->ReportError(result.status());
-    return {error, error};
-  }
-  return result.ValueOrDie();
+    return cholesky_while[1];
+  });
 }
 
 XlaOp BuildCholesky(XlaOp a, int64 block_size,
@@ -183,7 +170,6 @@ XlaOp BuildCholesky(XlaOp a, int64 block_size,
     // Haidar, Azzam, et al. "High-performance Cholesky factorization for
     // GPU-only execution." Proceedings of General Purpose GPUs. ACM, 2017.
     XlaOp l = ZerosLike(a);
-    XlaOp seen_error = ConstantR0<bool>(builder, false);
     for (int64 i = 0; i < n; i += block_size) {
       int64 k = std::min(block_size, n - i);
       if (i > 0) {
@@ -199,10 +185,7 @@ XlaOp BuildCholesky(XlaOp a, int64 block_size,
 
       // l[i:i+k, i:i+k] = cholesky_unblocked(a[i:i+k, i:i+k])
       auto x = SliceInMinorDims(a, {i, i}, {i + k, i + k});
-      XlaOp factorized;
-      XlaOp factorized_error;
-      std::tie(factorized, factorized_error) = CholeskyUnblocked(x, precision);
-      seen_error = Or(seen_error, factorized_error);
+      auto factorized = CholeskyUnblocked(x, precision);
       l = UpdateSliceInMinorDims(l, factorized, {i, i});
 
       if (i + k < n) {
@@ -218,8 +201,7 @@ XlaOp BuildCholesky(XlaOp a, int64 block_size,
         l = UpdateSliceInMinorDims(l, update, {i + k, i});
       }
     }
-    return Select(seen_error,
-                  FullLike(l, std::numeric_limits<float>::quiet_NaN()), l);
+    return l;
   });
 }
 

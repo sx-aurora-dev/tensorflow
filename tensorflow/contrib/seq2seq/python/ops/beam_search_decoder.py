@@ -503,15 +503,29 @@ class BeamSearchDecoderMixin(object):
     """
     if not isinstance(t, tensor_array_ops.TensorArray):
       return t
-    if t.element_shape.ndims is None or t.element_shape.ndims < 1:
+    # pylint: disable=protected-access
+    # This is a bad hack due to the implementation detail of eager/graph TA.
+    # TODO(b/124374427): Update this to use public property of TensorArray.
+    if context.executing_eagerly():
+      element_shape = t._element_shape
+    else:
+      element_shape = t._element_shape[0]
+    if (not t._infer_shape
+        or not t._element_shape
+        or element_shape.ndims is None
+        or element_shape.ndims < 1):
+      shape = (
+          element_shape if t._infer_shape and t._element_shape
+          else tensor_shape.TensorShape(None))
       tf_logging.warn("The TensorArray %s in the cell state is not amenable to "
                       "sorting based on the beam search result. For a "
                       "TensorArray to be sorted, its elements shape must be "
                       "defined and have at least a rank of 1, but saw shape: %s"
-                      % (t.handle.name, t.element_shape))
+                      % (t.handle.name, shape))
       return t
+    # pylint: enable=protected-access
     if not _check_static_batch_beam_maybe(
-        t.element_shape, tensor_util.constant_value(self._batch_size),
+        element_shape, tensor_util.constant_value(self._batch_size),
         self._beam_width):
       return t
     t = t.stack()

@@ -214,23 +214,13 @@ static StatusOr<HloInstruction*> MakeInitTupleFromInitValues(
       HloInstruction::CreateTuple(init_values_with_indvar));
 }
 
-// Returns a tuple shape containing a S32, and a shape from each value in
-// `init_values`. If a shape from a value in `init_values` doesn't have a
-// layout, use a default layout for the shape.
-static Shape MakeLoopStateShapeWithLayout(
-    const WhileUtil::LoopStateTy& init_values) {
+static Shape MakeLoopStateShape(const WhileUtil::LoopStateTy& init_values) {
   std::vector<Shape> loop_state_shape_components;
   loop_state_shape_components.reserve(init_values.size() + 1);
   loop_state_shape_components.push_back(ShapeUtil::MakeShape(S32, {}));
   absl::c_transform(init_values,
                     std::back_inserter(loop_state_shape_components),
-                    [](HloInstruction* instr) {
-                      Shape shape = instr->shape();
-                      if (!shape.has_layout()) {
-                        LayoutUtil::SetToDefaultLayout(&shape);
-                      }
-                      return shape;
-                    });
+                    [](HloInstruction* instr) { return instr->shape(); });
   return ShapeUtil::MakeTupleShape(loop_state_shape_components);
 }
 
@@ -241,10 +231,7 @@ static Shape MakeLoopStateShapeWithLayout(
     const OpMetadata& metadata) {
   CHECK_GE(trip_count, 0);
 
-  // Both MakeCountedLoopConditionComputation and MakeCountedLoopBodyComputation
-  // use loop_state_shape to create a literal, which requires loop_state_shape
-  // to have a layout.
-  Shape loop_state_shape = MakeLoopStateShapeWithLayout(init_values);
+  Shape loop_state_shape = MakeLoopStateShape(init_values);
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<HloComputation> cond,
       MakeCountedLoopConditionComputation(loop_state_shape, trip_count));

@@ -131,19 +131,15 @@ class FFTTest(xla_test.XLATestCase):
                           signal.ifft3d)
 
   def testRFFT(self):
-
-    def _to_expected(x):
-      return np.fft.rfft(x, n=x.shape[-1])
-
-    def _tf_fn(x):
-      return signal.rfft(x, fft_length=[x.shape[-1]])
-
-    self._VerifyFftMethod(INNER_DIMS_1D, np.real, _to_expected, _tf_fn)
+    self._VerifyFftMethod(
+        INNER_DIMS_1D, np.real, lambda x: np.fft.rfft(x, n=x.shape[-1]),
+        lambda x: signal.rfft(x, fft_length=[x.shape[-1].value]))
 
   def testRFFT2D(self):
 
     def _tf_fn(x):
-      return signal.rfft2d(x, fft_length=[x.shape[-2], x.shape[-1]])
+      return signal.rfft2d(
+          x, fft_length=[x.shape[-2].value, x.shape[-1].value])
 
     self._VerifyFftMethod(
         INNER_DIMS_2D, np.real,
@@ -157,7 +153,8 @@ class FFTTest(xla_test.XLATestCase):
 
     def _tf_fn(x):
       return signal.rfft3d(
-          x, fft_length=[x.shape[-3], x.shape[-2], x.shape[-1]])
+          x,
+          fft_length=[x.shape[-3].value, x.shape[-2].value, x.shape[-1].value])
 
     self._VerifyFftMethod(INNER_DIMS_3D, np.real, _to_expected, _tf_fn)
 
@@ -171,14 +168,17 @@ class FFTTest(xla_test.XLATestCase):
 
     def _tf_fn(x):
       return signal.rfft3d(
-          x, fft_length=[x.shape[-3] // 2, x.shape[-2], x.shape[-1] * 2])
+          x,
+          fft_length=[
+              x.shape[-3].value // 2, x.shape[-2].value, x.shape[-1].value * 2
+          ])
 
     self._VerifyFftMethod(INNER_DIMS_3D, np.real, _to_expected, _tf_fn)
 
   def testIRFFT(self):
 
     def _tf_fn(x):
-      return signal.irfft(x, fft_length=[2 * (x.shape[-1] - 1)])
+      return signal.irfft(x, fft_length=[2 * (x.shape[-1].value - 1)])
 
     self._VerifyFftMethod(
         INNER_DIMS_1D, lambda x: np.fft.rfft(np.real(x), n=x.shape[-1]),
@@ -187,7 +187,8 @@ class FFTTest(xla_test.XLATestCase):
   def testIRFFT2D(self):
 
     def _tf_fn(x):
-      return signal.irfft2d(x, fft_length=[x.shape[-2], 2 * (x.shape[-1] - 1)])
+      return signal.irfft2d(
+          x, fft_length=[x.shape[-2].value, 2 * (x.shape[-1].value - 1)])
 
     self._VerifyFftMethod(
         INNER_DIMS_2D,
@@ -211,7 +212,10 @@ class FFTTest(xla_test.XLATestCase):
 
     def _tf_fn(x):
       return signal.irfft3d(
-          x, fft_length=[x.shape[-3], x.shape[-2], 2 * (x.shape[-1] - 1)])
+          x,
+          fft_length=[
+              x.shape[-3].value, x.shape[-2].value, 2 * (x.shape[-1].value - 1)
+          ])
 
     self._VerifyFftMethod(INNER_DIMS_3D, _to_input, _to_expected, _tf_fn)
 
@@ -231,7 +235,10 @@ class FFTTest(xla_test.XLATestCase):
 
     def _tf_fn(x):
       return signal.irfft3d(
-          x, fft_length=[x.shape[-3] // 2, x.shape[-2], x.shape[-1] * 2])
+          x,
+          fft_length=[
+              x.shape[-3].value // 2, x.shape[-2].value, x.shape[-1].value * 2
+          ])
 
     self._VerifyFftMethod(INNER_DIMS_3D, _to_input, _to_expected, _tf_fn)
 

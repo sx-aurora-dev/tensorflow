@@ -122,8 +122,7 @@ The TensorFlow project strives to abide by generally accepted best practices in 
 
 Build Type                                                                        | Status                                                                                                                                                                                        | Artifacts
 --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------
-**Linux s390x** Nightly                                                           | [![Build Status](http://ibmz-ci.osuosl.org/job/TensorFlow_IBMZ_CI/badge/icon)](http://ibmz-ci.osuosl.org/job/TensorFlow_IBMZ_CI/)                                                             | [Nightly](http://ibmz-ci.osuosl.org/job/TensorFlow_IBMZ_CI/)
-**Linux s390x CPU** Stable Release                                                | [![Build Status](http://ibmz-ci.osuosl.org/job/TensorFlow_IBMZ_Release_Build/badge/icon)](https://ibmz-ci.osuosl.org/job/TensorFlow_IBMZ_Release_Build/)                                      | [Release](https://ibmz-ci.osuosl.org/job/TensorFlow_IBMZ_Release_Build/)
+**IBM s390x**                                                                     | [![Build Status](http://ibmz-ci.osuosl.org/job/TensorFlow_IBMZ_CI/badge/icon)](http://ibmz-ci.osuosl.org/job/TensorFlow_IBMZ_CI/)                                                             | TBA
 **Linux ppc64le CPU** Nightly                                                     | [![Build Status](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_CPU_Build/badge/icon)](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_CPU_Build/)                                       | [Nightly](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_CPU_Nightly_Artifact/)
 **Linux ppc64le CPU** Stable Release                                              | [![Build Status](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_CPU_Release_Build/badge/icon)](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_CPU_Release_Build/)                       | [Release](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_CPU_Release_Build/)
 **Linux ppc64le GPU** Nightly                                                     | [![Build Status](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_GPU_Build/badge/icon)](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_GPU_Build/)                                       | [Nightly](https://powerci.osuosl.org/job/TensorFlow_PPC64LE_GPU_Nightly_Artifact/)
@@ -138,7 +137,7 @@ Build Type                                                                      
 *   [TensorFlow Tutorials](https://www.tensorflow.org/tutorials/)
 *   [TensorFlow Model Zoo](https://github.com/tensorflow/models)
 *   [TensorFlow Twitter](https://twitter.com/tensorflow)
-*   [TensorFlow Blog](https://blog.tensorflow.org)
+*   [TensorFlow Blog](https://medium.com/tensorflow)
 *   [TensorFlow Course at Stanford](https://web.stanford.edu/class/cs20si)
 *   [TensorFlow Roadmap](https://www.tensorflow.org/community/roadmap)
 *   [TensorFlow White Papers](https://www.tensorflow.org/about/bib)

@@ -38,7 +38,7 @@ Status BuildModel(TfLiteContext* context,
 
 // Module-internal converter, exposed for unit testing purpose only.
 Status ConvertTfLiteTensorToTensorRef(const TfLiteTensor& tflite_tensor,
-                                      TensorRef<BHWC>* tensor_ref);
+                                      TensorRefFloat32* tensor_ref);
 
 }  // namespace gpu
 }  // namespace tflite

@@ -1,8 +1,6 @@
 # Description:
 #   Low-level utilities for reading and writing checkpoints.
 
-load("//tensorflow:tensorflow.bzl", "cuda_py_test")
-
 package(
     default_visibility = [
         "//tensorflow:internal",
@@ -11,6 +9,8 @@ package(
 )
 
 exports_files(["LICENSE"])
+
+load("//tensorflow:tensorflow.bzl", "cuda_py_test")
 
 py_library(
     name = "functional_saver",

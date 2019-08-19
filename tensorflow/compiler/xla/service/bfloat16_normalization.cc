@@ -379,8 +379,7 @@ Status BFloat16NormalizationVisitor::HandleInstruction(HloInstruction* hlo) {
 
 Status BFloat16NormalizationVisitor::DefaultAction(HloInstruction* hlo) {
   // Do not change instructions related to entry and exit of a computation,
-  // tuples, fusion, convert, side-effecting instructions, control flow, and
-  // bitcast-convert.
+  // tuples, fusion, convert, side-effecting instructions, and control flow.
   if (hlo->opcode() == HloOpcode::kTuple ||            //
       hlo->opcode() == HloOpcode::kGetTupleElement ||  //
       hlo->opcode() == HloOpcode::kConstant ||         //
@@ -391,7 +390,6 @@ Status BFloat16NormalizationVisitor::DefaultAction(HloInstruction* hlo) {
       hlo->opcode() == HloOpcode::kCustomCall ||       //
       hlo->opcode() == HloOpcode::kWhile ||            //
       hlo->opcode() == HloOpcode::kConditional ||      //
-      hlo->opcode() == HloOpcode::kBitcastConvert ||   //
       hlo->HasSideEffectNoRecurse()) {
     return Status::OK();
   }

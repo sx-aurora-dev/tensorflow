@@ -23,235 +23,248 @@ namespace {
 
 using ::testing::ElementsAreArray;
 
+template <typename T>
 class ArgBaseOpModel : public SingleOpModel {
  public:
-  ArgBaseOpModel(TensorType input_type, int axis_value, TensorType axis_type,
-                 bool constant_axis, TensorType output_type)
-      : axis_value_(axis_value),
-        axis_type_(axis_type),
-        constant_axis_(constant_axis) {
+  ArgBaseOpModel(std::initializer_list<int> input_shape, TensorType input_type,
+                 TensorType axis_type, TensorType output_type) {
     input_ = AddInput(input_type);
-    if (constant_axis) {
-      if (axis_type == TensorType_INT64) {
-        axis_ =
-            AddConstInput(axis_type, {static_cast<int64_t>(axis_value)}, {1});
-      } else {
-        axis_ = AddConstInput(axis_type, {axis_value}, {1});
-      }
-    } else {
-      axis_ = AddInput(axis_type);
-    }
+    axis_ = AddInput(axis_type);
     output_ = AddOutput(output_type);
   }
 
-  int input() const { return input_; }
-  int axis() const { return axis_; }
+  int input() { return input_; }
+  int axis() { return axis_; }
 
-  std::vector<int32_t> GetInt32Output() const {
-    return ExtractVector<int32_t>(output_);
-  }
-  std::vector<int64_t> GetInt64Output() const {
-    return ExtractVector<int64_t>(output_);
-  }
+  std::vector<T> GetOutput() { return ExtractVector<T>(output_); }
   std::vector<int> GetOutputShape() { return GetTensorShape(output_); }
 
  protected:
-  void PopulateAxisIfNeeded() {
-    if (constant_axis_) return;
-    if (axis_type_ == TensorType_INT32) {
-      PopulateTensor<int32_t>(axis(), {axis_value_});
-    } else {
-      PopulateTensor<int64_t>(axis(), {axis_value_});
-    }
-  }
-
-  const int axis_value_;
-  const TensorType axis_type_;
-  const bool constant_axis_;
-
   int input_;
   int axis_;
   int output_;
 };
 
-class ArgMaxOpModel : public ArgBaseOpModel {
+template <typename T>
+class ArgMaxOpModel : public ArgBaseOpModel<T> {
  public:
   ArgMaxOpModel(std::initializer_list<int> input_shape, TensorType input_type,
-                int axis_value, TensorType axis_type, bool constant_axis,
-                TensorType output_type)
-      : ArgBaseOpModel(input_type, axis_value, axis_type, constant_axis,
-                       output_type) {
-    ArgBaseOpModel::SetBuiltinOp(
+                TensorType axis_type, TensorType output_type)
+      : ArgBaseOpModel<T>(input_shape, input_type, axis_type, output_type) {
+    ArgBaseOpModel<T>::SetBuiltinOp(
         BuiltinOperator_ARG_MAX, BuiltinOptions_ArgMaxOptions,
-        CreateArgMaxOptions(ArgBaseOpModel::builder_, output_type).Union());
-    ArgBaseOpModel::BuildInterpreter({input_shape, {1}});
-    PopulateAxisIfNeeded();
+        CreateArgMaxOptions(ArgBaseOpModel<T>::builder_, output_type).Union());
+    ArgBaseOpModel<T>::BuildInterpreter({input_shape, {1, 1, 1, 1}});
   }
 };
 
-class ArgMinOpModel : public ArgBaseOpModel {
+template <typename T>
+class ArgMinOpModel : public ArgBaseOpModel<T> {
  public:
   ArgMinOpModel(std::initializer_list<int> input_shape, TensorType input_type,
-                int axis_value, TensorType axis_type, bool constant_axis,
-                TensorType output_type)
-      : ArgBaseOpModel(input_type, axis_value, axis_type, constant_axis,
-                       output_type) {
-    ArgBaseOpModel::SetBuiltinOp(
+                TensorType axis_type, TensorType output_type)
+      : ArgBaseOpModel<T>(input_shape, input_type, axis_type, output_type) {
+    ArgBaseOpModel<T>::SetBuiltinOp(
         BuiltinOperator_ARG_MIN, BuiltinOptions_ArgMinOptions,
-        CreateArgMinOptions(ArgBaseOpModel::builder_, output_type).Union());
-    ArgBaseOpModel::BuildInterpreter({input_shape, {1}});
-    PopulateAxisIfNeeded();
+        CreateArgMinOptions(ArgBaseOpModel<T>::builder_, output_type).Union());
+    ArgBaseOpModel<T>::BuildInterpreter({input_shape, {1, 1, 1, 1}});
   }
 };
 
-// Declare ArgMinMaxOpTest as a parameterized test, where the parameter is a
-// tuple with:
-// - boolean indicating whether to use a constant axis or not.
-// - axis type (TensorType_INT32 or TensorType_INT64)
-// - output type (TensorType_INT32 or TensorType_INT64)
-class ArgMinMaxOpTest : public ::testing::TestWithParam<
-                            std::tuple<bool, TensorType, TensorType>> {
- public:
-  bool ConstantAxis() const { return std::get<0>(GetParam()); }
-
-  TensorType AxisType() const { return std::get<1>(GetParam()); }
-
-  TensorType OutputType() const { return std::get<2>(GetParam()); }
-
-  void ValidateOutput(const ArgBaseOpModel& model,
-                      const std::vector<int>& expected_output) {
-    if (OutputType() == TensorType_INT32) {
-      EXPECT_THAT(model.GetInt32Output(), ElementsAreArray(expected_output));
-    } else {
-      EXPECT_THAT(model.GetInt64Output(), ElementsAreArray(expected_output));
-    }
-  }
-};
-
-INSTANTIATE_TEST_SUITE_P(
-    ArgMinMaxOpTest, ArgMinMaxOpTest,
-    ::testing::Combine(::testing::Bool(),
-                       ::testing::Values(TensorType_INT32, TensorType_INT64),
-                       ::testing::Values(TensorType_INT32, TensorType_INT64)));
-
-TEST_P(ArgMinMaxOpTest, GetMaxArgFloat) {
-  ArgMaxOpModel model({1, 1, 1, 4}, TensorType_FLOAT32, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMaxOpTest, GetMaxArgFloat) {
+  ArgMaxOpModel<int32_t> model({1, 1, 1, 4}, TensorType_FLOAT32,
+                               TensorType_INT32, TensorType_INT32);
   model.PopulateTensor<float>(model.input(), {0.1, 0.9, 0.7, 0.3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {1});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({1}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 1}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMaxArgUInt8) {
-  ArgMaxOpModel model({1, 1, 1, 4}, TensorType_UINT8, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMaxOpTest, GetMaxArgUInt8) {
+  ArgMaxOpModel<int32_t> model({1, 1, 1, 4}, TensorType_UINT8, TensorType_INT32,
+                               TensorType_INT32);
   model.PopulateTensor<uint8_t>(model.input(), {1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {1});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({1}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 1}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMaxArgInt8) {
-  ArgMaxOpModel model({1, 1, 1, 4}, TensorType_INT8, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMaxOpTest, GetMaxArgInt8) {
+  ArgMaxOpModel<int32_t> model({1, 1, 1, 4}, TensorType_INT8, TensorType_INT32,
+                               TensorType_INT32);
   model.PopulateTensor<int8_t>(model.input(), {-1, -9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {2});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({2}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 1}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMaxArgInt) {
-  ArgMaxOpModel model({1, 1, 1, 4}, TensorType_INT32, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMaxOpTest, GetMaxArgInt) {
+  ArgMaxOpModel<int32_t> model({1, 1, 1, 4}, TensorType_INT32, TensorType_INT32,
+                               TensorType_INT32);
   model.PopulateTensor<int>(model.input(), {1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {1});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({1}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 1}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMaxArgMulDimensions) {
-  ArgMaxOpModel model({1, 1, 2, 4}, TensorType_INT32, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMaxOpTest, GetMaxArgMulDimensions) {
+  ArgMaxOpModel<int32_t> model({1, 1, 2, 4}, TensorType_INT32, TensorType_INT32,
+                               TensorType_INT32);
   model.PopulateTensor<int>(model.input(), {1, 2, 7, 8, 1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {3, 1});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({3, 1}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 2}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMaxArgNegativeAxis) {
-  ArgMaxOpModel model({1, 1, 2, 4}, TensorType_INT32, -2, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMaxOpTest, GetMaxArgNegativeAxis) {
+  ArgMaxOpModel<int32_t> model({1, 1, 2, 4}, TensorType_INT32, TensorType_INT32,
+                               TensorType_INT32);
   model.PopulateTensor<int>(model.input(), {1, 2, 7, 8, 1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {-2});
   model.Invoke();
 
-  ValidateOutput(model, {0, 1, 0, 0});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({0, 1, 0, 0}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 4}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMaxArgOutput64) {
-  ArgMaxOpModel model({1, 1, 2, 4}, TensorType_INT32, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMaxOpTest, GetMaxArgOutput64) {
+  ArgMaxOpModel<int64_t> model({1, 1, 2, 4}, TensorType_INT32, TensorType_INT32,
+                               TensorType_INT64);
   model.PopulateTensor<int>(model.input(), {10, 2, 7, 8, 1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {0, 1});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({0, 1}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 2}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMinArgFloat) {
-  ArgMinOpModel model({1, 1, 1, 4}, TensorType_FLOAT32, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMaxOpTest, GetMaxArgAxis64) {
+  // Input Int32, Axis Int64, Output Int64
+  ArgMaxOpModel<int64_t> model1({1, 1, 2, 4}, TensorType_INT32,
+                                TensorType_INT64, TensorType_INT64);
+  model1.PopulateTensor<int>(model1.input(), {10, 2, 7, 8, 1, 9, 7, 3});
+  model1.PopulateTensor<int64_t>(model1.axis(), {3});
+  model1.Invoke();
+
+  EXPECT_THAT(model1.GetOutput(), ElementsAreArray({0, 1}));
+  EXPECT_THAT(model1.GetOutputShape(), ElementsAreArray({1, 1, 2}));
+
+  // Input Int8, Axis Int64, Output Int32
+  ArgMaxOpModel<int32_t> model2({1, 1, 2, 4}, TensorType_INT8, TensorType_INT64,
+                                TensorType_INT32);
+  model2.PopulateTensor<int8_t>(model2.input(), {10, 2, 7, 8, 1, 9, 7, 3});
+  model2.PopulateTensor<int64_t>(model2.axis(), {3});
+  model2.Invoke();
+
+  EXPECT_THAT(model2.GetOutput(), ElementsAreArray({0, 1}));
+  EXPECT_THAT(model2.GetOutputShape(), ElementsAreArray({1, 1, 2}));
+
+  // Input Int8, Axis Int64, Output Int64
+  ArgMaxOpModel<int64_t> model3({1, 1, 2, 4}, TensorType_INT8, TensorType_INT64,
+                                TensorType_INT64);
+  model3.PopulateTensor<int8_t>(model3.input(), {10, 2, 7, 8, 1, 9, 7, 3});
+  model3.PopulateTensor<int64_t>(model3.axis(), {3});
+  model3.Invoke();
+
+  EXPECT_THAT(model3.GetOutput(), ElementsAreArray({0, 1}));
+  EXPECT_THAT(model3.GetOutputShape(), ElementsAreArray({1, 1, 2}));
+}
+
+TEST(ArgMinOpTest, GetMinArgFloat) {
+  ArgMinOpModel<int32_t> model({1, 1, 1, 4}, TensorType_FLOAT32,
+                               TensorType_INT32, TensorType_INT32);
   model.PopulateTensor<float>(model.input(), {0.1, 0.9, 0.7, 0.3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {0});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({0}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 1}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMinArgInt) {
-  ArgMinOpModel model({1, 1, 1, 4}, TensorType_INT32, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMinOpTest, GetMinArgInt) {
+  ArgMinOpModel<int32_t> model({1, 1, 1, 4}, TensorType_INT32, TensorType_INT32,
+                               TensorType_INT32);
   model.PopulateTensor<int>(model.input(), {1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {0});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({0}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 1}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMinArgMulDimensions) {
-  ArgMinOpModel model({1, 1, 2, 4}, TensorType_INT32, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMinOpTest, GetMinArgMulDimensions) {
+  ArgMinOpModel<int32_t> model({1, 1, 2, 4}, TensorType_INT32, TensorType_INT32,
+                               TensorType_INT32);
   model.PopulateTensor<int>(model.input(), {1, 2, 7, 8, 1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {0, 0});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({0, 0}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 2}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMinArgNegativeAxis) {
-  ArgMinOpModel model({1, 1, 2, 4}, TensorType_INT32, -2, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMinOpTest, GetMinArgNegativeAxis) {
+  ArgMinOpModel<int32_t> model({1, 1, 2, 4}, TensorType_INT32, TensorType_INT32,
+                               TensorType_INT32);
   model.PopulateTensor<int>(model.input(), {1, 2, 7, 8, 1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {-2});
   model.Invoke();
 
-  ValidateOutput(model, {0, 0, 0, 1});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({0, 0, 0, 1}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 4}));
 }
 
-TEST_P(ArgMinMaxOpTest, GetMinArgOutput64) {
-  ArgMinOpModel model({1, 1, 2, 4}, TensorType_INT32, 3, AxisType(),
-                      ConstantAxis(), OutputType());
+TEST(ArgMinOpTest, GetMinArgOutput64) {
+  ArgMinOpModel<int64_t> model({1, 1, 2, 4}, TensorType_INT32, TensorType_INT32,
+                               TensorType_INT64);
   model.PopulateTensor<int>(model.input(), {10, 2, 7, 8, 1, 9, 7, 3});
+  model.PopulateTensor<int>(model.axis(), {3});
   model.Invoke();
 
-  ValidateOutput(model, {1, 0});
+  EXPECT_THAT(model.GetOutput(), ElementsAreArray({1, 0}));
   EXPECT_THAT(model.GetOutputShape(), ElementsAreArray({1, 1, 2}));
+}
+
+TEST(ArgMinOpTest, GetMinArgAxis64) {
+  // Input Int32, Axis Int64, Output Int64
+  ArgMinOpModel<int64_t> model1({1, 1, 2, 4}, TensorType_INT32,
+                                TensorType_INT64, TensorType_INT64);
+  model1.PopulateTensor<int>(model1.input(), {10, 2, 7, 8, 1, 9, 7, 3});
+  model1.PopulateTensor<int64_t>(model1.axis(), {3});
+  model1.Invoke();
+
+  EXPECT_THAT(model1.GetOutput(), ElementsAreArray({1, 0}));
+  EXPECT_THAT(model1.GetOutputShape(), ElementsAreArray({1, 1, 2}));
+
+  // Input Int8, Axis Int64, Output Int32
+  ArgMinOpModel<int32_t> model2({1, 1, 2, 4}, TensorType_INT8, TensorType_INT64,
+                                TensorType_INT32);
+  model2.PopulateTensor<int8_t>(model2.input(), {10, 2, 7, 8, 1, 9, 7, 3});
+  model2.PopulateTensor<int64_t>(model2.axis(), {3});
+  model2.Invoke();
+
+  EXPECT_THAT(model2.GetOutput(), ElementsAreArray({1, 0}));
+  EXPECT_THAT(model2.GetOutputShape(), ElementsAreArray({1, 1, 2}));
+
+  // Input Int8, Axis Int64, Output Int64
+  ArgMinOpModel<int64_t> model3({1, 1, 2, 4}, TensorType_INT8, TensorType_INT64,
+                                TensorType_INT64);
+  model3.PopulateTensor<int8_t>(model3.input(), {10, 2, 7, 8, 1, 9, 7, 3});
+  model3.PopulateTensor<int64_t>(model3.axis(), {3});
+  model3.Invoke();
+
+  EXPECT_THAT(model3.GetOutput(), ElementsAreArray({1, 0}));
+  EXPECT_THAT(model3.GetOutputShape(), ElementsAreArray({1, 1, 2}));
 }
 
 }  // namespace

@@ -1,3 +1,4 @@
+
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,9 +24,6 @@ import tensorflow as tf
 
 from tensorflow.python.platform import test
 from tensorflow.python.platform import tf_logging as logging
-from tensorflow.python.util import deprecation_wrapper
-
-deprecation_wrapper._PER_MODULE_WARNING_LIMIT = 5
 
 
 class DeprecationTest(test.TestCase):

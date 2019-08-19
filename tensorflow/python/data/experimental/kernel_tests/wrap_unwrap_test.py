@@ -37,7 +37,7 @@ class WrapDatasetVariantTest(test_base.DatasetTestBase):
     unwrapped_variant = gen_dataset_ops.unwrap_dataset_variant(wrapped_variant)
 
     variant_ds = dataset_ops._VariantDataset(unwrapped_variant,
-                                             ds.element_spec)
+                                             ds._element_structure)
     get_next = self.getNext(variant_ds, requires_initialization=True)
     for i in range(100):
       self.assertEqual(i, self.evaluate(get_next()))
@@ -54,7 +54,7 @@ class WrapDatasetVariantTest(test_base.DatasetTestBase):
     unwrapped_variant = gen_dataset_ops.unwrap_dataset_variant(
         gpu_wrapped_variant)
     variant_ds = dataset_ops._VariantDataset(unwrapped_variant,
-                                             ds.element_spec)
+                                             ds._element_structure)
     iterator = dataset_ops.make_initializable_iterator(variant_ds)
     get_next = iterator.get_next()
 

@@ -52,8 +52,8 @@ _CSS = """
 <html>
 <head>
 <style>
-body {font-family: sans-serif; background-color: #fa0;}
-table {background-color: #eca;}
+body {font-family: sans-serif; background-color: #ffaa00;}
+table {background-color: #eeccaa;}
 th {background-color: black; color: white;}
 h1 {
   background-color: ffaa00;
@@ -61,17 +61,9 @@ h1 {
   color: black;
 }
 
-svg {
-  margin: 10px;
-  border: 2px;
-  border-style: solid;
-  border-color: black;
-  background: white;
-}
-
 div {
   border-radius: 5px;
-  background-color: #fec;
+  background-color: #ffeecc;
   padding:5px;
   margin:5px;
 }
@@ -91,11 +83,7 @@ div {
 }
 
 .edges line {
-  stroke: #333;
-}
-
-text {
-  font-weight: bold;
+  stroke: #333333;
 }
 
 .nodes text {
@@ -117,16 +105,10 @@ _D3_HTML_TEMPLATE = """
     // Build graph data
     var graph = %s;
 
-    var svg = d3.select("#subgraph%d")
+    var svg = d3.select("#subgraph%d");
     var width = svg.attr("width");
     var height = svg.attr("height");
-    // Make the graph scrollable.
-    svg = svg.call(d3.zoom().on("zoom", function() {
-      svg.attr("transform", d3.event.transform);
-    })).append("g");
-
-
-    var color = d3.scaleOrdinal(d3.schemeDark2);
+    var color = d3.scaleOrdinal(d3.schemeCategory20);
 
     var simulation = d3.forceSimulation()
         .force("link", d3.forceLink().id(function(d) {return d.id;}))
@@ -136,17 +118,11 @@ _D3_HTML_TEMPLATE = """
 
     function buildGraph() {
       var edge = svg.append("g").attr("class", "edges").selectAll("line")
-        .data(graph.edges).enter().append("path").attr("stroke","black").attr("fill","none")
-
+        .data(graph.edges).enter().append("line")
       // Make the node group
       var node = svg.selectAll(".nodes")
         .data(graph.nodes)
         .enter().append("g")
-        .attr("x", function(d){return d.x})
-        .attr("y", function(d){return d.y})
-        .attr("transform", function(d) {
-          return "translate( " + d.x + ", " + d.y + ")"
-        })
         .attr("class", "nodes")
           .call(d3.drag()
               .on("start", function(d) {
@@ -160,56 +136,27 @@ _D3_HTML_TEMPLATE = """
                 if (!d3.event.active) simulation.alphaTarget(0);
                 d.fx = d.fy = null;
               }));
-      // Within the group, draw a box for the node position and text
+      // Within the group, draw a circle for the node position and text
       // on the side.
-
-      var node_width = 150;
-      var node_height = 30;
-
-      node.append("rect")
+      node.append("circle")
           .attr("r", "5px")
-          .attr("width", node_width)
-          .attr("height", node_height)
-          .attr("rx", function(d) { return d.group == 1 ? 1 : 10; })
-          .attr("stroke", "#000000")
-          .attr("fill", function(d) { return d.group == 1 ? "#dddddd" : "#000000"; })
+          .attr("fill", function(d) { return color(d.group); })
       node.append("text")
-          .text(function(d) { return d.name; })
-          .attr("x", 5)
-          .attr("y", 20)
-          .attr("fill", function(d) { return d.group == 1 ? "#000000" : "#eeeeee"; })
+          .attr("dx", 8).attr("dy", 5).text(function(d) { return d.name; });
       // Setup force parameters and update position callback
+      simulation.nodes(graph.nodes).on("tick", forceSimulationUpdated);
+      simulation.force("link").links(graph.edges);
 
-
-      var node = svg.selectAll(".nodes")
-        .data(graph.nodes);
-
-      // Bind the links
-      var name_to_g = {}
-      node.each(function(data, index, nodes) {
-        console.log(data.id)
-        name_to_g[data.id] = this;
-      });
-
-      function proc(w, t) {
-        return parseInt(w.getAttribute(t));
+      function forceSimulationUpdated() {
+        // Update edges.
+        edge.attr("x1", function(d) {return d.source.x;})
+            .attr("y1", function(d) {return d.source.y;})
+            .attr("x2", function(d) {return d.target.x;})
+            .attr("y2", function(d) {return d.target.y;});
+        // Update node positions
+        node.attr("transform", function(d) { return "translate(" + d.x + "," + d.y + ")"; });
       }
-      edge.attr("d", function(d) {
-        function lerp(t, a, b) {
-          return (1.0-t) * a + t * b;
-        }
-        var x1 = proc(name_to_g[d.source],"x") + node_width /2;
-        var y1 = proc(name_to_g[d.source],"y") + node_height;
-        var x2 = proc(name_to_g[d.target],"x") + node_width /2;
-        var y2 = proc(name_to_g[d.target],"y");
-        var s = "M " + x1 + " " + y1
-            + " C " + x1 + " " + lerp(.5, y1, y2)
-            + " " + x2 + " " + lerp(.5, y1, y2)
-            + " " + x2  + " " + y2
-      return s;
-    });
-
-  }
+    }
   buildGraph()
 </script>
 """
@@ -228,7 +175,7 @@ class OpCodeMapper(object):
       s = "<UNKNOWN>"
     else:
       s = self.code_to_name[x]
-    return "%s (%d)" % (s, x)
+    return "%s (opcode=%d)" % (s, x)
 
 
 class DataSizeMapper(object):
@@ -274,49 +221,39 @@ def GenerateGraph(subgraph_idx, g, opcode_mapper):
   edges = []
   nodes = []
   first = {}
-  second = {}
-  pixel_mult = 200  # TODO(aselle): multiplier for initial placement
-  width_mult = 170  # TODO(aselle): multiplier for initial placement
+  pixel_mult = 50  # TODO(aselle): multiplier for initial placement
   for op_index, op in enumerate(g["operators"]):
-
     for tensor_input_position, tensor_index in enumerate(op["inputs"]):
       if tensor_index not in first:
         first[tensor_index] = (
-            (op_index - 0.5 + 1) * pixel_mult,
-            (tensor_input_position + 1) * width_mult)
+            op_index * pixel_mult,
+            tensor_input_position * pixel_mult - pixel_mult / 2)
       edges.append({
           "source": TensorName(tensor_index),
           "target": OpName(op_index)
       })
-    for tensor_output_position, tensor_index in enumerate(op["outputs"]):
-      if tensor_index not in second:
-        second[tensor_index] = (
-            (op_index + 0.5 + 1) * pixel_mult,
-            (tensor_output_position + 1) * width_mult)
+    for tensor_index in op["outputs"]:
       edges.append({
           "target": TensorName(tensor_index),
           "source": OpName(op_index)
       })
-
     nodes.append({
         "id": OpName(op_index),
         "name": opcode_mapper(op["opcode_index"]),
         "group": 2,
         "x": pixel_mult,
-        "y": (op_index + 1) * pixel_mult
+        "y": op_index * pixel_mult
     })
   for tensor_index, tensor in enumerate(g["tensors"]):
     initial_y = (
-        first[tensor_index] if tensor_index in first
-        else second[tensor_index] if tensor_index in second
-        else (0, 0))
+        first[tensor_index] if tensor_index in first else len(g["operators"]))
 
     nodes.append({
         "id": TensorName(tensor_index),
-        "name": "%r (%d)" % (tensor["shape"], tensor_index),
+        "name": "%s (%d)" % (tensor["name"], tensor_index),
         "group": 1,
-        "x": initial_y[1],
-        "y": initial_y[0]
+        "x": 2,
+        "y": initial_y
     })
   graph_str = json.dumps({"nodes": nodes, "edges": edges})
 
@@ -436,7 +373,7 @@ def CreateHtmlFile(tflite_input, html_output):
     html += GenerateTableHtml(g["operators"], op_keys_to_display)
 
     # Visual graph.
-    html += "<svg id='subgraph%d' width='1600' height='900'></svg>\n" % (
+    html += "<svg id='subgraph%d' width='960' height='1600'></svg>\n" % (
         subgraph_idx,)
     html += GenerateGraph(subgraph_idx, g, opcode_mapper)
     html += "</div>"

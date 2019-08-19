@@ -44,8 +44,7 @@ XLA_TEST_F(TrivialCrossReplicaSumTest, OneOperand) {
     ROOT crs = f32[3] all-reduce(p), to_apply=add
   })";
   auto module =
-      ParseAndReturnUnverifiedModule(module_str, GetModuleConfigForTest())
-          .ValueOrDie();
+      ParseHloString(module_str, GetModuleConfigForTest()).ValueOrDie();
   auto literal = LiteralUtil::CreateR1<float>({1, 2, 3});
   EXPECT_EQ(literal, ExecuteAndTransfer(std::move(module), {&literal}));
 }
@@ -66,8 +65,7 @@ XLA_TEST_F(TrivialCrossReplicaSumTest, MultipleOperands) {
     ROOT crs = (f32[3], f32[2]) all-reduce(p0, p1), to_apply=add
   })";
   auto module =
-      ParseAndReturnUnverifiedModule(module_str, GetModuleConfigForTest())
-          .ValueOrDie();
+      ParseHloString(module_str, GetModuleConfigForTest()).ValueOrDie();
   auto literal0 = LiteralUtil::CreateR1<float>({1, 2, 3});
   auto literal1 = LiteralUtil::CreateR1<float>({10, 20});
   EXPECT_EQ(LiteralUtil::MakeTuple({&literal0, &literal1}),
@@ -93,8 +91,7 @@ XLA_TEST_F(TrivialCrossReplicaSumTest, ConstantOperand) {
     ROOT crs = (f32[3], f32[2]) all-reduce(p0, p1), to_apply=add
   })";
   auto module =
-      ParseAndReturnUnverifiedModule(module_str, GetModuleConfigForTest())
-          .ValueOrDie();
+      ParseHloString(module_str, GetModuleConfigForTest()).ValueOrDie();
   auto literal0 = LiteralUtil::CreateR1<float>({1, 2, 3});
   auto literal1 = LiteralUtil::CreateR1<float>({10, 20});
   EXPECT_EQ(LiteralUtil::MakeTuple({&literal0, &literal1}),

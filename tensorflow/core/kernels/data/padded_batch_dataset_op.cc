@@ -49,16 +49,14 @@ class PaddedBatchDatasetOp::Dataset : public DatasetBase {
  public:
   Dataset(OpKernelContext* ctx, int64 batch_size, bool drop_remainder,
           bool parallel_copy, std::vector<PartialTensorShape> padded_shapes,
-          std::vector<Tensor> padding_values, const DatasetBase* input,
-          int op_version)
+          std::vector<Tensor> padding_values, const DatasetBase* input)
       : DatasetBase(DatasetContext(ctx)),
         batch_size_(batch_size),
         drop_remainder_(drop_remainder),
         parallel_copy_(parallel_copy),
         padded_shapes_(std::move(padded_shapes)),
         padding_values_(std::move(padding_values)),
-        input_(input),
-        op_version_(op_version) {
+        input_(input) {
     input_->Ref();
 
     // NOTE(mrry): Currently we implement "batch up to" semantics. If we could
@@ -85,10 +83,8 @@ class PaddedBatchDatasetOp::Dataset : public DatasetBase {
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
       const string& prefix) const override {
-    name_utils::IteratorPrefixParams params;
-    params.op_version = op_version_;
     return absl::make_unique<Iterator>(Iterator::Params{
-        this, name_utils::IteratorPrefix(kDatasetType, prefix, params)});
+        this, name_utils::IteratorPrefix(kDatasetType, prefix)});
   }
 
   const DataTypeVector& output_dtypes() const override {
@@ -100,10 +96,7 @@ class PaddedBatchDatasetOp::Dataset : public DatasetBase {
   }
 
   string DebugString() const override {
-    name_utils::DatasetDebugStringParams params;
-    params.op_version = op_version_;
-    params.set_args(batch_size_);
-    return name_utils::DatasetDebugString(kDatasetType, params);
+    return name_utils::DatasetDebugString(kDatasetType, batch_size_);
   }
 
   int64 Cardinality() const override {
@@ -367,7 +360,6 @@ class PaddedBatchDatasetOp::Dataset : public DatasetBase {
   const std::vector<PartialTensorShape> padded_shapes_;
   const std::vector<Tensor> padding_values_;
   const DatasetBase* const input_;
-  const int op_version_;
   std::vector<PartialTensorShape> output_shapes_;
 };
 
@@ -433,9 +425,9 @@ void PaddedBatchDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
     padding_values.push_back(tensor::DeepCopy(padding_value_t));
   }
 
-  *output = new Dataset(ctx, batch_size, drop_remainder, parallel_copy_,
-                        std::move(padded_shapes), std::move(padding_values),
-                        input, op_version_);
+  *output =
+      new Dataset(ctx, batch_size, drop_remainder, parallel_copy_,
+                  std::move(padded_shapes), std::move(padding_values), input);
 }
 
 namespace {

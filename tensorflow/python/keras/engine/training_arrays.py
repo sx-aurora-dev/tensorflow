@@ -353,26 +353,21 @@ def model_iteration(model,
       elif shuffle:
         np.random.shuffle(index_array)
       batches = make_batches(num_samples_or_steps, batch_size)
+
       for batch_index, (batch_start, batch_end) in enumerate(batches):
         batch_ids = index_array[batch_start:batch_end]
+
         # Slice into a batch.
-        if len(batches) == 1:
-          # If we only have one batch, do not slice. This takes care of
-          # composite tensors in non-Dataset modes; we currently don't support
-          # slicing them.
-          # TODO(b/133517906): Add slicing support.
-          ins_batch = ins
-        else:
-          try:
-            if ins and isinstance(ins[-1], int):
-              # Do not slice the training phase flag.
-              ins_batch = slice_arrays(ins[:-1], batch_ids) + [ins[-1]]
-            else:
-              ins_batch = slice_arrays(ins, batch_ids)
-          except TypeError:
-            raise TypeError('TypeError while preparing batch. '
-                            'If using HDF5 input data, '
-                            'pass shuffle="batch".')
+        try:
+          if ins and isinstance(ins[-1], int):
+            # Do not slice the training phase flag.
+            ins_batch = slice_arrays(ins[:-1], batch_ids) + [ins[-1]]
+          else:
+            ins_batch = slice_arrays(ins, batch_ids)
+        except TypeError:
+          raise TypeError('TypeError while preparing batch. '
+                          'If using HDF5 input data, '
+                          'pass shuffle="batch".')
 
         # Sparse to dense conversion.
         if issparse is not None:
@@ -641,7 +636,7 @@ class ArrayLikeTrainingLoop(training_utils.TrainingLoop):
           validation_data, batch_size, validation_steps)
     elif validation_split and 0. < validation_split < 1.:
       (x, y, sample_weights, val_x, val_y,
-       val_sample_weights) = training_utils.split_training_and_validation_data(
+       val_sample_weights) = model._split_training_and_validation_data(
            x, y, sample_weights, validation_split)
     else:
       if validation_steps:

@@ -17,6 +17,7 @@ limitations under the License.
 
 #ifdef GOOGLE_CUDA
 
+#include <unordered_map>
 #include <vector>
 
 // TODO(rmlarsen): Get rid of this workaround. "gpu_assert" is defined when
@@ -26,7 +27,6 @@ limitations under the License.
 #define gpu_assert(x)
 #endif
 
-#include "absl/container/flat_hash_map.h"
 #include "third_party/nccl/nccl.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_event_mgr.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -214,12 +214,12 @@ class NcclManager {
   mutex mu_;
 
   // Maps key to collectives currently being assembled or run.
-  absl::flat_hash_map<string, Collective*> collectives_ GUARDED_BY(mu_);
+  std::unordered_map<string, Collective*> collectives_ GUARDED_BY(mu_);
 
   // Maps a device to the communication streams that make up its collective.
   // This is used to share the stream across different communicators that
   // include the same device.
-  absl::flat_hash_map<se::StreamExecutor*, std::vector<NcclStream*>>
+  std::map<se::StreamExecutor*, std::vector<NcclStream*>>
       device_to_comm_streams_ GUARDED_BY(mu_);
 
   std::vector<std::unique_ptr<Communicator>> communicators_;

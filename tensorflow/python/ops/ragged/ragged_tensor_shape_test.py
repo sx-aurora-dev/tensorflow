@@ -26,20 +26,27 @@ from tensorflow.python.framework import test_util
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_tensor
 from tensorflow.python.ops.ragged import ragged_tensor_shape
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.ops.ragged.ragged_tensor_shape import RaggedTensorDynamicShape
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedTensorShapeTest(test_util.TensorFlowTestCase,
+class RaggedTensorShapeTest(ragged_test_util.RaggedTensorTestCase,
                             parameterized.TestCase):
 
   def assertShapeEq(self, x, y):
     assert isinstance(x, RaggedTensorDynamicShape)
     assert isinstance(y, RaggedTensorDynamicShape)
-    self.assertLen(x.partitioned_dim_sizes, len(y.partitioned_dim_sizes))
-    for x_dims, y_dims in zip(x.partitioned_dim_sizes, y.partitioned_dim_sizes):
-      self.assertAllEqual(x_dims, y_dims)
+    x_partitioned_dim_sizes = [
+        self.eval_to_list(splits)  #
+        for splits in x.partitioned_dim_sizes
+    ]
+    y_partitioned_dim_sizes = [
+        self.eval_to_list(splits)  #
+        for splits in y.partitioned_dim_sizes
+    ]
+    self.assertEqual(x_partitioned_dim_sizes, y_partitioned_dim_sizes)
     self.assertAllEqual(x.inner_dim_sizes, y.inner_dim_sizes)
 
   @parameterized.parameters([
@@ -415,7 +422,7 @@ class RaggedTensorShapeTest(test_util.TensorFlowTestCase,
     result = ragged_tensor_shape.broadcast_to(x, shape)
     self.assertEqual(
         getattr(result, 'ragged_rank', 0), getattr(expected, 'ragged_rank', 0))
-    self.assertAllEqual(result, expected)
+    self.assertRaggedEqual(result, expected)
 
   @parameterized.parameters(
       [
@@ -477,7 +484,7 @@ class RaggedTensorShapeTest(test_util.TensorFlowTestCase,
     self.assertEqual(expected_rrank, result_rrank)
     if hasattr(expected, 'tolist'):
       expected = expected.tolist()
-    self.assertAllEqual(result, expected)
+    self.assertRaggedEqual(result, expected)
 
 
 if __name__ == '__main__':

@@ -25,12 +25,11 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
 
-// Enumeration to get target specific intrinsics.
+// Enmeration to get target specific intrinsics.
 enum class TargetIntrinsicID {
   kThreadIdx = 0,
   kThreadIdy,
@@ -39,23 +38,6 @@ enum class TargetIntrinsicID {
   kBlockIdy,
   kBlockIdz,
   kBarrierId,
-};
-
-// Enumeration to get target specific device math function.
-enum class TargetDeviceFunctionID {
-  kPow = 0,
-  kErfcinv,
-  kLog,
-  kLog1p,
-  kSin,
-  kCos,
-  kExp,
-  kExpm1,
-  kSqrt,
-  kRsqrt,
-  kAtan2,
-  kFmod,
-  kRound
 };
 
 // Emits a call to the specified target intrinsic with the given operands.
@@ -70,10 +52,6 @@ llvm::CallInst* EmitCallToTargetIntrinsic(
 // Annotate the kernel as GPU kernel according to the GPU target.
 void AnnotateFunctionAsGpuKernel(llvm::Module* module, llvm::Function* func,
                                  llvm::IRBuilder<>* b);
-
-std::string ObtainDeviceFunctionName(TargetDeviceFunctionID func_id,
-                                     PrimitiveType output_type,
-                                     llvm::IRBuilder<>* b);
 
 }  // namespace gpu
 }  // namespace xla

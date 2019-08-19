@@ -15,7 +15,6 @@ limitations under the License.
 #include <cstdint>
 
 #include <gtest/gtest.h>
-#include "third_party/eigen3/Eigen/Core"
 #include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/kernels/internal/types.h"
 #include "tensorflow/lite/kernels/register.h"
@@ -52,7 +51,7 @@ class DequantizeOpModel : public SingleOpModel {
   int output_;
 };
 
-TEST(DequantizeOpTest, Uint8) {
+TEST(DequantizeOpTest, UINT8) {
   // [-63.5, 64] -> scale=0.5 zero_point=127 for UINT8
   DequantizeOpModel m(TensorType_UINT8, {2, 5}, 0.5, 127);
 
@@ -63,7 +62,7 @@ TEST(DequantizeOpTest, Uint8) {
                   {-63.5, -63, -62.5, -62, -61.5, 62, 62.5, 63, 63.5, 64})));
 }
 
-TEST(DequantizeOpTest, Int8) {
+TEST(DequantizeOpTest, INT8) {
   // [-63.5, 64] -> scale=0.5, zero_point=1 for INT8
   DequantizeOpModel m(TensorType_INT8, {2, 5}, 0.5, -1);
 
@@ -72,20 +71,6 @@ TEST(DequantizeOpTest, Int8) {
   EXPECT_THAT(m.GetOutput(),
               ElementsAreArray(ArrayFloatNear(
                   {-63.5, -63, -62.5, -62, -61.5, 62, 62.5, 63, 63.5, 64})));
-}
-
-TEST(DequantizeOpTest, Float16) {
-  DequantizeOpModel m(TensorType_FLOAT16, {2, 3}, 1.0f, 0);
-
-  std::vector<Eigen::half> half{Eigen::half{-535.54f}, Eigen::half{-100.0f},
-                                Eigen::half{-1.0f},    Eigen::half{0.f},
-                                Eigen::half{1.0f},     Eigen::half{100.32f}};
-  m.PopulateTensor(0, 0, reinterpret_cast<TfLiteFloat16*>(half.data()),
-                   reinterpret_cast<TfLiteFloat16*>(half.data()) + half.size());
-  m.Invoke();
-  EXPECT_THAT(m.GetOutput(), ElementsAreArray(ArrayFloatNear(
-                                 {-535.54f, -100.0f, -1.0f, 0.f, 1.0f, 100.32f},
-                                 /*max_abs_error=*/0.1f)));
 }
 
 }  // namespace

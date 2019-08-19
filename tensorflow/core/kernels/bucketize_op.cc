@@ -86,7 +86,7 @@ REGISTER_KERNEL(float);
 REGISTER_KERNEL(double);
 #undef REGISTER_KERNEL
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 #define REGISTER_KERNEL(T)                                         \
   REGISTER_KERNEL_BUILDER(                                         \
       Name("Bucketize").Device(DEVICE_GPU).TypeConstraint<T>("T"), \
@@ -97,6 +97,6 @@ REGISTER_KERNEL(int64);
 REGISTER_KERNEL(float);
 REGISTER_KERNEL(double);
 #undef REGISTER_KERNEL
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

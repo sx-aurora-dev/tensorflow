@@ -23,7 +23,6 @@ import functools
 
 import numpy as np
 
-from tensorflow.python.compat import compat
 from tensorflow.python.data.experimental.ops import batching
 from tensorflow.python.data.experimental.ops import error_ops
 from tensorflow.python.data.experimental.ops import interleave_ops
@@ -663,37 +662,25 @@ class CsvDatasetV2(dataset_ops.DatasetSource):
         argument_default=[],
         argument_dtype=dtypes.int64,
     )
-    self._element_spec = tuple(
-        structure.TensorStructure(d.dtype, []) for d in self._record_defaults)
-    if compat.forward_compatible(2019, 8, 3):
-      variant_tensor = gen_experimental_dataset_ops.csv_dataset(
-          filenames=self._filenames,
-          record_defaults=self._record_defaults,
-          buffer_size=self._buffer_size,
-          header=self._header,
-          output_shapes=self._flat_shapes,
-          field_delim=self._field_delim,
-          use_quote_delim=self._use_quote_delim,
-          na_value=self._na_value,
-          select_cols=self._select_cols,
-          compression_type=self._compression_type)
-    else:
-      variant_tensor = gen_experimental_dataset_ops.experimental_csv_dataset(
-          filenames=self._filenames,
-          record_defaults=self._record_defaults,
-          buffer_size=self._buffer_size,
-          header=self._header,
-          output_shapes=self._flat_shapes,
-          field_delim=self._field_delim,
-          use_quote_delim=self._use_quote_delim,
-          na_value=self._na_value,
-          select_cols=self._select_cols,
-          compression_type=self._compression_type)
+    self._structure = structure.NestedStructure(
+        tuple(structure.TensorStructure(d.dtype, [])
+              for d in self._record_defaults))
+    variant_tensor = gen_experimental_dataset_ops.experimental_csv_dataset(
+        filenames=self._filenames,
+        record_defaults=self._record_defaults,
+        buffer_size=self._buffer_size,
+        header=self._header,
+        output_shapes=self._structure._flat_shapes,  # pylint: disable=protected-access
+        field_delim=self._field_delim,
+        use_quote_delim=self._use_quote_delim,
+        na_value=self._na_value,
+        select_cols=self._select_cols,
+        compression_type=self._compression_type)
     super(CsvDatasetV2, self).__init__(variant_tensor)
 
   @property
-  def element_spec(self):
-    return self._element_spec
+  def _element_structure(self):
+    return self._structure
 
 
 @tf_export(v1=["data.experimental.CsvDataset"])
@@ -824,8 +811,10 @@ def make_batched_features_dataset_v2(file_pattern,
     ValueError: If `label_key` is not one of the `features` keys.
   """
   # Create dataset of all matching filenames
-  dataset = dataset_ops.Dataset.list_files(
-      file_pattern, shuffle=shuffle, seed=shuffle_seed)
+  filenames = _get_file_names(file_pattern, False)
+  dataset = dataset_ops.Dataset.from_tensor_slices(filenames)
+  if shuffle:
+    dataset = dataset.shuffle(len(filenames), shuffle_seed)
 
   if isinstance(reader, type) and issubclass(reader, io_ops.ReaderBase):
     raise TypeError("The `reader` argument must return a `Dataset` object. "
@@ -969,21 +958,17 @@ class SqlDatasetV2(dataset_ops.DatasetSource):
         data_source_name, dtype=dtypes.string, name="data_source_name")
     self._query = ops.convert_to_tensor(
         query, dtype=dtypes.string, name="query")
-    self._element_spec = nest.map_structure(
-        lambda dtype: structure.TensorStructure(dtype, []), output_types)
-    if compat.forward_compatible(2019, 8, 3):
-      variant_tensor = gen_experimental_dataset_ops.sql_dataset(
-          self._driver_name, self._data_source_name, self._query,
-          **self._flat_structure)
-    else:
-      variant_tensor = gen_experimental_dataset_ops.experimental_sql_dataset(
-          self._driver_name, self._data_source_name, self._query,
-          **self._flat_structure)
+    self._structure = structure.NestedStructure(
+        nest.map_structure(
+            lambda dtype: structure.TensorStructure(dtype, []), output_types))
+    variant_tensor = gen_experimental_dataset_ops.experimental_sql_dataset(
+        self._driver_name, self._data_source_name, self._query,
+        **dataset_ops.flat_structure(self))
     super(SqlDatasetV2, self).__init__(variant_tensor)
 
   @property
-  def element_spec(self):
-    return self._element_spec
+  def _element_structure(self):
+    return self._structure
 
 
 @tf_export(v1=["data.experimental.SqlDataset"])

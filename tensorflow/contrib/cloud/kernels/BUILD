@@ -1,6 +1,11 @@
 # Description:
 # BigQueryReader implementation
 
+package(
+    default_visibility = ["//visibility:private"],
+    licenses = ["notice"],  # Apache 2.0
+)
+
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_cc_test",
@@ -12,11 +17,6 @@ load(
 load(
     "//tensorflow/core:platform/default/build_config.bzl",
     "tf_proto_library",
-)
-
-package(
-    default_visibility = ["//visibility:private"],
-    licenses = ["notice"],  # Apache 2.0
 )
 
 tf_kernel_library(

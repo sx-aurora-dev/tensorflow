@@ -132,16 +132,20 @@ TransposeOperator* CreateTransposeFromReorderAxes(
     // order of the elements does not change.
     auto* reshape_op =
         CreateReshapeFromReorderAxes(model, reorder_op, input_shape);
-    model->operators.emplace(reorder_it, reshape_op);
+    const auto reshape_it = model->operators.emplace(reorder_it, reshape_op);
+    reorder_it = reshape_it + 1;
   } else {
     // Add Transpose operator into the graph.
     auto* transpose_op = CreateTransposeFromReorderAxes(
         model, reorder_op, input_shape, input_axes_order, output_axes_order);
-    model->operators.emplace(reorder_it, transpose_op);
+    const auto transpose_it =
+        model->operators.emplace(reorder_it, transpose_op);
+    reorder_it = transpose_it + 1;
   }
 
   // Remove ReorderAxes operator from the graph.
-  DeleteOpAndArrays(model, reorder_op);
+  CHECK_EQ(reorder_it->get(), reorder_op);
+  model->operators.erase(reorder_it);
 
   *modified = true;
   return ::tensorflow::Status::OK();

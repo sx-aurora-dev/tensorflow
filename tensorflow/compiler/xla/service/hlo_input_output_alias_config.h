@@ -57,7 +57,7 @@ class HloInputOutputAliasConfig {
   HloInputOutputAliasConfig() = default;
 
   explicit HloInputOutputAliasConfig(Shape output_shape)
-      : alias_(std::move(output_shape)) {}
+      : alias_(output_shape) {}
 
   virtual ~HloInputOutputAliasConfig() = default;
 
@@ -86,7 +86,7 @@ class HloInputOutputAliasConfig {
   HloInputOutputAliasProto ToProto() const;
 
   static StatusOr<HloInputOutputAliasConfig> CreateFromProto(
-      Shape output_shape, const HloInputOutputAliasProto& proto);
+      const Shape& output_shape, const HloInputOutputAliasProto& proto);
 
   // Returns the output index that the given parameter and parameter index is
   // aliased with. A nullopt is returned if there is no output that is aliased

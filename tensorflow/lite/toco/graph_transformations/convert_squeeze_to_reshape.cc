@@ -77,8 +77,10 @@ namespace toco {
               LogName(*reshape_op));
 
   // Replace the operator in the graph.
-  model->operators.emplace(squeeze_it, reshape_op);
-  DeleteOpAndArrays(model, squeeze_op);
+  const auto reshape_it = model->operators.emplace(squeeze_it, reshape_op);
+  squeeze_it = reshape_it + 1;
+  CHECK_EQ(squeeze_it->get(), squeeze_op);
+  model->operators.erase(squeeze_it);
 
   *modified = true;
   return ::tensorflow::Status::OK();

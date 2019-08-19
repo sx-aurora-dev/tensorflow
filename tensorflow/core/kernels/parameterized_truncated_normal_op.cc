@@ -450,7 +450,7 @@ TF_CALL_double(REGISTER);
 
 #undef REGISTER
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 #define REGISTER(TYPE)                                         \
   REGISTER_KERNEL_BUILDER(Name("ParameterizedTruncatedNormal") \
@@ -465,6 +465,6 @@ TF_CALL_double(REGISTER);
 
 #undef REGISTER
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // end namespace tensorflow

@@ -35,6 +35,7 @@ from tensorflow.python.ops import parsing_ops
 from tensorflow.python.ops import string_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_tensor
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 # Constants listing various op types to test.  Each operation
@@ -136,7 +137,7 @@ BINARY_INT_OPS = [
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
+class RaggedElementwiseOpsTest(ragged_test_util.RaggedTensorTestCase,
                                parameterized.TestCase):
 
   def assertSameShape(self, x, y):
@@ -467,7 +468,7 @@ class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
     x = ragged_tensor.convert_to_tensor_or_ragged_tensor(x, dtype=dtypes.int32)
     y = ragged_tensor.convert_to_tensor_or_ragged_tensor(y, dtype=dtypes.int32)
     result = x + y
-    self.assertAllEqual(result, expected)
+    self.assertRaggedEqual(result, expected)
 
   def testElementwiseOpShapeMismatch(self):
     x = ragged_factory_ops.constant([[1, 2, 3], [4, 5]])
@@ -712,7 +713,7 @@ class RaggedElementwiseOpsTest(test_util.TensorFlowTestCase,
   def testRaggedDispatch(self, op, expected, args=(), kwargs=None):
     if kwargs is None: kwargs = {}
     result = op(*args, **kwargs)
-    self.assertAllEqual(result, expected)
+    self.assertRaggedEqual(result, expected)
 
 
 if __name__ == '__main__':

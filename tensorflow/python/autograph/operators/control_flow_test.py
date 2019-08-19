@@ -45,46 +45,15 @@ class ForLoopTest(test.TestCase):
           constant_op.constant([1, 2, 3, 4]),
           extra_test=lambda s: True,
           body=lambda i, s: (s * 10 + i,),
-          get_state=lambda: (),
-          set_state=lambda _: None,
-          init_vars=(0,))
+          init_state=(0,))
       self.assertEqual(self.evaluate(s), (1234,))
-
-  def test_tensor_with_extra_test_only_python_state(self):
-    class MutableObject(object):
-      field_1 = constant_op.constant(0, dtype=dtypes.int32)
-      field_2 = constant_op.constant(1, dtype=dtypes.int32)
-    state = MutableObject()
-
-    def get_state():
-      return (state.field_1, state.field_2)
-
-    def set_state(new_state):
-      state.field_1, state.field_2 = new_state
-
-    def body(i):
-      state.field_1 += i
-      state.field_2 *= i
-      return ()
-
-    control_flow.for_stmt(
-        iter_=constant_op.constant([1, 2, 3, 4]),
-        body=body,
-        extra_test=lambda: state.field_1 < 6,
-        get_state=get_state,
-        set_state=set_state,
-        init_vars=())
-    self.assertEqual(self.evaluate(state.field_1), 6)
-    self.assertEqual(self.evaluate(state.field_2), 6)
 
   def test_python(self):
     s = control_flow.for_stmt(
         range(5),
         extra_test=lambda s: True,
         body=lambda i, s: (s * 10 + i,),
-        get_state=None,
-        set_state=None,
-        init_vars=(0,))
+        init_state=(0,))
     self.assertEqual(s, (1234,))
 
   def test_tf_dataset(self):
@@ -93,9 +62,7 @@ class ForLoopTest(test.TestCase):
           dataset_ops.Dataset.range(5),
           extra_test=None,
           body=lambda i, s: (s * 10 + i,),
-          get_state=lambda: (),
-          set_state=lambda _: None,
-          init_vars=(constant_op.constant(0, dtype=dtypes.int64),))
+          init_state=(constant_op.constant(0, dtype=dtypes.int64),))
       self.assertEqual(self.evaluate(s), (1234,))
 
   def test_dataset_with_extra_test(self):
@@ -103,33 +70,8 @@ class ForLoopTest(test.TestCase):
         dataset_ops.Dataset.range(5),
         extra_test=lambda s: s < 3,
         body=lambda i, s: (s + i,),
-        get_state=lambda: (),
-        set_state=lambda _: None,
-        init_vars=(constant_op.constant(0, dtype=dtypes.int64),))
+        init_state=(constant_op.constant(0, dtype=dtypes.int64),))
     self.assertEqual(self.evaluate(s), (3,))
-
-  def test_dataset_with_extra_test_and_state(self):
-    state = [constant_op.constant(0, dtype=dtypes.int64)]
-
-    def get_state():
-      return (state[0],)
-
-    def set_state(new_state):
-      state[0], = new_state
-
-    def body(i, s):
-      state[0] += i
-      return (s + i,)
-
-    s = control_flow.for_stmt(
-        dataset_ops.Dataset.range(5),
-        extra_test=lambda s: s < 3,
-        body=body,
-        get_state=get_state,
-        set_state=set_state,
-        init_vars=(constant_op.constant(0, dtype=dtypes.int64),))
-    self.assertEqual(self.evaluate(s), (3,))
-    self.assertEqual(self.evaluate(state[0]), (3,))
 
   def test_dataset_with_extra_test_no_extra_iterations(self):
 
@@ -141,13 +83,11 @@ class ForLoopTest(test.TestCase):
         dataset_ops.Dataset.range(5),
         extra_test=lambda s: s < 3,
         body=guarded_body,
-        get_state=lambda: (),
-        set_state=lambda _: None,
-        init_vars=(constant_op.constant(0, dtype=dtypes.int64),))
+        init_state=(constant_op.constant(0, dtype=dtypes.int64),))
     self.assertEqual(self.evaluate(s), (3,))
 
   @test_util.run_v2_only
-  def test_tf_dataset_no_loop_vars(self):
+  def test_tf_dataset_no_state(self):
     v = variables.Variable(0, dtype=dtypes.int64)
     self.evaluate(v.initializer)
 
@@ -161,9 +101,7 @@ class ForLoopTest(test.TestCase):
           dataset_ops.Dataset.range(5),
           extra_test=None,
           body=stateless_with_side_effects,
-          get_state=lambda: (),
-          set_state=lambda _: None,
-          init_vars=())
+          init_state=())
 
     test_fn()
     self.assertEqual(self.evaluate(v.read_value()), 1234)
@@ -177,14 +115,12 @@ class ForLoopTest(test.TestCase):
           itr,
           extra_test=None,
           body=lambda i, s: (s * 10 + i,),
-          get_state=lambda: (),
-          set_state=lambda _: None,
-          init_vars=(constant_op.constant(0, dtype=dtypes.int64),))
+          init_state=(constant_op.constant(0, dtype=dtypes.int64),))
     s, = test_fn()
     self.assertAllEqual(s, 1234)
 
   @test_util.run_v2_only
-  def test_tf_iterator_no_loop_vars(self):
+  def test_tf_iterator_no_state(self):
     v = variables.Variable(0, dtype=dtypes.int64)
 
     def stateless_with_side_effects(i):
@@ -197,9 +133,7 @@ class ForLoopTest(test.TestCase):
           iter(dataset_ops.Dataset.range(5)),
           extra_test=None,
           body=stateless_with_side_effects,
-          get_state=lambda: (),
-          set_state=lambda _: None,
-          init_vars=())
+          init_state=())
 
     test_fn()
     self.assertEqual(self.evaluate(v.read_value()), 1234)
@@ -213,9 +147,7 @@ class WhileLoopTest(test.TestCase):
     results = control_flow.while_stmt(
         test=lambda i, s: i < n,
         body=lambda i, s: (i + 1, s + i),
-        get_state=lambda: (),
-        set_state=lambda _: None,
-        init_vars=(0, 0))
+        init_state=(0, 0))
     self.assertEqual((5, 10), self.evaluate(results))
 
   def test_tensor_with_tf_side_effects_in_cond(self):
@@ -233,9 +165,7 @@ class WhileLoopTest(test.TestCase):
       return control_flow.while_stmt(
           test=lambda i: get_and_increment(v) < n,
           body=lambda i: (i + 1,),
-          get_state=lambda: (),
-          set_state=lambda _: None,
-          init_vars=(0,))
+          init_state=(0,))
 
     results = test_fn()
 
@@ -243,41 +173,13 @@ class WhileLoopTest(test.TestCase):
     self.assertEqual(self.evaluate(results), (4,))
     self.assertEqual(self.evaluate(v), (5,))
 
-  def test_tensor_with_python_state(self):
-    n = constant_op.constant(5)
-
-    class MutableObject(object):
-      field = constant_op.constant(0, dtype=dtypes.int32)
-    state = MutableObject()
-
-    def get_state():
-      return (state.field,)
-
-    def set_state(new_state):
-      state.field, = new_state
-
-    def body(i, s):
-      state.field += i
-      return (i + 1, s + i)
-
-    s = control_flow.while_stmt(
-        test=lambda i, s: i < n,
-        body=body,
-        get_state=get_state,
-        set_state=set_state,
-        init_vars=(0, 0))
-    self.assertEqual(self.evaluate(s), (5, 10))
-    self.assertEqual(self.evaluate(state.field), 10)
-
   @test_util.run_deprecated_v1
   def test_python_with_tensor_state(self):
     n = 5
     results = control_flow.while_stmt(
         test=lambda i, s: i < n,
         body=lambda i, s: (i + 1, s + i),
-        get_state=lambda: (),
-        set_state=lambda _: None,
-        init_vars=(0, constant_op.constant(0)))
+        init_state=(0, constant_op.constant(0)))
     result_i, result_s = results
     self.assertEqual(5, result_i)
     self.assertEqual(10, self.evaluate(result_s))
@@ -287,9 +189,7 @@ class WhileLoopTest(test.TestCase):
     results = control_flow.while_stmt(
         test=lambda i, s: i < n,
         body=lambda i, s: (i + 1, s + i),
-        get_state=None,
-        set_state=None,
-        init_vars=(0, 0))
+        init_state=(0, 0))
     self.assertEqual((5, 10), results)
 
   def test_python_infinite_loop(self):
@@ -299,9 +199,7 @@ class WhileLoopTest(test.TestCase):
           control_flow.while_stmt(
               test=lambda _: True,
               body=lambda i: (i + 1,),
-              get_state=None,
-              set_state=None,
-              init_vars=(0,))
+              init_state=(0,))
 
   def test_python_long_loop_unroll_warning(self):
     if __debug__:
@@ -315,9 +213,7 @@ class WhileLoopTest(test.TestCase):
             control_flow.while_stmt(
                 test=lambda i, _: i < 100,
                 body=lambda i, _: (i + 1, gen_math_ops.add(i, 1),),
-                get_state=None,
-                set_state=None,
-                init_vars=(0, None))
+                init_state=(0, None))
           self.assertTrue(re.match(
               r'.*ops.*loop.*large.*iterations.*Add.*',
               out_capturer.getvalue()))

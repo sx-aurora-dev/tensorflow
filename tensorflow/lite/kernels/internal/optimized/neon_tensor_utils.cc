@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <cstdlib>
-#include <cstring>
 #include <vector>
 
 #include "tensorflow/lite/c/builtin_op_data.h"
 #include "tensorflow/lite/kernels/activation_functor.h"
+#include "tensorflow/lite/kernels/internal/common.h"
 #include "tensorflow/lite/kernels/internal/compatibility.h"
-#include "tensorflow/lite/kernels/internal/optimized/cpu_check.h"
-#include "tensorflow/lite/kernels/internal/optimized/neon_tensor_utils_impl.h"
+#include "tensorflow/lite/kernels/internal/optimized/tensor_utils_impl.h"
 #include "tensorflow/lite/kernels/internal/round.h"
 
 #ifdef USE_NEON
@@ -33,9 +33,7 @@ limitations under the License.
 #define kFloatWeightsPerNeonLane 4
 
 #if __cplusplus >= 201703L || __STDC_VERSION__ >= 201112L
-#if !defined(__ANDROID__) || __ANDROID_API__ >= 28
 #define TFLITE_USE_STD_ALIGN
-#endif
 #endif
 
 #ifdef TFLITE_USE_STD_ALIGN
@@ -414,8 +412,8 @@ void NeonMatrixBatchVectorMultiplyAccumulate(
   }
 #endif  // __aarch64__
 
-  static const int kWeightsPerUint32 = 4;
-  static const int kWeightsPerNeonLane = 16;
+  const int kWeightsPerUint32 = 4;
+  const int kWeightsPerNeonLane = 16;
   // Assuming *matrix is kWeightsPerUint32-byte aligned,
   // every row of the matrix is also
   // kWeightsPerUint32-byte aligned as long as cols is
@@ -440,19 +438,17 @@ void NeonMatrixBatchVectorMultiplyAccumulate(
                              &aligned_vec_free);
 
   // If m_cols is not at least kWeightsPerNeonLane, we cannot use the main
-  // vectorized loop, and we need to process sequentially. postamble_half_start
-  // shows the start index where this should happen. Between postamble_start and
-  // postamble_half_start we can still process kWeightsPerNeonLane >> 1 in a
-  // vectorized form.
-  const int postamble_half_start = m_cols & ~(kWeightsPerNeonLane - 1);
-  const int postamble_start = m_cols & ~((kWeightsPerNeonLane >> 1) - 1);
+  // vectorized loop, and we need to process sequentially. postamble_start shows
+  // the start index where this should happen.
+  const int postamble_start = m_cols - (m_cols & (kWeightsPerNeonLane - 1));
 
-  for (int batch = 0; batch < n_batch; ++batch) {
+  int batch, row, col;
+  for (batch = 0; batch < n_batch; ++batch) {
     const float batch_scaling_factor = scaling_factors[batch];
     // Copy the vector data to an aligned vector.
     memcpy(aligned_vec, vectors + batch * m_cols, sizeof(int8_t) * m_cols);
     // Compute dot-product for every column.
-    for (int row = 0; row < m_rows; ++row, result += result_stride) {
+    for (row = 0; row < m_rows; ++row, result += result_stride) {
       // Get the address of the first element of the row.
       int8_t* row_ptr = (int8_t*)matrix + row * m_cols;  // NOLINT
       if (unaligned) {
@@ -461,15 +457,15 @@ void NeonMatrixBatchVectorMultiplyAccumulate(
       }
 
       // Initialize the dot product sum for the row to 0.
-      int32x4_t dotprod_32x4 = vmovq_n_s32(0);
+      int32x4_t dotprod = vmovq_n_s32(0);
 
       // Prefetch the row to cache.
       __builtin_prefetch(row_ptr, 0 /* prefetch for read */,
                          3 /* temporal locality */);
 
       // For every block of 16 8-bit elements.
-      int col = 0;
-      for (; col < postamble_half_start; col += kWeightsPerNeonLane) {
+      col = 0;
+      for (; col < postamble_start; col += kWeightsPerNeonLane) {
         // Load 16 8-bit values from the row and vector, each, to operate on.
         // Here the assumption is that each buffer is 4-byte aligned. Otherwise,
         // performance may suffer significantly.
@@ -490,39 +486,37 @@ void NeonMatrixBatchVectorMultiplyAccumulate(
         prod_16x8 =
             vmlal_s8(prod_16x8, vget_high_s8(s1_8x16), vget_high_s8(s2_8x16));
 
-        dotprod_32x4 = vpadalq_s16(dotprod_32x4, prod_16x8);
+        dotprod = vpadalq_s16(dotprod, prod_16x8);
       }  // for col
 
-      // Half iteration dealing only 8 elements
-      // TODO(raziel): if (ABSL_PREDICT_FALSE(col < postamble_start))
-      if (col < postamble_start) {
-        // Load 8 8-bit values from the row and column each to operate on.
-        // Here the assumption is that each buffer is 4-bytes aligned.
-        // Otherwise, performance may suffer significantly.
-        TFLITE_DCHECK_EQ(  // NOLINT
-            (uintptr_t)(&row_ptr[col]) & (kWeightsPerUint32 - 1), 0);
-        const int8x8_t s1_8x8 = vld1_s8((const int8_t*)(aligned_vec + col));
-        const int8x8_t s2_8x8 = vld1_s8((const int8_t*)(row_ptr + col));
-        const int16x8_t prod_16x8 = vmull_s8(s1_8x8, s2_8x8);
-        dotprod_32x4 = vpadalq_s16(dotprod_32x4, prod_16x8);
-        col += (kWeightsPerNeonLane >> 1);
+      int32 postable_sum = 0;
+      // Postamble loop.
+      // TODO(raziel): if (ABSL_PREDICT_FALSE(postamble_start < m_rows))
+      if (postamble_start < m_cols) {
+        col = postamble_start;
+        if ((m_cols - postamble_start) >= (kWeightsPerNeonLane >> 1)) {
+          // Load 8 8-bit values from the row and column each to operate on.
+          // Here the assumption is that each buffer is 4-bytes aligned.
+          // Otherwise, performance may suffer significantly.
+          TFLITE_DCHECK_EQ(  // NOLINT
+              (uintptr_t)(&row_ptr[col]) & (kWeightsPerUint32 - 1), 0);
+          const int8x8_t s1_8x8 = vld1_s8((const int8_t*)(aligned_vec + col));
+          const int8x8_t s2_8x8 = vld1_s8((const int8_t*)(row_ptr + col));
+          const int16x8_t prod_16x8 = vmull_s8(s1_8x8, s2_8x8);
+          dotprod = vpadalq_s16(dotprod, prod_16x8);
+          col += (kWeightsPerNeonLane >> 1);
+        }
+        for (; col < m_cols; ++col) {
+          postable_sum += row_ptr[col] * aligned_vec[col];
+        }  // for col
       }
-#ifdef __aarch64__
-      int32_t dotprod = vaddvq_s32(dotprod_32x4);
-#else
       // Add the 4 intermediate sum values to get the final dot-prod value for
       // this row.
-      int64x2_t pairwiseAdded = vpaddlq_s32(dotprod_32x4);
-      int32_t dotprod =
+      int64x2_t pairwiseAdded = vpaddlq_s32(dotprod);
+      int32 neon_sum =
           vgetq_lane_s64(pairwiseAdded, 0) + vgetq_lane_s64(pairwiseAdded, 1);
-#endif
-      // Postamble loop.
-      // TODO(raziel): if (ABSL_PREDICT_FALSE(col < m_cols))
-      for (; col < m_cols; ++col) {
-        dotprod += row_ptr[col] * aligned_vec[col];
-      }  // for col
 
-      *result += dotprod * batch_scaling_factor;
+      *result += ((neon_sum + postable_sum) * batch_scaling_factor);
     }  // for row
   }    // for batch
 
@@ -567,13 +561,9 @@ void NeonSparseMatrixBatchVectorMultiplyAccumulate(
           }
           matrix_ptr += kBlockSize;
         }
-#ifdef __aarch64__
-        *result_in_batch += vaddvq_f32(acc_32x4);
-#else
         *result_in_batch +=
             (vgetq_lane_f32(acc_32x4, 0) + vgetq_lane_f32(acc_32x4, 1) +
              vgetq_lane_f32(acc_32x4, 2) + vgetq_lane_f32(acc_32x4, 3));
-#endif
       }
       result_in_batch += result_stride;
     }
@@ -604,16 +594,17 @@ void NeonSparseMatrixBatchVectorMultiplyAccumulate(
       (int8_t*)aligned_alloc(kWeightsPerUint32, m_cols,  // NOLINT
                              &aligned_vec_free);
 
-  for (int batch = 0; batch < n_batch; ++batch) {
+  int batch, row;
+  for (batch = 0; batch < n_batch; ++batch) {
     const float batch_scaling_factor = scaling_factors[batch];
     // Copy the vector data to an aligned vector.
     memcpy(aligned_vec, vectors + batch * m_cols, sizeof(int8) * m_cols);
 
     const uint8_t* ledger_ptr = ledger;
     const int8_t* row_ptr = matrix;
-    for (int row = 0; row < m_rows; ++row, result += result_stride) {
+    for (row = 0; row < m_rows; ++row, result += result_stride) {
       // Initialize the dot product sum for the row to 0.
-      int32x4_t dotprod_32x4 = vmovq_n_s32(0);
+      int32x4_t dotprod = vmovq_n_s32(0);
       int num_nonzero_blocks = *ledger_ptr++;
       if (num_nonzero_blocks > 0) {
         // Prefetch the row to cache.
@@ -642,19 +633,15 @@ void NeonSparseMatrixBatchVectorMultiplyAccumulate(
           prod_16x8 =
               vmlal_s8(prod_16x8, vget_high_s8(s1_8x16), vget_high_s8(s2_8x16));
 
-          dotprod_32x4 = vpadalq_s16(dotprod_32x4, prod_16x8);
+          dotprod = vpadalq_s16(dotprod, prod_16x8);
           row_ptr += kBlockSize;
         }
         // Add the 4 intermediate sum values to get the final dot-prod value for
         // this row.
-#ifdef __aarch64__
-        int32_t dotprod = vaddvq_s32(dotprod_32x4);
-#else
-        int64x2_t pairwiseAdded = vpaddlq_s32(dotprod_32x4);
-        int32_t dotprod =
+        int64x2_t pairwiseAdded = vpaddlq_s32(dotprod);
+        int32 neon_sum =
             vgetq_lane_s64(pairwiseAdded, 0) + vgetq_lane_s64(pairwiseAdded, 1);
-#endif
-        *result += dotprod * batch_scaling_factor;
+        *result += neon_sum * batch_scaling_factor;
       }
     }  // for row
   }    // for batch
@@ -1004,12 +991,9 @@ float NeonVectorVectorDotProduct(const float* vector1, const float* vector2,
     // Vector multiply-accumulate 4 float
     acc_32x4 = vmlaq_f32(acc_32x4, v1_f32x4, v2_f32x4);
   }
-#ifdef __aarch64__
-  float result = vaddvq_f32(acc_32x4);
-#else
+
   float result = (vgetq_lane_f32(acc_32x4, 0) + vgetq_lane_f32(acc_32x4, 1) +
                   vgetq_lane_f32(acc_32x4, 2) + vgetq_lane_f32(acc_32x4, 3));
-#endif
   // Postamble loop.
   for (int v = postamble_start; v < v_size; v++) {
     result += vector1[v] * vector2[v];
@@ -1046,13 +1030,9 @@ void NeonReductionSumVector(const float* input_vector, float* output_vector,
       float32x4_t v1_f32x4 = vld1q_f32(input_vector_ptr + r);
       sum_f32x4 = vaddq_f32(sum_f32x4, v1_f32x4);
     }
-#ifdef __aarch64__
-    output_vector[o] += vaddvq_f32(sum_f32x4);
-#else
     output_vector[o] +=
         (vgetq_lane_f32(sum_f32x4, 0) + vgetq_lane_f32(sum_f32x4, 1) +
          vgetq_lane_f32(sum_f32x4, 2) + vgetq_lane_f32(sum_f32x4, 3));
-#endif
     input_vector_ptr += postamble_start;
 
     // Postamble loop.

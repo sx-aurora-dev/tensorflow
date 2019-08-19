@@ -301,7 +301,6 @@ TfLiteStatus ParseOpData(const Operator* op, BuiltinOperator op_type,
             break;
           default:
             error_reporter->Report("Unhandled fully-connected weights format.");
-            allocator->Deallocate(params);
             return kTfLiteError;
         }
       }
@@ -407,7 +406,6 @@ TfLiteStatus ParseOpData(const Operator* op, BuiltinOperator op_type,
           default:
             error_reporter->Report("Unhandled LSTM kernel type: %d",
                                    lstm_params->kernel_type());
-            allocator->Deallocate(params);
             return kTfLiteError;
         }
       }

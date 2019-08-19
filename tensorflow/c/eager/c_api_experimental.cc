@@ -42,8 +42,10 @@ bool TFE_ProfilerIsOk(TFE_Profiler* profiler) {
 
 void TFE_DeleteProfiler(TFE_Profiler* profiler) { delete profiler; }
 
-void TFE_ProfilerSerializeToString(TFE_Profiler* profiler, TF_Buffer* buf,
-                                   TF_Status* status) {
+void TFE_ProfilerSerializeToString(TFE_Context* ctx, TFE_Profiler* profiler,
+                                   TF_Buffer* buf, TF_Status* status) {
+  TFE_ContextAsyncWait(ctx, status);
+  if (TF_GetCode(status) != TF_OK) return;
   string content;
   status->status = profiler->profiler->SerializeToString(&content);
   void* data = tensorflow::port::Malloc(content.length());
@@ -98,28 +100,6 @@ bool TFE_ProfilerClientStartTracing(const char* service_addr,
       num_tracing_attempts);
   tensorflow::Set_TF_Status_from_Status(status, s);
   return s.ok();
-}
-
-void TFE_ProfilerClientMonitor(const char* service_addr, int duration_ms,
-                               int monitoring_level, bool display_timestamp,
-                               TF_Buffer* result, TF_Status* status) {
-  tensorflow::Status s =
-      tensorflow::profiler::client::ValidateHostPortPair(service_addr);
-  if (!s.ok()) {
-    Set_TF_Status_from_Status(status, s);
-    return;
-  }
-  string content;
-  s = tensorflow::profiler::client::Monitor(
-      service_addr, duration_ms, monitoring_level, display_timestamp, &content);
-  void* data = tensorflow::port::Malloc(content.length());
-  content.copy(static_cast<char*>(data), content.length(), 0);
-  result->data = data;
-  result->length = content.length();
-  result->data_deallocator = [](void* data, size_t length) {
-    tensorflow::port::Free(data);
-  };
-  tensorflow::Set_TF_Status_from_Status(status, s);
 }
 
 void TFE_MonitoringCounterCellIncrementBy(TFE_MonitoringCounterCell* cell,
@@ -540,43 +520,4 @@ TFE_MonitoringSamplerCell* TFE_MonitoringGetCellSampler2(
     TFE_MonitoringSampler2* sampler, const char* label1, const char* label2) {
   return static_cast<TFE_MonitoringSamplerCell*>(
       static_cast<void*>(sampler->sampler->GetCell(label1, label2)));
-}
-
-void TFE_ContextOptionsSetMirroringPolicy(TFE_ContextOptions* options,
-                                          TFE_ContextMirroringPolicy policy) {
-  options->mirroring_policy = policy;
-}
-
-void TFE_ContextSetThreadLocalMirroringPolicy(
-    TFE_Context* ctx, TFE_ContextMirroringPolicy policy) {
-  ctx->context->SetThreadLocalMirroringPolicy(
-      static_cast<tensorflow::ContextMirroringPolicy>(policy));
-}
-
-// Note: this function looks up a thread local policy. So it should be called in
-// the appropriate client thread. In particular, in async mode, it may not be
-// safe to call this function from the async EagerExecutor threads.
-extern TFE_ContextMirroringPolicy TFE_ContextGetMirroringPolicy(
-    TFE_Context* ctx) {
-  return static_cast<TFE_ContextMirroringPolicy>(
-      ctx->context->GetMirroringPolicy());
-}
-
-TFE_CancellationManager* TFE_NewCancellationManager() {
-  return new TFE_CancellationManager;
-}
-
-void TFE_CancellationManagerStartCancel(
-    TFE_CancellationManager* cancellation_manager) {
-  cancellation_manager->cancellation_manager.StartCancel();
-}
-
-bool TFE_CancellationManagerIsCancelled(
-    TFE_CancellationManager* cancellation_manager) {
-  return cancellation_manager->cancellation_manager.IsCancelled();
-}
-
-void TFE_DeleteCancellationManager(
-    TFE_CancellationManager* cancellation_manager) {
-  delete cancellation_manager;
 }

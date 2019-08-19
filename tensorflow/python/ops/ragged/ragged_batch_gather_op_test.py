@@ -30,11 +30,12 @@ from tensorflow.python.ops.ragged import ragged_batch_gather_ops
 from tensorflow.python.ops.ragged import ragged_batch_gather_with_default_op
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_tensor
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedBatchGatherOpTest(test_util.TensorFlowTestCase,
+class RaggedBatchGatherOpTest(ragged_test_util.RaggedTensorTestCase,
                               parameterized.TestCase):
 
   @parameterized.parameters([
@@ -148,7 +149,7 @@ class RaggedBatchGatherOpTest(test_util.TensorFlowTestCase,
   ])
   def testRaggedBatchGather(self, descr, params, indices, expected):
     result = ragged_batch_gather_ops.batch_gather(params, indices)
-    self.assertAllEqual(result, expected)
+    self.assertRaggedEqual(result, expected)
 
   @parameterized.parameters([
       # Docstring example:
@@ -358,7 +359,7 @@ class RaggedBatchGatherOpTest(test_util.TensorFlowTestCase,
         expected, ragged_rank=expected_ragged_rank or ragged_rank)
     result = ragged_batch_gather_with_default_op.batch_gather_with_default(
         params, indices, default_value)
-    self.assertAllEqual(result, expected)
+    self.assertRaggedEqual(result, expected)
 
   @parameterized.parameters([
       # Dimensions:

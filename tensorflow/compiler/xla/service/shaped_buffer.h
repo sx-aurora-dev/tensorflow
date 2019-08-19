@@ -42,7 +42,7 @@ class ShapedBuffer {
   // both the on-host and on-device shape are required. The on-device shape
   // determines the number of device allocations (DeviceMemoryBase) held by the
   // ShapedBuffer.
-  ShapedBuffer(Shape on_host_shape, Shape on_device_shape,
+  ShapedBuffer(const Shape& on_host_shape, const Shape& on_device_shape,
                const se::Platform* platform, int device_ordinal);
 
   // Movable, but not copyable.
@@ -136,7 +136,8 @@ std::ostream& operator<<(std::ostream& out, const ShapedBuffer& buffer);
 class ScopedShapedBuffer : public ShapedBuffer {
  public:
   // Creates a ScopedShapedBuffer with null DeviceMemoryBases at each index.
-  explicit ScopedShapedBuffer(Shape on_host_shape, Shape on_device_shape,
+  explicit ScopedShapedBuffer(const Shape& on_host_shape,
+                              const Shape& on_device_shape,
                               se::DeviceMemoryAllocator* allocator,
                               int device_ordinal);
 

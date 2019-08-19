@@ -23,7 +23,6 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "tensorflow/compiler/xla/map_util.h"
 #include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_debug_info_manager.h"
 #include "tensorflow/compiler/xla/service/gpu/hlo_execution_profiler.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/llvm_ir/buffer_assignment_util.h"
@@ -53,8 +52,8 @@ GpuExecutable::GpuExecutable(
     const string& ptx, const std::vector<uint8>& cubin,
     std::pair<int, int> compute_capability,
     std::unique_ptr<const ThunkSchedule> thunk_schedule,
-    std::shared_ptr<HloModule> hlo_module,
-    std::shared_ptr<const BufferAssignment> assignment,
+    std::unique_ptr<HloModule> hlo_module,
+    std::unique_ptr<const BufferAssignment> assignment,
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
     std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map)
     : Executable(std::move(hlo_module), std::move(hlo_profile_printer_data),
@@ -63,40 +62,12 @@ GpuExecutable::GpuExecutable(
       cubin_(cubin),
       compute_capability_(compute_capability),
       thunk_schedule_(std::move(thunk_schedule)),
-      assignment_(std::move(assignment)) {
-  CHECK(has_module() && assignment_);
-  GpuDebugInfoManager::Get()->RegisterModule(module().name(), shared_module(),
-                                             assignment_);
-  ComputeThunkAnnotations();
-}
-
-GpuExecutable::~GpuExecutable() {
-  CHECK(has_module() && assignment_);
-  GpuDebugInfoManager::Get()->UnregisterModule(module().name(), shared_module(),
-                                               assignment_);
-}
-
-void GpuExecutable::ComputeThunkAnnotations() {
-  CanonicalNameMap canonical_name_map;
-  for (Thunk* thunk : thunk_schedule_->TotalOrder()) {
-    const HloInstruction* hlo = thunk->hlo_instruction();
-    CHECK(hlo);
-    thunk_annotations_[thunk] = absl::StrFormat(
-        "%s:#tf_op=%s,hlo_op=%s,hlo_module=%s#",
-        hlo->ToStringWithCanonicalNameMap(HloPrintOptions::Canonical(),
-                                          &canonical_name_map),
-        hlo->metadata().op_name(), hlo->name(), hlo->GetModule()->name());
-  }
-}
+      assignment_(std::move(assignment)) {}
 
 Status GpuExecutable::ExecuteThunks(
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations, bool block_host_until_done,
     HloExecutionProfile* hlo_execution_profile) {
-  GpuDebugInfoManager::Get()->OnModuleStart(module().name());
-  auto cleanup = MakeCleanup(
-      [&]() { GpuDebugInfoManager::Get()->OnModuleStop(module().name()); });
-
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();
 
@@ -138,10 +109,18 @@ Status GpuExecutable::ExecuteThunks(
     // Annotate execution of this op if tracing was enabled when we started
     // running this module.  If tracing is enabled *while* we're running the
     // module, we won't get any data, but that's probably an OK trade-off.
+    //
+    // TODO(jlebar): Should we cache the results of HloInstruction::ToString(),
+    // since we expect it to be an expensive call?
     absl::optional<ScopedAnnotation> op_annotation;
     CHECK(thunk->hlo_instruction());
     if (scoped_annotation_enabled) {
-      op_annotation.emplace(FindOrDie(thunk_annotations_, thunk));
+      auto hlo = thunk->hlo_instruction();
+      op_annotation.emplace(
+          thunk->hlo_instruction()->ToString(HloPrintOptions::Canonical()),
+          absl::StrCat("#tf_op=", hlo->metadata().op_name(),
+                       ",hlo_op=", hlo->name(),
+                       ",hlo_module=", hlo->GetModule()->name(), "#"));
     }
 
     TF_RETURN_IF_ERROR(thunk->Initialize(*this, executor));
@@ -263,54 +242,38 @@ StatusOr<ScopedShapedBuffer> GpuExecutable::Execute(
   BufferAllocations::Builder buffer_allocations_builder;
   se::StreamExecutor* executor = run_options->stream()->parent();
 
-  const GpuExecutable::BufferAllocToDeviceMemoryMap* globals;
-  {
-    tensorflow::profiler::TraceMe hlo_module_activity(
-        [&] { return std::string("Resolve constant globals"); },
-        tensorflow::profiler::TraceMeLevel::kInfo);
+  TF_ASSIGN_OR_RETURN(auto* const globals, ResolveConstantGlobals(executor));
 
-    TF_ASSIGN_OR_RETURN(globals, ResolveConstantGlobals(executor));
-  }
+  for (BufferAllocation::Index i = 0; i < assignment_->Allocations().size();
+       ++i) {
+    const BufferAllocation& allocation = assignment_->GetAllocation(i);
+    if (allocation.is_entry_computation_parameter()) {
+      auto param_no = allocation.parameter_number();
+      se::DeviceMemoryBase buffer =
+          arguments[param_no]->buffer(allocation.param_shape_index());
 
-  std::unique_ptr<BufferAllocations> buffer_allocations;
-
-  {
-    tensorflow::profiler::TraceMe hlo_module_activity(
-        [&] { return std::string("Build buffer allocations"); },
-        tensorflow::profiler::TraceMeLevel::kInfo);
-
-    for (BufferAllocation::Index i = 0; i < assignment_->Allocations().size();
-         ++i) {
-      const BufferAllocation& allocation = assignment_->GetAllocation(i);
-      if (allocation.is_entry_computation_parameter()) {
-        auto param_no = allocation.parameter_number();
-        se::DeviceMemoryBase buffer =
-            arguments[param_no]->buffer(allocation.param_shape_index());
-
-        // All top-level buffers and sub-buffers must have an explicit, non-null
-        // pointer, except for zero-sized buffers, which may be null.
-        if (buffer.is_null() && buffer.size() > 0) {
-          return FailedPrecondition(
-              "Cannot run XLA computation because pointer to (sub-)buffer at "
-              "index %s of parameter %d was null.  All pointers to "
-              "(sub-)buffers must not be null, unless the (sub-)buffer has "
-              "zero elements.",
-              allocation.param_shape_index().ToString(), param_no);
-        }
-
-        buffer_allocations_builder.RegisterBuffer(i, buffer);
+      // All top-level buffers and sub-buffers must have an explicit, non-null
+      // pointer, except for zero-sized buffers, which may be null.
+      if (buffer.is_null() && buffer.size() > 0) {
+        return FailedPrecondition(
+            "Cannot run XLA computation because pointer to (sub-)buffer at "
+            "index %s of parameter %d was null.  All pointers to (sub-)buffers "
+            "must not be null, unless the (sub-)buffer has zero elements.",
+            allocation.param_shape_index().ToString(), param_no);
       }
 
-      if (allocation.is_constant()) {
-        buffer_allocations_builder.RegisterBuffer(i, FindOrDie(*globals, i));
-      }
+      buffer_allocations_builder.RegisterBuffer(i, buffer);
     }
 
-    TF_ASSIGN_OR_RETURN(
-        buffer_allocations,
-        buffer_allocations_builder.Build(
-            assignment_.get(), executor->device_ordinal(), memory_allocator));
+    if (allocation.is_constant()) {
+      buffer_allocations_builder.RegisterBuffer(i, FindOrDie(*globals, i));
+    }
   }
+
+  TF_ASSIGN_OR_RETURN(
+      auto buffer_allocations,
+      buffer_allocations_builder.Build(
+          assignment_.get(), executor->device_ordinal(), memory_allocator));
 
   TF_RETURN_IF_ERROR(ExecuteThunks(run_options, *buffer_allocations,
                                    block_host_until_done,
@@ -381,11 +344,8 @@ StatusOr<ScopedShapedBuffer> GpuExecutable::ExecuteOnStream(
     const ServiceExecutableRunOptions* run_options,
     absl::Span<const ShapedBuffer* const> arguments,
     HloExecutionProfile* hlo_execution_profile) {
-  // TODO(b/134086343): ExecuteOnStream should not be async according to the
-  // documentation, instead ExecuteAsyncOnStream should be used.
   return Execute(run_options, arguments, hlo_execution_profile,
-                 /*block_host_until_done=*/
-                 !run_options->allocator()->AllowsAsynchronousDeallocation());
+                 /*block_host_until_done=*/true);
 }
 
 StatusOr<ScopedShapedBuffer> GpuExecutable::ExecuteAsyncOnStream(

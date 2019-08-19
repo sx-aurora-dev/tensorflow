@@ -155,8 +155,6 @@ class AssertNextDatasetOp : public UnaryDatasetOpKernel {
   std::vector<PartialTensorShape> output_shapes_;
 };
 
-REGISTER_KERNEL_BUILDER(Name("AssertNextDataset").Device(DEVICE_CPU),
-                        AssertNextDatasetOp);
 REGISTER_KERNEL_BUILDER(
     Name("ExperimentalAssertNextDataset").Device(DEVICE_CPU),
     AssertNextDatasetOp);

@@ -17,7 +17,6 @@
 
 set -e
 set -x
-MODE=${1:-"mkl"}
 
 N_JOBS=$(grep -c ^processor /proc/cpuinfo)
 
@@ -29,11 +28,6 @@ echo ""
 export TF_NEED_CUDA=0
 export PYTHON_BIN_PATH=`which python2`
 yes "" | $PYTHON_BIN_PATH configure.py
-if [[ "$MODE" == "eigen" ]]; then
-    CONFIG=""
-else
-    CONFIG="--config=mkl"
-fi
 
 # Run bazel test command. Double test timeouts to avoid flakes.
 # Setting KMP_BLOCKTIME to 0 lets OpenMP threads to sleep right after parallel execution
@@ -41,5 +35,5 @@ fi
 # caused by executing multiple tests concurrently.
 bazel test --test_tag_filters=-no_oss,-oss_serial,-gpu,-benchmark-test --test_lang_filters=cc,py -k \
     --jobs=${N_JOBS} --test_timeout 300,450,1200,3600 --build_tests_only \
-    ${CONFIG} --test_env=KMP_BLOCKTIME=0 --config=opt --test_output=errors -- \
+    --config=mkl --test_env=KMP_BLOCKTIME=0 --config=opt --test_output=errors -- \
     //tensorflow/... -//tensorflow/compiler/... -//tensorflow/contrib/... -//tensorflow/lite/...

@@ -27,7 +27,6 @@ import time
 
 import numpy as np
 import six
-from six.moves import zip  # pylint: disable=redefined-builtin
 
 from tensorflow.python import tf2
 from tensorflow.python.data.experimental.ops import cardinality
@@ -382,7 +381,6 @@ def check_num_samples(ins, batch_size=None, steps=None, steps_name='steps'):
                      ' is set, the `batch_size` must be None.')
   if check_steps_argument(ins, steps, steps_name):
     return None
-
   if hasattr(ins[0], 'shape'):
     return int(ins[0].shape[0])
   return None  # Edge case where ins == [static_learning_phase]
@@ -502,8 +500,7 @@ def standardize_input_data(data,
             continue
           data_shape = tuple(tensorshape.as_list())
         elif composite_tensor_utils.is_composite_or_composite_value(data[i]):
-          tensorshape = composite_tensor_utils.get_shape(data[i])
-          data_shape = tuple(tensorshape.as_list())
+          data_shape = composite_tensor_utils.get_shape(data[i])
         else:
           data_shape = data[i].shape
 
@@ -593,10 +590,6 @@ def check_array_lengths(inputs, targets, weights=None):
       ValueError: in case of incorrectly formatted data.
   """
 
-  def is_tensor_or_composite_tensor(x):
-    return tensor_util.is_tensor(
-        x) or composite_tensor_utils.is_composite_or_composite_value(x)
-
   def set_of_lengths(x):
     # Returns a set with the variation between
     # different shapes, with None => 0
@@ -606,7 +599,7 @@ def check_array_lengths(inputs, targets, weights=None):
       return set([
           y.shape[0]
           for y in x
-          if y is not None and not is_tensor_or_composite_tensor(y)
+          if y is not None and not tensor_util.is_tensor(y)
       ])
 
   set_x = set_of_lengths(inputs)
@@ -1122,6 +1115,7 @@ def check_steps_argument(input_data, steps, steps_name):
       ValueError: if `steps` argument is required for given input data type
         but not provided.
   """
+  # TODO(fchollet): allow datasets with steps=None if cardinality is known.
   is_x_iterator = isinstance(
       input_data, (iterator_ops.Iterator, iterator_ops.IteratorV2))
   if (input_data is None or is_x_iterator or has_symbolic_tensors(input_data) or
@@ -1132,18 +1126,6 @@ def check_steps_argument(input_data, steps, steps_name):
                        ' specify the `{steps_name}` argument.'.format(
                            input_type=input_type_str, steps_name=steps_name))
     return True
-
-  if isinstance(input_data, (dataset_ops.DatasetV1, dataset_ops.DatasetV2)):
-    return True
-
-  if steps is not None:
-    list_types = (np.ndarray, list, tuple)
-    if (isinstance(input_data, list_types) or
-        (isinstance(input_data, dict) and
-         any(isinstance(v, list_types) for v in input_data.values()))):
-      logging.warning('When passing input data as arrays, do not specify '
-                      '`steps_per_epoch`/`steps` argument. '
-                      'Please use `batch_size` instead.')
   return False
 
 
@@ -1607,7 +1589,9 @@ class ModelInputs(object):
     # TODO(karmel): There is a side-effect here where what you get
     # with as_list and as_dict depends on whether you have called this
     # method first, since it modifies in place.
-    for i, (k, v) in enumerate(zip(self._input_names, self._flattened_inputs)):
+    for i in range(len(self._flattened_inputs)):
+      k = self._input_names[i]
+      v = self._flattened_inputs[i]
       if isinstance(v, (list, float, int)):
         v = np.asarray(v)
         if v.ndim == 1:
@@ -1619,16 +1603,12 @@ class ModelInputs(object):
         # we have. The user should call `model._set_inputs(placeholders)`
         # to specify custom placeholders if the need arises.
         shape = (None,) + tuple(v.shape[1:])
-        if shape == (None,):
-          shape = (None, 1)
         dtype = dtypes.as_dtype(v.dtype)
         if dtype.is_floating:
           dtype = K.floatx()
         v = K.placeholder(shape=shape, name=k, dtype=dtype)
       elif isinstance(v, tensor_spec.TensorSpec):
         shape = (None,) + tuple(v.shape.as_list()[1:])
-        if shape == (None,):
-          shape = (None, 1)
         v = K.placeholder(shape=shape, name=k, dtype=v.dtype)
 
       self._flattened_inputs[i] = v
@@ -1641,8 +1621,8 @@ class ModelInputs(object):
 
   def as_dict(self):
     """An iterable over a dictionary version of inputs."""
-    for k, v in zip(self._input_names, self._flattened_inputs):
-      yield k, v
+    for i in range(len(self._flattened_inputs)):
+      yield self._input_names[i], self._flattened_inputs[i]
 
   def as_list(self):
     """Returning the inputs as a list."""
@@ -1751,64 +1731,6 @@ def should_run_validation(validation_freq, epoch):
     raise ValueError('`validation_freq` must be an Integer or '
                      '`collections.Container` (e.g. list, tuple, etc.)')
   return one_indexed_epoch in validation_freq
-
-
-def split_training_and_validation_data(x, y, sample_weights, validation_split):
-  """Split input data into train/eval section based on validation_split."""
-  if has_symbolic_tensors(x):
-    raise ValueError('If your data is in the form of symbolic tensors, '
-                     'you cannot use `validation_split`.')
-  if hasattr(x[0], 'shape'):
-    split_at = int(x[0].shape[0] * (1. - validation_split))
-  else:
-    split_at = int(len(x[0]) * (1. - validation_split))
-  x, val_x = (generic_utils.slice_arrays(x, 0, split_at),
-              generic_utils.slice_arrays(x, split_at))
-  y, val_y = (generic_utils.slice_arrays(y, 0, split_at),
-              generic_utils.slice_arrays(y, split_at))
-  if sample_weights:
-    sample_weights, val_sample_weights = (
-        generic_utils.slice_arrays(sample_weights, 0, split_at),
-        generic_utils.slice_arrays(sample_weights, split_at),
-    )
-  else:
-    val_sample_weights = None
-  return x, y, sample_weights, val_x, val_y, val_sample_weights
-
-
-def unpack_validation_data(validation_data):
-  """Unpack validation data based input type.
-
-  The validation data is not touched if its dataset or dataset iterator.
-  For other type of input (Numpy or tensor), it will be unpacked into tuple of
-  3 which is x, y and sample weights.
-
-  Args:
-    validation_data: dataset, dataset iterator, or numpy, tensor tuple.
-
-  Returns:
-    tuple of 3, (x, y, sample_weights) for numpy and tensor input.
-  """
-  if (isinstance(validation_data, (iterator_ops.Iterator,
-                                   iterator_ops.IteratorV2,
-                                   dataset_ops.DatasetV2))):
-    val_x = validation_data
-    val_y = None
-    val_sample_weight = None
-  elif len(validation_data) == 2:
-    val_x, val_y = validation_data  # pylint: disable=unpacking-non-sequence
-    val_sample_weight = None
-  elif len(validation_data) == 3:
-    val_x, val_y, val_sample_weight = validation_data  # pylint: disable=unpacking-non-sequence
-  else:
-    raise ValueError(
-        'When passing a `validation_data` argument, '
-        'it must contain either 2 items (x_val, y_val), '
-        'or 3 items (x_val, y_val, val_sample_weights), '
-        'or alternatively it could be a dataset or a '
-        'dataset or a dataset iterator. '
-        'However we received `validation_data=%s`' % validation_data)
-  return val_x, val_y, val_sample_weight
 
 
 class TrainingLoop(object):

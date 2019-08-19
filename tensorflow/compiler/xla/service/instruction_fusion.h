@@ -27,12 +27,6 @@ limitations under the License.
 
 namespace xla {
 
-enum class FusionConfigCollection {
-  kOff,      // Do not collect configuration.
-  kPerEdge,  // Collect per-edge configuration.
-  kPerNode,  // Collect per-node configuration.
-};
-
 // HLO pass which performs instruction fusion. Instructions are fused
 // "vertically", meaning producing instructions are fused into their consumers
 // with the intent that the loops which compute their values will be fused in
@@ -42,12 +36,8 @@ class InstructionFusion : public HloModulePass {
  public:
   explicit InstructionFusion(
       std::function<bool(const HloInstruction& instruction)> is_expensive,
-      bool may_duplicate = true,
-      FusionConfigCollection config_collection_mode =
-          FusionConfigCollection::kOff)
-      : is_expensive_(is_expensive),
-        may_duplicate_(may_duplicate),
-        config_collection_mode_(config_collection_mode) {}
+      bool may_duplicate = true)
+      : is_expensive_(is_expensive), may_duplicate_(may_duplicate) {}
   ~InstructionFusion() override = default;
   absl::string_view name() const override { return "fusion"; }
 
@@ -131,10 +121,6 @@ class InstructionFusion : public HloModulePass {
   // Reachability information for the current computation.
   std::unique_ptr<HloReachabilityMap> reachability_;
 
-  FusionConfigCollection config_collection_mode() {
-    return config_collection_mode_;
-  }
-
  private:
   // The set of producers whose consumers we cannot fuse into.
   using HloInstructionSet = std::unordered_set<HloInstruction*>;
@@ -165,9 +151,6 @@ class InstructionFusion : public HloModulePass {
 
   // Returns whether we may duplicate an instruction if we want to fuse it.
   bool may_duplicate_;
-
-  // Configuration mode.
-  FusionConfigCollection config_collection_mode_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(InstructionFusion);
 };

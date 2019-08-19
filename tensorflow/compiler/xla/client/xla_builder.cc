@@ -735,15 +735,11 @@ XlaOp XlaBuilder::BroadcastInDim(
   });
 }
 
-StatusOr<XlaOp> XlaBuilder::Reshape(const Shape& shape, XlaOp operand,
-                                    int64 inferred_dimension) {
+StatusOr<XlaOp> XlaBuilder::Reshape(const Shape& shape, const XlaOp& operand) {
   TF_RETURN_IF_ERROR(first_error_);
 
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
-  if (inferred_dimension != -1) {
-    instr.add_dimensions(inferred_dimension);
-  }
   return AddInstruction(std::move(instr), HloOpcode::kReshape, {operand});
 }
 
@@ -918,8 +914,7 @@ XlaOp XlaBuilder::Pad(const XlaOp& operand, const XlaOp& padding_value,
 
 XlaOp XlaBuilder::Reshape(const XlaOp& operand,
                           absl::Span<const int64> dimensions,
-                          absl::Span<const int64> new_sizes,
-                          int64 inferred_dimension) {
+                          absl::Span<const int64> new_sizes) {
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape& operand_shape, GetShape(operand));
     TF_ASSIGN_OR_RETURN(const Shape shape,
@@ -928,18 +923,17 @@ XlaOp XlaBuilder::Reshape(const XlaOp& operand,
     XlaOp transposed = IsIdentityPermutation(dimensions)
                            ? operand
                            : Transpose(operand, dimensions);
-    return Reshape(shape, transposed, inferred_dimension);
+    return Reshape(shape, transposed);
   });
 }
 
 XlaOp XlaBuilder::Reshape(const XlaOp& operand,
-                          absl::Span<const int64> new_sizes,
-                          int64 inferred_dimension) {
+                          absl::Span<const int64> new_sizes) {
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape shape, GetShape(operand));
     std::vector<int64> dimensions(shape.dimensions_size());
     std::iota(dimensions.begin(), dimensions.end(), 0);
-    return Reshape(operand, dimensions, new_sizes, inferred_dimension);
+    return Reshape(operand, dimensions, new_sizes);
   });
 }
 
@@ -1309,13 +1303,14 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const string& config) {
     instr.set_infeed_config(config);
 
     if (shape.IsArray() && sharding() &&
-        sharding()->type() == OpSharding::OTHER) {
+        sharding()->type() == OpSharding::Type::OpSharding_Type_OTHER) {
       // TODO(b/110793772): Support tiled array-shaped infeeds.
       return InvalidArgument(
           "Tiled sharding is not yet supported for array-shaped infeeds");
     }
 
-    if (sharding() && sharding()->type() == OpSharding::REPLICATED) {
+    if (sharding() &&
+        sharding()->type() == OpSharding::Type::OpSharding_Type_REPLICATED) {
       return InvalidArgument(
           "Replicated sharding is not yet supported for infeeds");
     }
@@ -1342,7 +1337,8 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const string& config) {
     // data and a token. For tuple sharding type, the sharding must be changed
     // to accommodate the token.
     XlaOp infeed;
-    if (sharding() && sharding()->type() == OpSharding::TUPLE) {
+    if (sharding() &&
+        sharding()->type() == OpSharding::Type::OpSharding_Type_TUPLE) {
       // TODO(b/80000000): Remove this when clients have been updated to handle
       // tokens.
       OpSharding infeed_instruction_sharding = *sharding();
@@ -1383,13 +1379,14 @@ XlaOp XlaBuilder::InfeedWithToken(const XlaOp& token, const Shape& shape,
     instr.set_infeed_config(config);
 
     if (shape.IsArray() && sharding() &&
-        sharding()->type() == OpSharding::OTHER) {
+        sharding()->type() == OpSharding::Type::OpSharding_Type_OTHER) {
       // TODO(b/110793772): Support tiled array-shaped infeeds.
       return InvalidArgument(
           "Tiled sharding is not yet supported for array-shaped infeeds");
     }
 
-    if (sharding() && sharding()->type() == OpSharding::REPLICATED) {
+    if (sharding() &&
+        sharding()->type() == OpSharding::Type::OpSharding_Type_REPLICATED) {
       return InvalidArgument(
           "Replicated sharding is not yet supported for infeeds");
     }
@@ -1922,6 +1919,8 @@ XlaOp XlaBuilder::ReduceWindow(const XlaOp& operand, const XlaOp& init_value,
                                absl::Span<const int64> window_strides,
                                Padding padding) {
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
+    HloInstructionProto instr;
+
     TF_ASSIGN_OR_RETURN(const Shape& operand_shape, GetShape(operand));
     TF_RETURN_IF_ERROR(
         ValidatePaddingValues(AsInt64Slice(operand_shape.dimensions()),
@@ -2071,7 +2070,7 @@ XlaOp XlaBuilder::CrossReplicaSum(
     }
 
     if (channel_id.has_value()) {
-      instr.set_channel_id(channel_id->handle());
+      instr.set_all_reduce_id(channel_id->handle());
     }
 
     AddCalledComputation(computation, &instr);
@@ -2791,12 +2790,6 @@ XlaOp Reshape(const XlaOp operand, absl::Span<const int64> dimensions,
 
 XlaOp Reshape(const XlaOp operand, absl::Span<const int64> new_sizes) {
   return operand.builder()->Reshape(operand, new_sizes);
-}
-
-XlaOp ReshapeWithInferredDimension(const XlaOp& operand,
-                                   absl::Span<const int64> new_sizes,
-                                   int64 inferred_dimension) {
-  return operand.builder()->Reshape(operand, new_sizes, inferred_dimension);
 }
 
 XlaOp Collapse(const XlaOp operand, absl::Span<const int64> dimensions) {

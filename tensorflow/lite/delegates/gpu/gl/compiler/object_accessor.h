@@ -55,14 +55,7 @@ namespace gl {
 class ObjectAccessor : public InlineRewrite {
  public:
   ObjectAccessor(bool is_mali, ParameterAccessor* parameter_accessor)
-      : ObjectAccessor(is_mali, /*sampler_textures=*/false,
-                       parameter_accessor) {}
-
-  ObjectAccessor(bool is_mali, bool sampler_textures,
-                 ParameterAccessor* parameter_accessor)
-      : is_mali_(is_mali),
-        sampler_textures_(sampler_textures),
-        parameter_accessor_(parameter_accessor) {}
+      : is_mali_(is_mali), parameter_accessor_(parameter_accessor) {}
 
   RewriteStatus Rewrite(absl::string_view input, std::string* output) final;
 
@@ -88,7 +81,6 @@ class ObjectAccessor : public InlineRewrite {
   std::unordered_map<std::string, Object> name_to_object_;
 
   const bool is_mali_;
-  const bool sampler_textures_;
   ParameterAccessor* parameter_accessor_;
 };
 

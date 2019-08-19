@@ -1122,7 +1122,6 @@ Status InlineFunctionCalls(const GrapplerItem& item,
   std::unique_ptr<Graph> graph = absl::make_unique<Graph>(flib_def);
 
   GraphConstructorOptions graph_constructor_options;
-  graph_constructor_options.allow_internal_ops = true;
   TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(graph_constructor_options,
                                             item.graph, graph.get()));
 
@@ -1157,7 +1156,7 @@ Status InlineFunctionCalls(const GrapplerItem& item,
       AddStrictInputSemantics(n, graph.get());
       AddFrameForwardingControlEdge(control_flow_info, n, graph.get());
 
-      if (n->IsIfNode()) {
+      if (n->type_string() == "If") {
         TF_RETURN_IF_ERROR(RewriteIfNode(n, graph.get(), flib_def, false));
       } else if (n->type_string() == "Case") {
         TF_RETURN_IF_ERROR(RewriteCaseNode(n, graph.get(), flib_def, false));

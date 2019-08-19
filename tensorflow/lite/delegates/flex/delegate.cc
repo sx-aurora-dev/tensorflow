@@ -39,11 +39,10 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteDelegate* delegate) {
         context->recommended_num_threads);
   }
 
-  auto status = reinterpret_cast<DelegateData*>(delegate->data_)
-                    ->Prepare(session_options);
-  if (!status.ok()) {
-    context->ReportError(context, "Failed to initialize TensorFlow context: %s",
-                         status.error_message().c_str());
+  if (!reinterpret_cast<DelegateData*>(delegate->data_)
+           ->Prepare(session_options)
+           .ok()) {
+    context->ReportError(context, "Failed to initialize TensorFlow context.");
     return kTfLiteError;
   }
 

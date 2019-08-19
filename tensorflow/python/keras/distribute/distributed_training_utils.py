@@ -26,7 +26,6 @@ from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.ops import iterator_ops
 from tensorflow.python.distribute import distribute_coordinator_context as dc_context
 from tensorflow.python.distribute import distribution_strategy_context as ds_context
-from tensorflow.python.distribute import multi_worker_util
 from tensorflow.python.distribute import reduce_util
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
@@ -374,8 +373,8 @@ def _wait_for_variable_initialization(session):
 def init_restore_or_wait_for_variables():
   """Initialize or restore variables or wait for variables to be initialized."""
   session = K._get_session()  # pylint: disable=protected-access
-  if not multi_worker_util.has_worker_context(
-  ) or multi_worker_util.should_load_checkpoint():
+  worker_context = dc_context.get_current_worker_context()
+  if not worker_context or worker_context.experimental_should_init:
     # TODO(yuefengz): if checkpoints exist, restore from checkpoint.
     K._initialize_variables(session)  # pylint: disable=protected-access
   else:
@@ -419,22 +418,6 @@ def is_dataset_shape_fully_defined(dataset):
   shapes = nest.flatten(dataset_ops.get_legacy_output_shapes(dataset))
   unknown_shapes = [s for s in shapes if not s.is_fully_defined()]
   return not unknown_shapes
-
-
-def process_batch_and_step_size(
-    strategy, inputs, batch_size, steps_per_epoch, mode):
-  """Process the batch size and step size based on input and dist strategy."""
-  first_x_value = nest.flatten(inputs)[0]
-  if isinstance(first_x_value, np.ndarray):
-    # Until support for partial batch is implemented across all
-    # functions and distribution strategy, we pass `mode` to selectively
-    # relax the constraint to consume all the training samples.
-    steps_per_epoch, batch_size = get_input_params(strategy,
-                                                   first_x_value,
-                                                   steps_per_epoch,
-                                                   batch_size,
-                                                   mode=mode)
-  return batch_size, steps_per_epoch
 
 
 def get_input_params(distribution_strategy, first_x_value, steps, batch_size,
@@ -572,10 +555,6 @@ def _get_input_from_iterator(iterator, model):
   """Get elements from the iterator and verify the input shape and type."""
   next_element = iterator.get_next()
 
-  # `len(nest.flatten(x))` is going to not count empty elements such as {}.
-  # len(nest.flatten([[0,1,2], {}])) is 3 and not 4.   The `next_element` is
-  # going to get flattened in `_prepare_feed_values` to work around that. Empty
-  # elements are going to get filtered out as part of the flattening.
   if len(nest.flatten(next_element)) == len(model.inputs):
     x = next_element
     y = None
@@ -625,8 +604,6 @@ def _prepare_feed_values(model, inputs, targets, sample_weights, mode):
     # main flow.
     inputs, targets = nest.map_structure(
         training_utils.standardize_single_array, (inputs, targets))
-  else:
-    inputs = training_utils.ModelInputs(inputs).as_list()
 
   if mode == ModeKeys.PREDICT:
     sample_weights = []
@@ -916,7 +893,7 @@ def _make_execution_function_with_cloning(model, mode):
     distributed_function = _make_graph_execution_function(model, mode)
 
   # We cache the distributed execution function on the model since creating
-  # distributed models and execution functions are expensive.
+  # distributed models and exection functions are expensive.
   distributed_model._distributed_function = distributed_function
   distributed_model._recompile_exec_function = False
   return distributed_function
@@ -1121,7 +1098,7 @@ def filter_distributed_callbacks(callbacks_list):
     The list of `Callback` instances that should be run on this worker.
   """
 
-  if not multi_worker_util.in_multi_worker_mode():
+  if not K.in_multi_worker_mode():
     raise ValueError(
         'filter_distributed_callbacks() should only be called when Keras '
         'is in multi worker mode.')

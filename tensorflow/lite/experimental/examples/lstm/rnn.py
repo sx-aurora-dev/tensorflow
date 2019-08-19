@@ -20,7 +20,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from tensorflow.lite.python.op_hint import OpHint
+import tensorflow.lite.python.op_hint as op_hint
 from tensorflow.python.eager import context
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -190,7 +190,7 @@ def dynamic_rnn(cell,
       "parent_last_child_output": parent_last_child_output,
       "internal_children_input_output": internal_children_input_output
   }
-  tflite_wrapper = OpHint(
+  tflite_wrapper = op_hint.OpHint(
       "TfLiteDynamicRnn",
       level=2,
       children_inputs_mappings=inputs_outputs_mappings)

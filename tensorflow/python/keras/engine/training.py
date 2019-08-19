@@ -26,18 +26,15 @@ from tensorflow.python import tf2
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.ops import iterator_ops
 from tensorflow.python.distribute import distribution_strategy_context
-from tensorflow.python.distribute import multi_worker_util
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.eager import monitoring
 from tensorflow.python.framework import composite_tensor_utils
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import sparse_tensor
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import tensor_spec
 from tensorflow.python.framework import tensor_util
-from tensorflow.python.framework import type_spec
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import losses
 from tensorflow.python.keras import metrics as metrics_module
@@ -52,21 +49,17 @@ from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.saving import saving_utils
 from tensorflow.python.keras.utils import data_utils
 from tensorflow.python.keras.utils import losses_utils
+from tensorflow.python.keras.utils.generic_utils import slice_arrays
 from tensorflow.python.keras.utils.mode_keys import ModeKeys
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops.losses import util as tf_losses_utils
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
-from tensorflow.python.training.tracking import layer_utils as trackable_layer_utils
 from tensorflow.python.util import nest
 from tensorflow.python.util import serialization
 from tensorflow.python.util.tf_export import keras_export
 
-try:
-  from scipy.sparse import issparse  # pylint: disable=g-import-not-at-top
-except ImportError:
-  issparse = None
 
 _keras_api_gauge = monitoring.BoolGauge('/tensorflow/api/keras',
                                         'keras api usage', 'method')
@@ -285,9 +278,6 @@ class Model(network.Network):
     # all the model output/target/loss and related metadata.
     self._training_endpoints = []
 
-    # Used to freeze the behavior of the Model once `compile` has been called.
-    self._compiled_trainable_state = self._get_trainable_state()
-
     # Set tf.distribute.Strategy specific parameters.
     self._distributed_model_cache = {}
     self._distributed_function_cache = {}
@@ -380,25 +370,14 @@ class Model(network.Network):
     metrics = []
     if self._is_compiled:
       metrics += self._compile_metric_functions
-    metrics.extend(self._metrics)
-    metrics.extend(_get_metrics_from_layers(self._layers))
-    return metrics
+    return metrics + super(Model, self).metrics
 
   @property
   def metrics_names(self):
     """Returns the model's display labels for all outputs."""
-    metrics_names = ['loss']
+    metrics_names = []
     if self._is_compiled:
-      # Add output loss metric names to the metric names list.
-      if len(self._training_endpoints) > 1:
-        metrics_names.extend([
-            e.loss_name()
-            for e in self._training_endpoints
-            if not e.should_skip_target()
-        ])
-
-      # Add compile metrics/weighted metrics' names to the metric names list.
-      metrics_names.extend([m.name for m in self._compile_metric_functions])
+      metrics_names += self._compile_metrics_names  # Includes names of losses.
 
     # Add metric names from layers.
     for layer in self.layers:
@@ -453,7 +432,7 @@ class Model(network.Network):
     """Select training loop for fit/eval/predict based on the inputs."""
     # Case 1: distribution strategy.
     if self._distribution_strategy:
-      if multi_worker_util.in_multi_worker_mode():
+      if K.in_multi_worker_mode():
         return training_distributed.DistributionMultiWorkerTrainingLoop()
       else:
         return training_distributed.DistributionSingleWorkerTrainingLoop()
@@ -594,7 +573,6 @@ class Model(network.Network):
             the batch size, or 1 if that cannot be determined. If x is a
             `tf.data` dataset or a dataset iterator, and 'steps_per_epoch'
             is None, the epoch will run until the input dataset is exhausted.
-            This argument is not supported with array inputs.
         validation_steps: Only relevant if `validation_data` is provided and
             is a dataset or dataset iterator. Total number of steps (batches of
             samples) to draw before stopping when performing validation
@@ -727,7 +705,6 @@ class Model(network.Network):
             Ignored with the default value of `None`.
             If x is a `tf.data` dataset or a dataset iterator, and `steps` is
             None, 'evaluate' will run until the dataset is exhausted.
-            This argument is not supported with array inputs.
         callbacks: List of `keras.callbacks.Callback` instances.
             List of callbacks to apply during evaluation.
             See [callbacks](/api_docs/python/tf/keras/callbacks).
@@ -848,9 +825,14 @@ class Model(network.Network):
 
   def reset_metrics(self):
     """Resets the state of metrics."""
-    metrics = self._get_training_eval_metrics()
-    for m in metrics:
-      m.reset_states()
+    if hasattr(self, 'metrics'):
+      for m in self.metrics:
+        m.reset_states()
+
+    # Reset the state of loss metric wrappers.
+    if getattr(self, '_output_loss_metrics', None) is not None:
+      for m in self._output_loss_metrics:
+        m.reset_states()
 
     # Reset metrics on all the distributed (cloned) models.
     if self._distribution_strategy:
@@ -1318,10 +1300,31 @@ class Model(network.Network):
         verbose=verbose,
         callbacks=callbacks)
 
+  def _split_training_and_validation_data(self, x, y, sample_weights,
+                                          validation_split):
+    """Split input data into train/eval section based on validation_split."""
+    if training_utils.has_symbolic_tensors(x):
+      raise ValueError('If your data is in the form of symbolic tensors, '
+                       'you cannot use `validation_split`.')
+    if hasattr(x[0], 'shape'):
+      split_at = int(x[0].shape[0] * (1. - validation_split))
+    else:
+      split_at = int(len(x[0]) * (1. - validation_split))
+    x, val_x = (slice_arrays(x, 0, split_at), slice_arrays(x, split_at))
+    y, val_y = (slice_arrays(y, 0, split_at), slice_arrays(y, split_at))
+    if sample_weights:
+      sample_weights, val_sample_weights = (
+          slice_arrays(sample_weights, 0, split_at),
+          slice_arrays(sample_weights, split_at),
+      )
+    else:
+      val_sample_weights = None
+    return x, y, sample_weights, val_x, val_y, val_sample_weights
+
   def _prepare_validation_data(self, validation_data, batch_size,
                                validation_steps):
     """Unpack and check the validation data."""
-    val_x, val_y, val_sample_weights = training_utils.unpack_validation_data(
+    val_x, val_y, val_sample_weights = self._unpack_validation_data(
         validation_data)
     return self._standardize_user_data(
         val_x,
@@ -1576,7 +1579,8 @@ class Model(network.Network):
 
         if len(self.outputs) > 1:
           # Keep track of stateful result tensor for the loss.
-          endpoint.output_loss_metric(output_loss)
+          aggregated_output_loss = endpoint.output_loss_metric(output_loss)
+          self._compile_metrics_tensors[loss_name] = aggregated_output_loss
 
         # Scale output loss for distribution. For custom losses we assume
         # reduction was mean.
@@ -1759,17 +1763,35 @@ class Model(network.Network):
       metric_name = '%s_%s' % (self.output_names[output_index], metric_name)
     j = 1
     base_metric_name = metric_name
-    while metric_name in self.metrics_names:
+    while metric_name in self._compile_metrics_names:
       metric_name = '%s_%d' % (base_metric_name, j)
       j += 1
 
     return metric_name
 
+  @property
+  def _all_metrics_tensors(self):
+    """Returns a dictionary that maps metric names to metric result tensors.
+
+    This maps metric names from `model.metric_names` to result tensors.
+    Just like model.metric_names, this includes loss names and tensors.
+    """
+    metrics_tensors = {}
+    if self._is_compiled:
+      metrics_tensors.update(self._compile_metrics_tensors)
+    metrics_tensors.update(super(Model, self)._all_metrics_tensors)
+    return metrics_tensors
+
   def _init_metric_attributes(self):
     """Initialized model metric attributes."""
+    # List of all metric names in the model. This includes loss metrics.
+    self._compile_metrics_names = ['loss']
     # List of stateful metric functions. Used for resetting metric state during
-    # training/eval.
+    # training/eval. This includes loss metric functions.
     self._compile_metric_functions = []
+    # Dict of all aggregated metric result tensors. This includes aggregated
+    # loss result tensors.
+    self._compile_metrics_tensors = {}
 
   def _set_per_output_metric_attributes(self, metrics_dict, output_index):
     """Sets the metric attributes on the model for the given output.
@@ -1790,11 +1812,20 @@ class Model(network.Network):
       metric_fn._name = metric_name  # pylint: disable=protected-access
       updated_metrics_dict[metric_name] = metric_fn
       # Keep track of metric name and function.
+      self._compile_metrics_names.append(metric_name)
       self._compile_metric_functions.append(metric_fn)
     return updated_metrics_dict
 
   def _set_metric_attributes(self):
     """Sets the metric attributes on the model for all the model outputs."""
+    # Add loss metric names to the model metric names list.
+    if len(self._training_endpoints) > 1:
+      metric_names = [
+          e.loss_name() for e in self._training_endpoints
+          if not e.should_skip_target()
+      ]
+      self._compile_metrics_names.extend(metric_names)
+
     updated_per_output_metrics = []
     updated_per_output_weighted_metrics = []
     for i, endpoint in enumerate(self._training_endpoints):
@@ -1815,9 +1846,7 @@ class Model(network.Network):
     # batch).
     if len(self._training_endpoints) > 1:
       for endpoint in self._training_endpoints:
-        if not endpoint.should_skip_target():
-          endpoint.output_loss_metric = metrics_module.Mean(
-              name=endpoint.loss_name())
+        endpoint.output_loss_metric = metrics_module.Mean()
 
     self._per_output_metrics = updated_per_output_metrics
     self._per_output_weighted_metrics = updated_per_output_weighted_metrics
@@ -1846,6 +1875,9 @@ class Model(network.Network):
         metric_result = training_utils.call_metric_function(
             metric_fn, y_true, y_pred, weights=weights, mask=mask)
         metric_results.append(metric_result)
+        if not self.run_eagerly:
+          self._compile_metrics_tensors[metric_name] = metric_result
+
     return metric_results
 
   def _handle_metrics(self,
@@ -1924,15 +1956,14 @@ class Model(network.Network):
 
   def _make_train_function(self):
     has_recompiled = self._recompile_weights_loss_and_weighted_metrics()
+    metrics_tensors = [
+        self._all_metrics_tensors[m] for m in self.metrics_names[1:]
+    ]
     self._check_trainable_weights_consistency()
     # If we have re-compiled the loss/weighted metric sub-graphs then create
     # train function even if one exists already. This is because
     # `_feed_sample_weights` list has been updated on re-copmpile.
-    if getattr(self, 'train_function', None) is None or has_recompiled:
-      # Restore the compiled trainable state.
-      current_trainable_state = self._get_trainable_state()
-      self._set_trainable_state(self._compiled_trainable_state)
-
+    if getattr(self, 'train_function') is None or has_recompiled:
       inputs = (self._feed_inputs +
                 self._feed_targets +
                 self._feed_sample_weights)
@@ -1944,15 +1975,10 @@ class Model(network.Network):
           # Training updates
           updates = self.optimizer.get_updates(
               params=self._collected_trainable_weights, loss=self.total_loss)
-          # Unconditional updates
-          updates += self.get_updates_for(None)
-          # Conditional updates relevant to this model
-          updates += self.get_updates_for(self.inputs)
-
-        metrics = self._get_training_eval_metrics()
-        metrics_tensors = [
-            m._call_result for m in metrics if hasattr(m, '_call_result')  # pylint: disable=protected-access
-        ]
+      # Unconditional updates
+      updates += self.get_updates_for(None)
+      # Conditional updates relevant to this model
+      updates += self.get_updates_for(self.inputs)
 
       with K.name_scope('training'):
         # Gets loss and metrics. Updates weights at each call.
@@ -1963,24 +1989,18 @@ class Model(network.Network):
             **self._function_kwargs)
         setattr(self, 'train_function', fn)
 
-      # Restore the current trainable state
-      self._set_trainable_state(current_trainable_state)
-
   def _make_test_function(self):
     has_recompiled = self._recompile_weights_loss_and_weighted_metrics()
+    metrics_tensors = [
+        self._all_metrics_tensors[m] for m in self.metrics_names[1:]
+    ]
     # If we have re-compiled the loss/weighted metric sub-graphs then create
     # test function even if one exists already. This is because
     # `_feed_sample_weights` list has been updated on re-copmpile.
-    if getattr(self, 'test_function', None) is None or has_recompiled:
+    if getattr(self, 'test_function') is None or has_recompiled:
       inputs = (self._feed_inputs +
                 self._feed_targets +
                 self._feed_sample_weights)
-
-      with K.get_graph().as_default():
-        metrics = self._get_training_eval_metrics()
-        metrics_tensors = [
-            m._call_result for m in metrics if hasattr(m, '_call_result')  # pylint: disable=protected-access
-        ]
 
       with K.name_scope('evaluation'):
         updates = self.state_updates
@@ -2413,31 +2433,6 @@ class Model(network.Network):
           check_batch_axis=False,  # Don't enforce the batch size.
           exception_prefix='input')
 
-    # Get typespecs for the input data and sanitize it if necessary.
-    # TODO(momernick): This should be capable of doing full input validation
-    # at all times - validate that this is so and refactor the standardization
-    # code.
-    if isinstance(x, dataset_ops.DatasetV2):
-      x_shapes = dataset_ops.get_structure(x)
-      if isinstance(x_shapes, tuple):
-        # If the output of a Dataset is a tuple, we assume it's either of the
-        # form (x_data, y_data) or (x_data, y_data, sample_weights). In either
-        # case, we only care about x_data here.
-        x_shapes = x_shapes[0]
-    else:
-      flat_inputs = nest.flatten(x, expand_composites=False)
-      flat_expected_inputs = nest.flatten(self.inputs, expand_composites=False)
-      converted_x = []
-      for (a, b) in zip(flat_inputs, flat_expected_inputs):
-        converted_x.append(_convert_scipy_sparse_tensor(a, b))
-      x = nest.pack_sequence_as(x, converted_x, expand_composites=False)
-      x_shapes = nest.map_structure(type_spec.type_spec_from_value, x)
-
-    flat_inputs = nest.flatten(x_shapes, expand_composites=False)
-    flat_expected_inputs = nest.flatten(self.inputs, expand_composites=False)
-    for (a, b) in zip(flat_inputs, flat_expected_inputs):
-      nest.assert_same_structure(a, b, expand_composites=True)
-
     if y is not None:
       if not self._is_graph_network:
         feed_output_names = self._feed_output_names
@@ -2507,6 +2502,28 @@ class Model(network.Network):
       x = dict(zip(feed_input_names, x))
     return x, y, sample_weights
 
+  def _unpack_validation_data(self, validation_data):
+    if (isinstance(validation_data, (iterator_ops.Iterator,
+                                     iterator_ops.IteratorV2,
+                                     dataset_ops.DatasetV2))):
+      val_x = validation_data
+      val_y = None
+      val_sample_weight = None
+    elif len(validation_data) == 2:
+      val_x, val_y = validation_data  # pylint: disable=unpacking-non-sequence
+      val_sample_weight = None
+    elif len(validation_data) == 3:
+      val_x, val_y, val_sample_weight = validation_data  # pylint: disable=unpacking-non-sequence
+    else:
+      raise ValueError(
+          'When passing a `validation_data` argument, '
+          'it must contain either 2 items (x_val, y_val), '
+          'or 3 items (x_val, y_val, val_sample_weights), '
+          'or alternatively it could be a dataset or a '
+          'dataset or a dataset iterator. '
+          'However we received `validation_data=%s`' % validation_data)
+    return val_x, val_y, val_sample_weight
+
   # TODO(omalleyt): Consider changing to a more descriptive function name.
   def _set_inputs(self, inputs, outputs=None, training=None):
     """Set model's input and output specs based on the input data received.
@@ -2537,14 +2554,7 @@ class Model(network.Network):
     inputs = self._set_input_attrs(inputs)
 
     if outputs is None:
-      kwargs = {}
-      if self._expects_training_arg:
-        # In V2 mode, feeding `training=None` is not allowed because any value
-        # explicitly passed by the user is respected, even `None`.`
-        if training is None and not ops.executing_eagerly_outside_functions():
-          training = K.learning_phase()
-        if training is not None:
-          kwargs['training'] = training
+      kwargs = {'training': training} if self._expects_training_arg else {}
       try:
         outputs = self(inputs, **kwargs)
       except NotImplementedError:
@@ -2691,19 +2701,6 @@ class Model(network.Network):
       return self._training_state.maybe_load_initial_epoch_from_ckpt(
           initial_epoch, mode)
     return initial_epoch
-
-  def _get_training_eval_metrics(self):
-    """Returns all the metrics that are to be reported.
-
-    This includes the output loss metrics, compile metrics/weighted metrics,
-    add_metric metrics.
-    """
-    metrics = []
-    if getattr(self, '_output_loss_metrics', None) is not None:
-      metrics.extend(self._output_loss_metrics)
-    if hasattr(self, 'metrics'):
-      metrics.extend(self.metrics)
-    return metrics
 
   @property
   def _object_identifier(self):
@@ -3034,58 +3031,3 @@ class _TrainingTarget(object):
 
 def _is_symbolic_tensor(x):
   return tensor_util.is_tensor(x) and not isinstance(x, ops.EagerTensor)
-
-
-def _convert_scipy_sparse_tensor(value, expected_input):
-  """Handle scipy sparse tensor conversions.
-
-  This method takes a value 'value' and returns the proper conversion. If
-  value is a scipy sparse tensor and the expected input is a dense tensor,
-  we densify 'value'. If value is a scipy sparse tensor and the expected input
-  is a TF SparseTensor, we convert 'value' to a SparseTensor. If 'value' is
-  not a scipy sparse tensor, or scipy is not imported, we pass it through
-  unchanged.
-
-  Arguments:
-    value: An object that may be a scipy sparse tensor
-    expected_input: The expected input placeholder.
-
-  Returns:
-    The possibly-converted 'value'.
-  """
-  if issparse is not None and issparse(value):
-    if ops.is_dense_tensor_like(expected_input):
-      return value.toarray()
-    else:
-      sparse_coo = value.tocoo()
-      row, col = sparse_coo.row, sparse_coo.col
-      data, shape = sparse_coo.data, sparse_coo.shape
-      indices = np.concatenate((np.expand_dims(row, 1), np.expand_dims(col, 1)),
-                               1)
-      return sparse_tensor.SparseTensor(indices, data, shape)
-  else:
-    return value
-
-
-def _get_metrics_from_layers(layers):
-  """Returns list of metrics from the given layers.
-
-  This will not include the `compile` metrics of a model layer.
-
-  Arguments:
-    layers: List of layers.
-
-  Returns:
-    List of metrics.
-  """
-  metrics = []
-  layers = trackable_layer_utils.filter_empty_layer_containers(layers)
-  for layer in layers:
-    if isinstance(layer, Model):
-      # We cannot call 'metrics' on the model because we do not want to
-      # include the metrics that were added in compile API of a nested model.
-      metrics.extend(layer._metrics)  # pylint: disable=protected-access
-      metrics.extend(_get_metrics_from_layers(layer.layers))
-    else:
-      metrics.extend(layer.metrics)
-  return metrics

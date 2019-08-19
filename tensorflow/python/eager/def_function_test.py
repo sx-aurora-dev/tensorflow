@@ -458,7 +458,6 @@ class DefFunctionTest(test.TestCase):
     # function itself is not involved in a reference cycle.
     self.assertIs(None, weak_fn())
 
-  @test_util.assert_no_new_pyobjects_executing_eagerly
   def testErrorMessageWhenGraphTensorIsPassedToEager(self):
 
     @def_function.function

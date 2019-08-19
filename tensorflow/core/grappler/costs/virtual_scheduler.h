@@ -335,15 +335,13 @@ class VirtualScheduler {
   // Like the above, but writes detailed stats to RunMetadata.
   // If metadata is nullptr, then just calls and return Summary().
   Costs Summary(RunMetadata* metadata);
-  // Generates RunMetadata's step_stats and partition_graphs fields from results
+  // Generate RunMetadata's step_stats and partition_graphs fields from results
   // of the virtual execution of the graph.
   void GenerateRunMetadata(RunMetadata* metadata);
 
-  // Returns per device memory usage.
+  // Return per device peak memory usage.
   const std::unordered_map<string, int64> GetPeakMemoryUsage() const;
-  const std::unordered_map<string, int64> GetPersistentMemoryUsage() const;
 
-  // Returns VirtualScheduler (read only) device and node states.
   const std::unordered_map<string, DeviceState>* GetDeviceStates() const {
     return &device_;
   }

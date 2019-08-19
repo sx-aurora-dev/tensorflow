@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Tests for ragged.squeeze."""
+"""Tests for ragged.size."""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -27,11 +27,12 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops.ragged import ragged_conversion_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_squeeze_op
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedSqueezeTest(test_util.TensorFlowTestCase,
+class RaggedSqueezeTest(ragged_test_util.RaggedTensorTestCase,
                         parameterized.TestCase):
 
   @parameterized.parameters([
@@ -51,7 +52,7 @@ class RaggedSqueezeTest(test_util.TensorFlowTestCase,
     rt = ragged_squeeze_op.squeeze(
         ragged_factory_ops.constant(input_list), squeeze_ranks)
     dt = array_ops.squeeze(constant_op.constant(input_list), squeeze_ranks)
-    self.assertAllEqual(ragged_conversion_ops.to_tensor(rt), dt)
+    self.assertRaggedEqual(ragged_conversion_ops.to_tensor(rt), dt)
 
   @parameterized.parameters([
       {
@@ -111,7 +112,7 @@ class RaggedSqueezeTest(test_util.TensorFlowTestCase,
     rt = ragged_squeeze_op.squeeze(
         ragged_factory_ops.constant(input_list), squeeze_ranks)
     dt = array_ops.squeeze(constant_op.constant(input_list), squeeze_ranks)
-    self.assertAllEqual(ragged_conversion_ops.to_tensor(rt), dt)
+    self.assertRaggedEqual(ragged_conversion_ops.to_tensor(rt), dt)
 
   @parameterized.parameters([
       # ragged_conversion_ops.from_tensor does not work for this
@@ -166,7 +167,7 @@ class RaggedSqueezeTest(test_util.TensorFlowTestCase,
     rt = ragged_conversion_ops.from_tensor(dt)
     rt_s = ragged_squeeze_op.squeeze(rt, squeeze_ranks)
     dt_s = array_ops.squeeze(dt, squeeze_ranks)
-    self.assertAllEqual(ragged_conversion_ops.to_tensor(rt_s), dt_s)
+    self.assertRaggedEqual(ragged_conversion_ops.to_tensor(rt_s), dt_s)
 
   @parameterized.parameters([
       {
@@ -184,7 +185,7 @@ class RaggedSqueezeTest(test_util.TensorFlowTestCase,
     rt = ragged_factory_ops.constant(input_list)
     rt_s = ragged_squeeze_op.squeeze(rt, squeeze_ranks)
     ref = ragged_factory_ops.constant(output_list)
-    self.assertAllEqual(rt_s, ref)
+    self.assertRaggedEqual(rt_s, ref)
 
   def test_passing_text(self):
     rt = ragged_factory_ops.constant([[[[[[[['H']], [['e']], [['l']], [['l']],
@@ -201,7 +202,7 @@ class RaggedSqueezeTest(test_util.TensorFlowTestCase,
                     ['M', 'e', 'h', 'r', 'd', 'a', 'd'], ['.']]]
     ref = ragged_factory_ops.constant(output_list)
     rt_s = ragged_squeeze_op.squeeze(rt, [0, 1, 3, 6, 7])
-    self.assertAllEqual(rt_s, ref)
+    self.assertRaggedEqual(rt_s, ref)
 
   @parameterized.parameters([
       {

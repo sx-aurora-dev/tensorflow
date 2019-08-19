@@ -122,7 +122,7 @@ bool IsMoveOperator(OperatorType optype) {
 
     element_op->inputs[0] = input_name;
     element_op->outputs[0] = new_intermediate_name;
-    DeleteArrayIfUnused(intermediate_name, model);
+    model->EraseArray(intermediate_name);
     move_op->inputs[0] = new_intermediate_name;
     move_op->outputs[0] = output_name;
   } else {

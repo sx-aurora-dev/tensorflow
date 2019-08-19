@@ -28,11 +28,12 @@ from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_gather_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedGatherNdOpTest(test_util.TensorFlowTestCase,
+class RaggedGatherNdOpTest(ragged_test_util.RaggedTensorTestCase,
                            parameterized.TestCase):
 
   DOCSTRING_PARAMS = [[['000', '001'], ['010']],
@@ -201,7 +202,7 @@ class RaggedGatherNdOpTest(test_util.TensorFlowTestCase,
   ])  # pyformat: disable
   def testRaggedGatherNd(self, descr, params, indices, expected):
     result = ragged_gather_ops.gather_nd(params, indices)
-    self.assertAllEqual(result, expected)
+    self.assertRaggedEqual(result, expected)
 
   def testRaggedGatherNdUnknownRankError(self):
     if context.executing_eagerly():

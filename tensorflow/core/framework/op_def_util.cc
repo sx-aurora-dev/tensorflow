@@ -254,7 +254,7 @@ Status ValidateOpDef(const OpDef& op_def) {
   if (!absl::StartsWith(op_def.name(), "_")) {
     VALIDATE(Scanner(op_def.name())
                  .One(Scanner::UPPERLETTER)
-                 .Any(Scanner::LETTER_DIGIT_UNDERSCORE)
+                 .Any(Scanner::LETTER_DIGIT)
                  .Eos()
                  .GetResult(),
              "Invalid name: ", op_def.name(), " (Did you use CamelCase?)");

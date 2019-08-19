@@ -24,11 +24,12 @@ from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import test_util
 from tensorflow.python.ops.ragged import ragged_concat_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedStackOpTest(test_util.TensorFlowTestCase,
+class RaggedStackOpTest(ragged_test_util.RaggedTensorTestCase,
                         parameterized.TestCase):
 
   @parameterized.parameters(
@@ -334,7 +335,7 @@ class RaggedStackOpTest(test_util.TensorFlowTestCase,
       self.assertEqual(stacked.ragged_rank, expected_ragged_rank)
     if expected_shape is not None:
       self.assertEqual(stacked.shape.as_list(), expected_shape)
-    self.assertAllEqual(stacked, expected)
+    self.assertRaggedEqual(stacked, expected)
 
   @parameterized.parameters(
       dict(
@@ -371,7 +372,7 @@ class RaggedStackOpTest(test_util.TensorFlowTestCase,
     """
     rt_inputs = ragged_factory_ops.constant([[1, 2], [3, 4]])
     stacked = ragged_concat_ops.stack(rt_inputs, 0)
-    self.assertAllEqual(stacked, [[[1, 2], [3, 4]]])
+    self.assertRaggedEqual(stacked, [[[1, 2], [3, 4]]])
 
 
 if __name__ == '__main__':

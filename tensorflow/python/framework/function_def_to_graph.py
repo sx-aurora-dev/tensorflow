@@ -29,7 +29,7 @@ from tensorflow.python.framework import versions
 from tensorflow.python.framework.func_graph import FuncGraph
 
 
-def function_def_to_graph(fdef, input_shapes=None, copy_functions=True):
+def function_def_to_graph(fdef, input_shapes=None):
   """Converts a FunctionDef to a FuncGraph (sub-class Graph).
 
   The returned FuncGraph's `name`, `inputs` and `outputs` fields will be set.
@@ -45,8 +45,6 @@ def function_def_to_graph(fdef, input_shapes=None, copy_functions=True):
       specified, its length must match length of `fdef.signature.input_arg`. If
       a shape is None, the corresponding input placeholder will have unknown
       shape.
-    copy_functions: Whether to copy all functions that exists in default graph
-      (independently of being used or not) to the created FuncGraph.
 
   Returns:
     A FuncGraph.
@@ -57,7 +55,7 @@ def function_def_to_graph(fdef, input_shapes=None, copy_functions=True):
     if input_shapes_attr is not None:
       input_shapes = input_shapes_attr.list.shape
   graph_def, nested_to_flat_tensor_name = function_def_to_graph_def(
-      fdef, input_shapes, copy_functions)
+      fdef, input_shapes)
 
   with func_graph.as_default():
     # Add all function nodes to the graph.
@@ -106,7 +104,7 @@ def _is_function(fname):
     return ops.get_default_graph()._is_function(fname)  # pylint: disable=protected-access
 
 
-def function_def_to_graph_def(fdef, input_shapes=None, copy_functions=True):
+def function_def_to_graph_def(fdef, input_shapes=None):
   """Convert a FunctionDef to a GraphDef.
 
   Steps:
@@ -123,8 +121,6 @@ def function_def_to_graph_def(fdef, input_shapes=None, copy_functions=True):
       function inputs. If specified, its length must match length of
       `fdef.signature.input_arg`. If a shape is None, the corresponding input
       placeholder will have unknown shape.
-    copy_functions: Whether to copy all functions that exists in default graph
-      (independently of being used or not) to the created GraphDef.
 
   Returns:
     A tuple of (GraphDef, dict<string, string>). The dict contains a mapping
@@ -142,8 +138,7 @@ def function_def_to_graph_def(fdef, input_shapes=None, copy_functions=True):
 
   # Copy *all* functions from outer graph to `graph_def` so that both direct
   # and indirect references are safely handled.
-  if copy_functions:
-    ops.get_default_graph()._copy_functions_to_graph_def(graph_def, 0)  # pylint: disable=protected-access
+  ops.get_default_graph()._copy_functions_to_graph_def(graph_def, 0)  # pylint: disable=protected-access
 
   if input_shapes and len(input_shapes) != len(fdef.signature.input_arg):
     raise ValueError("Length of input_shapes must match the number of " +

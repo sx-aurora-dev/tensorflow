@@ -46,7 +46,7 @@ class BatchTest(test_base.DatasetTestBase, parameterized.TestCase):
       ('uneven_without_remainder', 28, 15, True),
       ('empty', 0, 14, False),
   )
-  def testBasic(self, count, batch_size, drop_remainder):
+  def testBatchDataset(self, count, batch_size, drop_remainder):
     """Tests the batch dataset logic for various input configurations.
 
     Args:
@@ -95,22 +95,12 @@ class BatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     with self.assertRaises(errors.OutOfRangeError):
       result = self.evaluate(get_next())
 
-  def testInvalidBatchSize(self):
+  def testBatchDatasetInvalidBatchSize(self):
     with self.assertRaises(errors.InvalidArgumentError):
       dataset = (dataset_ops.Dataset.range(10).batch(0))
       self.evaluate(dataset._variant_tensor)
 
-  def testDataset(self):
-
-    def map_fn(i):
-      return dataset_ops.Dataset.from_tensors(i)
-
-    dataset = dataset_ops.Dataset.range(10).map(map_fn).batch(5)
-    dataset = dataset.map(lambda x: x)
-    dataset = dataset.unbatch().flat_map(lambda x: x)
-    self.assertDatasetProduces(dataset, expected_output=range(10))
-
-  def testSparse(self):
+  def testBatchSparse(self):
 
     def _sparse(i):
       return sparse_tensor.SparseTensorValue(
@@ -125,7 +115,7 @@ class BatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     ]
     self.assertDatasetProduces(dataset, expected_output=expected_output)
 
-  def testSparseWithDifferentDenseShapes(self):
+  def testBatchSparseWithDifferentDenseShapes(self):
 
     def _sparse(i):
       return sparse_tensor.SparseTensorValue(
@@ -150,7 +140,7 @@ class BatchTest(test_base.DatasetTestBase, parameterized.TestCase):
               dense_shape=[5, (i + 1) * 5 - 1]))
     self.assertDatasetProduces(dataset, expected_output=expected_output)
 
-  def testSparseNested(self):
+  def testNestedBatchSparse(self):
 
     def _sparse(i):
       return sparse_tensor.SparseTensorValue(
@@ -166,7 +156,7 @@ class BatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     ]
     self.assertDatasetProduces(dataset, expected_output=expected_output)
 
-  def testShapeError(self):
+  def testBatchShapeError(self):
 
     def generator():
       yield [1.0, 2.0, 3.0]
@@ -184,7 +174,7 @@ class BatchTest(test_base.DatasetTestBase, parameterized.TestCase):
             r'element had shape \[3\] and element 2 had shape \[4\].'))
 
   # Ragged Tensors.
-  def testRagged(self):
+  def testBatchRagged(self):
 
     def _ragged(i):
       return ragged_tensor.RaggedTensor.from_tensor(i * [[1]])
@@ -196,7 +186,7 @@ class BatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     ]
     self.assertDatasetProduces(dataset, expected_output=expected_output)
 
-  def testRaggedWithDifferentShapes(self):
+  def testBatchRaggedWithDifferentShapes(self):
     dataset = dataset_ops.Dataset.range(10).map(ragged_math_ops.range).batch(5)
     expected_output = [
         ragged_concat_ops.stack([ragged_math_ops.range(i) for i in range(5)]),
@@ -205,7 +195,7 @@ class BatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     ]
     self.assertDatasetProduces(dataset, expected_output=expected_output)
 
-  def testRaggedNested(self):
+  def testNestedBatchRagged(self):
 
     def _ragged(i):
       return ragged_tensor.RaggedTensor.from_tensor(i * [[1]])

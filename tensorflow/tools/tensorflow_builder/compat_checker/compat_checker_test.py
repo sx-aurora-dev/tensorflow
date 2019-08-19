@@ -73,6 +73,10 @@ class CompatCheckerTest(unittest.TestCase):
     super(CompatCheckerTest, self).setUp()
     self.test_file = os.path.join(PATH_TO_DIR, "test_config.ini")
 
+  def testDown(self):
+    """Tear down test."""
+    super(CompatCheckerTest, self).tearDown()
+
   def testWithUserConfigInRange(self):
     """Test a set of configs that are supported.
 

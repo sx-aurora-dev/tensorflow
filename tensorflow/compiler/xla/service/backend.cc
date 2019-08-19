@@ -137,7 +137,7 @@ Backend::Backend(se::Platform* platform, Compiler* compiler,
   if (platform->id() == se::host::kHostPlatformId) {
     const int num_threads = intra_op_parallelism_threads > 0
                                 ? intra_op_parallelism_threads
-                                : tensorflow::port::MaxParallelism();
+                                : tensorflow::port::NumSchedulableCPUs();
     intra_op_thread_pool_.reset(new IntraOpThreadPool(num_threads));
   }
 }

@@ -2,9 +2,7 @@
 # TensorFlow is a computational framework, primarily for use in machine
 # learning applications.
 
-package(
-    licenses = ["notice"],  # Apache 2.0
-)
+licenses(["notice"])  # Apache 2.0
 
 sh_binary(
     name = "parallel_gpu_execute",

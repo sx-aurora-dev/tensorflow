@@ -1,12 +1,12 @@
-load("//tensorflow/core:platform/default/build_config.bzl", "pyx_library")
-load("//tensorflow/compiler/xla:xla.bzl", "xla_python_default_plugins")
-load("//tensorflow:tensorflow.bzl", "tf_pybind_extension")
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
-
 package(
     default_visibility = ["//tensorflow:internal"],
     licenses = ["notice"],  # Apache 2.0
 )
+
+load("//tensorflow/core:platform/default/build_config.bzl", "pyx_library")
+load("//tensorflow/compiler/xla:xla.bzl", "xla_python_default_plugins")
+load("//tensorflow:tensorflow.bzl", "tf_pybind_extension")
+load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 
 py_library(
     name = "xla_client",
@@ -173,7 +173,6 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core/profiler/lib:traceme",
         "//tensorflow/stream_executor:tf_allocator_adapter",
-        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -226,7 +225,6 @@ tf_pybind_extension(
         "//tensorflow/compiler/xla/client/lib:svd",
         "//tensorflow/compiler/xla/service:computation_placer",
         "//tensorflow/compiler/xla/service:hlo",
-        "//tensorflow/compiler/xla/service:hlo_parser",
         "//tensorflow/compiler/xla/service:hlo_graph_dumper",
         "//tensorflow/compiler/xla/service:name_uniquer",
         "//tensorflow/compiler/xla/service:platform_util",

@@ -25,9 +25,8 @@ limitations under the License.
 #include "tensorflow/core/protobuf/rewriter_config.pb.h"
 
 namespace tensorflow {
-class Graph;
-
 namespace grappler {
+class Graph;
 class GraphProperties;
 class NodeMap;
 class ScopedAllocatorOptimizer;

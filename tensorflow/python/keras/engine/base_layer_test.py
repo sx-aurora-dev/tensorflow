@@ -33,7 +33,6 @@ from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
-from tensorflow.python.framework import tensor_spec
 from tensorflow.python.framework import test_util
 from tensorflow.python.keras import keras_parameterized
 from tensorflow.python.keras import testing_utils
@@ -123,11 +122,6 @@ class BaseLayerTest(keras_parameterized.TestCase):
       output_shape = layer.compute_output_shape((None, 10))
       self.assertEqual(layer.build_counter, 1)
       self.assertEqual(output_shape.as_list(), [None, 10])
-      output_signature = layer.compute_output_signature(
-          tensor_spec.TensorSpec(dtype=dtypes.float64, shape=[None, 10]))
-      self.assertEqual(layer.build_counter, 1)
-      self.assertEqual(output_signature.dtype, dtypes.float64)
-      self.assertEqual(output_signature.shape.as_list(), [None, 10])
       layer(np.ones((5, 10)))
       self.assertEqual(layer.build_counter, 1)
 
@@ -473,43 +467,6 @@ class BaseLayerTest(keras_parameterized.TestCase):
         ValueError, 'not compatible with provided weight shape'):
       layer.set_weights([kernel.T, bias])
 
-  def test_get_config_error(self):
-
-    class MyLayer(keras.layers.Layer):
-
-      def __init__(self, my_kwarg='default', **kwargs):
-        super(MyLayer, self).__init__(**kwargs)
-        self.my_kwarg = my_kwarg
-
-    # `__init__` includes kwargs but `get_config` is not overridden, so
-    # an error should be thrown:
-    with self.assertRaises(NotImplementedError):
-      MyLayer('custom').get_config()
-
-    class MyLayerNew(keras.layers.Layer):
-
-      def __init__(self, my_kwarg='default', **kwargs):
-        super(MyLayerNew, self).__init__(**kwargs)
-        self.my_kwarg = my_kwarg
-
-      def get_config(self):
-        config = super(MyLayerNew, self).get_config()
-        config['my_kwarg'] = self.my_kwarg
-        return config
-
-    # Test to make sure that error is not raised if the method call is
-    # from an overridden `get_config`:
-    self.assertEqual(MyLayerNew('custom').get_config()['my_kwarg'], 'custom')
-
-    class MyLayerNew2(keras.layers.Layer):
-
-      def __init__(self, name='MyLayerName', dtype=None, **kwargs):  # pylint:disable=redefined-outer-name
-        super(MyLayerNew2, self).__init__(name=name, dtype=dtype, **kwargs)
-
-    # Check that if the kwargs in `__init__` are base layer constructor
-    # arguments, no error is thrown:
-    self.assertEqual(MyLayerNew2(name='New').get_config()['name'], 'New')
-
 
 class SymbolicSupportTest(test.TestCase):
 
@@ -601,8 +558,7 @@ class SymbolicSupportTest(test.TestCase):
       if hasattr(e, 'ag_error_metadata'):
         self.assertIn('easily_identifiable_name', str(e))
         # See ErrorMetadataBase in autograph/pyct/errors.py
-        # Topmost frame corresponds to `call` itself.
-        function_name = e.ag_error_metadata.translated_stack[-2].function_name
+        function_name = e.ag_error_metadata.translated_stack[-1].function_name
       else:
         tb = traceback.extract_tb(sys.exc_info()[2])
         last_entry = tb[-1]
@@ -836,24 +792,6 @@ class NameScopingTest(keras_parameterized.TestCase):
 
 class AutographControlFlowTest(keras_parameterized.TestCase):
 
-  def test_disabling_in_context_is_matched(self):
-
-    test_obj = self
-
-    class MyLayer(keras.layers.Layer):
-
-      def call(self, inputs, training=None):
-        with test_obj.assertRaisesRegex(TypeError, 'Tensor.*as.*bool'):
-          if constant_op.constant(False):
-            return inputs * 1.
-        return inputs * 0.
-
-    @def_function.function(autograph=False)
-    def test_fn():
-      return MyLayer()(constant_op.constant([[1., 2., 3.]]))
-
-    test_fn()
-
   @parameterized.named_parameters(('eager', True),
                                   ('symbolic', False))
   def test_if_training_pattern_output(self, eager):
@@ -955,7 +893,7 @@ class AutographControlFlowTest(keras_parameterized.TestCase):
     class MyLayer(keras.layers.Layer):
 
       def __init__(self):
-        super(MyLayer, self).__init__(dynamic=eager)
+        super(MyLayer, self).__init__(self, dynamic=eager)
 
       def build(self, input_shape):
         self.counter = self.add_weight(
@@ -993,7 +931,7 @@ class AutographControlFlowTest(keras_parameterized.TestCase):
     class MyLayer(keras.layers.Layer):
 
       def __init__(self):
-        super(MyLayer, self).__init__(dynamic=eager)
+        super(MyLayer, self).__init__(self, dynamic=eager)
 
       def call(self, inputs, training=None):
         if training:
@@ -1044,7 +982,7 @@ class AutographControlFlowTest(keras_parameterized.TestCase):
     class MyLayer(keras.layers.Layer):
 
       def __init__(self):
-        super(MyLayer, self).__init__(dynamic=eager)
+        super(MyLayer, self).__init__(self, dynamic=eager)
 
       def call(self, inputs, training=None):
         if training:

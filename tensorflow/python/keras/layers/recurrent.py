@@ -144,8 +144,7 @@ class StackedRNNCells(Layer):
       input_shape = input_shape[0]
     for cell in self.cells:
       if isinstance(cell, Layer):
-        if not cell.built:
-          cell.build(input_shape)
+        cell.build(input_shape)
       if getattr(cell, 'output_size', None) is not None:
         output_dim = cell.output_size
       elif _is_multiple_state(cell.state_size):
@@ -538,8 +537,7 @@ class RNN(Layer):
 
     # allow cell (if layer) to build before we set or validate state_spec
     if isinstance(self.cell, Layer):
-      if not self.cell.built:
-        self.cell.build(step_input_shape)
+      self.cell.build(step_input_shape)
 
     # set or validate state_spec
     if _is_multiple_state(self.cell.state_size):

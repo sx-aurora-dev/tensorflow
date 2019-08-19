@@ -39,7 +39,7 @@ ENTRY ConvOperation {
 )";
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnUnverifiedModule(hlo_string));
+                          ParseHloString(hlo_string));
 
   HloInstruction* conv = module->entry_computation()->root_instruction();
 

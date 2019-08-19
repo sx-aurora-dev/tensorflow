@@ -28,7 +28,7 @@ typedef Eigen::GpuDevice GPUDevice;
 
 namespace tensorflow {
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 template <typename T>
 void DnnPooling3dOp<T>::Compute(OpKernelContext* context,
@@ -103,7 +103,7 @@ void DnnPooling3dOp<T>::Compute(OpKernelContext* context,
                                       output_desc, &output_data)
                     .ok();
   OP_REQUIRES(context, status,
-              errors::Internal("dnn PoolForward launch failed"));
+              errors::Internal("cudnn PoolForward launch failed"));
 
   if (data_format == FORMAT_NHWC) {
     auto toConstTensor = [](const Tensor& x) -> const Tensor { return x; };
@@ -232,7 +232,7 @@ void DnnPooling3dGradOp<T>::Compute(
                              output_backprop_data, &input_backprop_data)
           .ok();
   OP_REQUIRES(context, status,
-              errors::Internal("dnn PoolBackward launch failed"));
+              errors::Internal("cudnn PoolBackward launch failed"));
 
   if (data_format == FORMAT_NHWC) {
     auto toConstTensor = [](const Tensor& x) -> const Tensor { return x; };
@@ -249,6 +249,6 @@ void DnnPooling3dGradOp<T>::Compute(
 TF_CALL_float(DEFINE_DNN_OPS) TF_CALL_half(DEFINE_DNN_OPS)
 #undef DEFINE_DNN_OPS
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

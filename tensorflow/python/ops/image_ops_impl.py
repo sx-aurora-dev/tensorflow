@@ -488,14 +488,6 @@ def _flip(image, flip_index, scope_name):
 def rot90(image, k=1, name=None):
   """Rotate image(s) counter-clockwise by 90 degrees.
 
-
-  For example:
-  ```python
-  a=tf.constant([[[1],[2]],[[3],[4]]])
-  # rotating `a` counter clockwise by 90 degrees
-  a_rot=tf.image.rot90(a,k=1) #rotated `a`
-  print(a_rot) # [[[2],[4]],[[1],[3]]]
-  ```
   Args:
     image: 4-D Tensor of shape `[batch, height, width, channels]` or 3-D Tensor
       of shape `[height, width, channels]`.
@@ -639,13 +631,6 @@ def central_crop(image, central_fraction):
     image: Either a 3-D float Tensor of shape [height, width, depth], or a 4-D
       Tensor of shape [batch_size, height, width, depth].
     central_fraction: float (0, 1], fraction of size to crop
-  
-  Usage Example:
-    ```python
-    >> import tensorflow as tf
-    >> x = tf.random.normal(shape=(256, 256, 3))
-    >> tf.image.central_crop(x, 0.5)
-    ```
 
   Raises:
     ValueError: if central_crop_fraction is not within (0, 1].
@@ -1209,7 +1194,7 @@ def resize_images_v2(images,
   `tf.image.resize_with_pad`.
 
   When 'antialias' is true, the sampling filter will anti-alias the input image
-  as well as interpolate.  When downsampling an image with [anti-aliasing](
+  as well as interpolate.   When downsampling an image with [anti-aliasing](
   https://en.wikipedia.org/wiki/Spatial_anti-aliasing) the sampling filter
   kernel is scaled in order to properly anti-alias the input image signal.
   'antialias' has no effect when upsampling an image.
@@ -1745,22 +1730,8 @@ def convert_image_dtype(image, dtype, saturate=False, name=None):
 
   Returns:
     `image`, converted to `dtype`.
-  
-  Usage Example:
-    ```python
-    >> import tensorflow as tf
-    >> x = tf.random.normal(shape=(256, 256, 3), dtype=tf.float32)
-    >> tf.image.convert_image_dtype(x, dtype=tf.float16, saturate=False)
-    ```
-    
-  Raises:
-    AttributeError: Raises an attribute error when dtype is neither
-    float nor integer
   """
   image = ops.convert_to_tensor(image, name='image')
-  dtype = dtypes.as_dtype(dtype)
-  if not dtype.is_floating and not dtype.is_integer:
-    raise AttributeError('dtype must be either floating point or integer')
   if dtype == image.dtype:
     return array_ops.identity(image, name=name)
 
@@ -1924,13 +1895,6 @@ def adjust_hue(image, delta, name=None):
 
   Returns:
     Adjusted image(s), same shape and DType as `image`.
-  
-  Usage Example:
-    ```python
-    >> import tensorflow as tf
-    >> x = tf.random.normal(shape=(256, 256, 3))
-    >> tf.image.adjust_hue(x, 0.2)
-    ```
   """
   with ops.name_scope(name, 'adjust_hue', [image]) as name:
     image = ops.convert_to_tensor(image, name='image')
@@ -3678,19 +3642,6 @@ def extract_glimpse(
 
   Returns:
     A `Tensor` of type `float32`.
-
-  Usage Example:
-    ```python
-    BATCH_SIZE = 1
-    IMAGE_HEIGHT = 3
-    IMAGE_WIDTH = 3
-    CHANNELS = 1
-    GLIMPSE_SIZE = (2, 2)
-    image = tf.reshape(tf.range(9, delta=1, dtype=tf.float32),
-      shape=(BATCH_SIZE, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS))
-    output = tf.image.extract_glimpse(image, size=GLIMPSE_SIZE,
-      offsets=[[1, 1]], centered=False, normalized=False)
-     ```
   """
   return gen_image_ops.extract_glimpse(
       input=input,
@@ -3757,19 +3708,6 @@ def extract_glimpse_v2(
 
   Returns:
     A `Tensor` of type `float32`.
-
-  Usage Example:
-    ```python
-    BATCH_SIZE = 1
-    IMAGE_HEIGHT = 3
-    IMAGE_WIDTH = 3
-    CHANNELS = 1
-    GLIMPSE_SIZE = (2, 2)
-    image = tf.reshape(tf.range(9, delta=1, dtype=tf.float32),
-      shape=(BATCH_SIZE, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS))
-    output = tf.image.extract_glimpse(image, size=GLIMPSE_SIZE,
-      offsets=[[1, 1]], centered=False, normalized=False)
-     ```
   """
   return gen_image_ops.extract_glimpse(
       input=input,

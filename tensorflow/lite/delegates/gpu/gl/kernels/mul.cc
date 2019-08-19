@@ -22,7 +22,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/memory/memory.h"
-#include "absl/strings/str_cat.h"
 #include "tensorflow/lite/delegates/gpu/common/status.h"
 #include "tensorflow/lite/delegates/gpu/common/types.h"
 
@@ -34,21 +33,34 @@ namespace {
 class ApplyMask : public NodeShader {
  public:
   static bool IsSupported(const GenerationContext& ctx) {
-    const auto inputs = ctx.graph->FindInputs(ctx.node->id);
-    if (inputs.size() != 2) return false;
-    const auto& shape0 = inputs[0]->tensor.shape;
-    const auto& shape1 = inputs[1]->tensor.shape;
+    auto inputs = ctx.graph->FindInputs(ctx.node->id);
 
-    // [H, W, C] x [H, W, 0][0]
-    if (shape1.c == 1) return true;
+    // Implementation requires 2 input tensors: source and mask.
+    if (inputs.size() != 2) {
+      return false;
+    }
 
-    if (shape0.c != shape1.c) return false;
+    auto src_shape = inputs[0]->tensor.shape;
+    auto mask_shape = inputs[1]->tensor.shape;
 
-    // [H, W, C] x [H, W, C]
-    if (shape0.h == shape1.h && shape0.w == shape1.w) return true;
+    // Height and width dimensions of the two input tensors must be the same.
+    if (src_shape.h != mask_shape.h || src_shape.w != mask_shape.w) {
+      return false;
+    }
 
-    // [H, W, C] x [0, 0, C]
-    return shape1.h == 1 && shape1.w == 1;
+    // Broadcast will be done if mask tensor has 1 channel.
+    if (mask_shape.c == 1) {
+      return true;
+    }
+
+    // Bitwise multiplication will be done if mask tensor has the same amount of
+    // channels as source tensor.
+    if (src_shape.c == mask_shape.c) {
+      return true;
+    }
+
+    // Other cases are not supported.
+    return false;
   }
 
   Status GenerateCode(const GenerationContext& ctx,
@@ -57,20 +69,19 @@ class ApplyMask : public NodeShader {
       return InvalidArgumentError(
           "This case is not supported by apply mask operation");
     }
-    const auto inputs = ctx.graph->FindInputs(ctx.node->id);
-    const auto& shape0 = inputs[0]->tensor.shape;
-    const auto& shape1 = inputs[1]->tensor.shape;
+    auto inputs = ctx.graph->FindInputs(ctx.node->id);
 
-    std::string source = "value_0 = $input_data_0[gid.x, gid.y, gid.z]$ * ";
-    if (shape1.c == 1) {
-      // [H, W, C] x [H, W, 0][0]
-      absl::StrAppend(&source, "$input_data_1[gid.x, gid.y, 0]$.x;");
-    } else if (shape0.h == shape1.h && shape0.w == shape1.w) {
-      // [H, W, C] x [H, W, C]
-      absl::StrAppend(&source, "$input_data_1[gid.x, gid.y, gid.z]$;");
+    std::string source;
+    if (inputs[1]->tensor.shape.c == 1) {
+      // Broadcast case, mask channels size == 1.
+      source =
+          "value_0 = $input_data_0[gid.x, gid.y, gid.z]$ * "
+          "$input_data_1[gid.x, gid.y, 0]$.x;";
     } else {
-      // [H, W, C] x [0, 0, C]
-      absl::StrAppend(&source, "$input_data_1[0, 0, gid.z]$;");
+      // Bitwise multiplication case, src channels size == mask channels size.
+      source =
+          "value_0 = $input_data_0[gid.x, gid.y, gid.z]$ * "
+          "$input_data_1[gid.x, gid.y, 0]$;";
     }
 
     *generated_code = {

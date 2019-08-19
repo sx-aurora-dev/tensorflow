@@ -1,3 +1,12 @@
+package(
+    default_visibility = [
+        "//tensorflow:internal",
+        "//tensorflow_models:__subpackages__",
+    ],
+)
+
+licenses(["notice"])  # Apache 2.0
+
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_cuda_library",
@@ -5,14 +14,6 @@ load(
 load(
     "//tensorflow/core:platform/default/build_config.bzl",
     "tf_additional_profiler_lib_deps",
-)
-
-package(
-    default_visibility = [
-        "//tensorflow:internal",
-        "//tensorflow_models:__subpackages__",
-    ],
-    licenses = ["notice"],  # Apache 2.0
 )
 
 tf_cuda_library(

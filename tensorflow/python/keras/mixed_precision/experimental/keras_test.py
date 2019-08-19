@@ -27,7 +27,6 @@ from tensorflow.python.distribute import distribution_strategy_context
 from tensorflow.python.distribute import mirrored_strategy
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
-from tensorflow.python.eager import def_function
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import test_util
@@ -72,26 +71,21 @@ class AssertTypeLayer(base_layer.Layer):
 class AddLayer(AssertTypeLayer):
   """A layer which adds it's input to a scalar variable."""
 
-  def __init__(self, regularizer=None, use_operator=False, var_name='v',
-               **kwargs):
+  def __init__(self, regularizer=None, use_operator=False, **kwargs):
     """Initializes the AddLayer.
 
     Args:
       regularizer: The regularizer on the scalar variable.
       use_operator: If True, add using the + operator. If False, add using
         tf.add.
-      var_name: The name of the variable. It can be useful to pass a name other
-        than 'v', to test having the attribute name (self.v) being different
-        from the variable name.
       **kwargs: Passed to AssertTypeLayer constructor.
     """
     self._regularizer = regularizer
     self._use_operator = use_operator
-    self._var_name = var_name
     super(AddLayer, self).__init__(**kwargs)
 
   def build(self, _):
-    self.v = self.add_weight(self._var_name, (), initializer='ones',
+    self.v = self.add_weight('v', (), initializer='ones',
                              regularizer=self._regularizer)
     self.built = True
 
@@ -123,14 +117,6 @@ class AddLayerWithoutAutoCast(AddLayer):
     self.assert_input_types(inputs)
     assert self.v.dtype in (dtypes.float32, dtypes.float64)
     return self._add(inputs, math_ops.cast(self.v, inputs.dtype))
-
-
-class AddLayerWithFunction(AddLayer):
-  """Same as AddLayer, but _add is decorated with a tf.function."""
-
-  @def_function.function
-  def _add(self, x, y):
-    return super(AddLayerWithFunction, self)._add(x, y)
 
 
 class IdentityRegularizer(regularizers.Regularizer):
@@ -189,30 +175,6 @@ class KerasLayerTest(keras_parameterized.TestCase):
         self.assertEqual(y.dtype, dtypes.float16)
         self.evaluate(variables.global_variables_initializer())
         self.assertEqual(self.evaluate(y), 2.)
-
-  @parameterized.named_parameters(*TESTCASES)
-  @test_util.run_in_graph_and_eager_modes
-  def test_layer_calling_tf_function(self, strategy_fn):
-    x = constant_op.constant([1.], dtype=dtypes.float16)
-    with strategy_fn().scope():
-      with policy.policy_scope('infer_float32_vars'):
-        layer = AddLayerWithFunction(assert_type=dtypes.float16)
-        y = layer(x)
-        self.assertEqual(layer.v.dtype, dtypes.float32)
-        self.assertEqual(y.dtype, dtypes.float16)
-        self.evaluate(variables.global_variables_initializer())
-        self.assertEqual(self.evaluate(y), 2.)
-
-  @parameterized.named_parameters(*TESTCASES)
-  @test_util.run_in_graph_and_eager_modes
-  def test_variable_not_casted_for_int_inputs(self, strategy_fn):
-    x = constant_op.constant([[1]], dtype=dtypes.int32)
-    with strategy_fn().scope():
-      with policy.policy_scope('infer_float32_vars'):
-        layer = layers.Embedding(input_dim=10, output_dim=32)
-        y = layer(x)
-        self.assertEqual(layer.embeddings.dtype, dtypes.float32)
-        self.assertEqual(y.dtype, dtypes.float32)
 
   @parameterized.named_parameters(*TESTCASES)
   @test_util.run_in_graph_and_eager_modes
@@ -347,22 +309,17 @@ class KerasModelTest(keras_parameterized.TestCase):
       'testcase_name': 'nocloning',
       'strategy_fn': create_mirrored_strategy,
       'cloning': False
-  }, {
-      'testcase_name': 'function',
-      'strategy_fn': create_mirrored_strategy,
-      'layer_with_tf_function': True
   })
   def test_model(self, strategy_fn, use_operator=False, use_regularizer=False,
-                 cloning=True, layer_with_tf_function=False):
+                 cloning=True):
     if not self._is_strategy_supported(strategy_fn):
       return
     regularizer = IdentityRegularizer() if use_regularizer else None
-    layer_class = AddLayerWithFunction if layer_with_tf_function else AddLayer
     with strategy_fn().scope():
       with policy.policy_scope('infer_float32_vars'):
         x = layers.Input(shape=(1,), batch_size=2, dtype=dtypes.float16)
-        layer = layer_class(assert_type=dtypes.float16,
-                            use_operator=use_operator, regularizer=regularizer)
+        layer = AddLayer(assert_type=dtypes.float16, use_operator=use_operator,
+                         regularizer=regularizer)
         y = layer(x)
         y = math_ops.cast(y, dtypes.float32)
         model = models.Model(inputs=x, outputs=y)
@@ -641,53 +598,6 @@ class KerasModelTest(keras_parameterized.TestCase):
     model.load_weights(weights_file)
     self.assertAllClose(backend.get_value(model(x)), x + 100.)
     self.assertEqual(model.get_weights(), [np.array(100.)])
-
-  @keras_parameterized.run_all_keras_modes
-  @parameterized.named_parameters({
-      'testcase_name': 'base',
-      'strategy_fn': default_strategy_fn,
-  }, {
-      'testcase_name': 'distribute',
-      'strategy_fn': create_mirrored_strategy,
-  }, {
-      'testcase_name': 'different_var_name',
-      'strategy_fn': default_strategy_fn,
-      'var_name': 'w'
-  }, {
-      'testcase_name': 'different_var_name_distribute',
-      'strategy_fn': create_mirrored_strategy,
-      'var_name': 'w'
-  })
-  def test_save_slot_variables_with_autocast_vars(self, strategy_fn,
-                                                  var_name='v'):
-    if not self._is_strategy_supported(strategy_fn):
-      return
-    with strategy_fn().scope(), policy.policy_scope('infer_float32_vars'):
-      x = layers.Input(shape=(2,), batch_size=2, dtype=dtypes.float16)
-      # Having a var_name other than 'v' tests that a fixed bug (b/134713714)
-      # does not reoccur. The bug was that a crash would occur when saving a
-      # checkpoint where an AutoCastVariable with a slot variable would have a
-      # different name than the layer attribute's name (layer.v in this case).
-      layer = AddLayer(assert_type=dtypes.float16, var_name=var_name)
-      y = layer(x)
-      y = math_ops.cast(y, dtypes.float32)
-      model = models.Model(inputs=x, outputs=y)
-      opt = gradient_descent.SGD(1., 1.)
-      model.compile(optimizer=opt, loss='mse',
-                    run_eagerly=testing_utils.should_run_eagerly())
-
-    model.fit(np.zeros((2, 2)), np.zeros((2, 2)), batch_size=2)
-    weights_file = os.path.join(self.get_temp_dir(), 'weights')
-    model.save_weights(weights_file)
-    saved_slot = backend.get_value(opt.get_slot(layer.v, 'momentum'))
-
-    model.fit(np.zeros((2, 2)), np.zeros((2, 2)), batch_size=2)
-    new_slot = backend.get_value(opt.get_slot(layer.v, 'momentum'))
-    self.assertNotEqual(new_slot, saved_slot)
-
-    model.load_weights(weights_file)
-    restored_slot = backend.get_value(opt.get_slot(layer.v, 'momentum'))
-    self.assertEqual(restored_slot, saved_slot)
 
   @keras_parameterized.run_all_keras_modes
   @parameterized.named_parameters(*TESTCASES)

@@ -158,7 +158,15 @@ bool Slice(SliceOperator const& op, Array const& input_array,
       break;
   }
 
-  DeleteOpAndArrays(model, op);
+  // Erase input array if no longer used.
+  if (IsDiscardableArray(*model, op->inputs[0]) &&
+      CountOpsWithInput(*model, op->inputs[0]) == 1) {
+    model->EraseArray(op->inputs[0]);
+  }
+
+  // Erase the operator
+  model->operators.erase(it);
+
   *modified = true;
   return ::tensorflow::Status::OK();
 }

@@ -1,9 +1,10 @@
-load("//tensorflow:tensorflow.bzl", "py_test", "tf_py_test")
-
 package(
     default_visibility = ["//tensorflow:internal"],
-    licenses = ["notice"],  # Apache 2.0
 )
+
+licenses(["notice"])  # Apache 2.0
+
+load("//tensorflow:tensorflow.bzl", "tf_py_test")
 
 py_library(
     name = "feature_column_py",
@@ -235,13 +236,15 @@ py_test(
     ],
 )
 
-tf_py_test(
+py_test(
     name = "serialization_test",
     srcs = ["serialization_test.py"],
-    additional_deps = [
+    python_version = "PY2",
+    srcs_version = "PY2AND3",
+    deps = [
         ":feature_column_v2",
-        "@absl_py//absl/testing:parameterized",
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:util",
+        "@absl_py//absl/testing:parameterized",
     ],
 )

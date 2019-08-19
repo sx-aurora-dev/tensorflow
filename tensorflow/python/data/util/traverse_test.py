@@ -33,9 +33,9 @@ class _TestDataset(dataset_ops.UnaryUnchangedStructureDataset):
     temp_variant_tensor = gen_dataset_ops.prefetch_dataset(
         input_dataset._variant_tensor,
         buffer_size=1,
-        **self._flat_structure)
+        **dataset_ops.flat_structure(self))
     variant_tensor = gen_dataset_ops.model_dataset(
-        temp_variant_tensor, **self._flat_structure)
+        temp_variant_tensor, **dataset_ops.flat_structure(self))
     super(_TestDataset, self).__init__(input_dataset, variant_tensor)
 
 

@@ -123,8 +123,6 @@ class NonSerializableDatasetOp : public UnaryDatasetOpKernel {
   std::vector<PartialTensorShape> output_shapes_;
 };
 
-REGISTER_KERNEL_BUILDER(Name("NonSerializableDataset").Device(DEVICE_CPU),
-                        NonSerializableDatasetOp);
 REGISTER_KERNEL_BUILDER(
     Name("ExperimentalNonSerializableDataset").Device(DEVICE_CPU),
     NonSerializableDatasetOp);

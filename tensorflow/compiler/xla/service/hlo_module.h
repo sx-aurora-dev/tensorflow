@@ -64,7 +64,7 @@ class HloModule {
   // only be used for HloModules used outside of the XLA service (eg
   // tests). The versioned handle is used by the service in the compilation
   // cache. A default configuration is created for this module.
-  explicit HloModule(const string& name, HloModuleConfig config);
+  explicit HloModule(const string& name, const HloModuleConfig& config);
   virtual ~HloModule() {}
 
   // Adds an entry computation to the module. A module can only have one entry
@@ -285,10 +285,6 @@ class HloModule {
 
   Status CheckUniqueNamesAndIdsForComputationsAndInstructions() const;
 
-  std::vector<std::vector<bool>>* mutable_fusion_config() {
-    return &fusion_config_;
-  }
-
  private:
   HloComputation* AddComputationInternal(
       std::unique_ptr<HloComputation> computation, bool is_entry,
@@ -328,9 +324,6 @@ class HloModule {
 
   // Bindings for dynamic parameter mapping.
   DynamicParameterBinding dynamic_parameter_binding_;
-
-  // Fusion configuration.
-  std::vector<std::vector<bool>> fusion_config_;
 };
 
 }  // namespace xla

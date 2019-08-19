@@ -32,7 +32,7 @@ Status CreatePHWC4BufferFromTensor(const TensorFloat32& tensor,
   return CreateReadOnlyShaderStorageBuffer<float>(transposed, gl_buffer);
 }
 
-Status CreatePHWC4BufferFromTensorRef(const TensorRef<BHWC>& tensor_ref,
+Status CreatePHWC4BufferFromTensorRef(const TensorRefFloat32& tensor_ref,
                                       GlBuffer* gl_buffer) {
   return CreateReadWriteShaderStorageBuffer<float>(
       GetElementsSizeForPHWC4(tensor_ref.shape), gl_buffer);
@@ -48,7 +48,13 @@ Status CopyFromPHWC4Buffer(const GlBuffer& buffer, TensorFloat32* tensor) {
 }
 
 Status ObjectManager::RegisterBuffer(uint32_t id, GlBuffer buffer) {
-  if (id >= buffers_.size()) {
+  if (id < buffers_.size()) {
+    if (buffers_[id]) {
+      return AlreadyExistsError(
+          "Buffer with the same id is already registered: " +
+          std::to_string(id));
+    }
+  } else {
     buffers_.resize(id + 1);
   }
   buffers_[id] = absl::make_unique<GlBuffer>(std::move(buffer));
@@ -66,7 +72,13 @@ GlBuffer* ObjectManager::FindBuffer(uint32_t id) const {
 }
 
 Status ObjectManager::RegisterTexture(uint32_t id, GlTexture texture) {
-  if (id >= textures_.size()) {
+  if (id < textures_.size()) {
+    if (textures_[id]) {
+      return AlreadyExistsError(
+          "Texture with the same id is already registered: " +
+          std::to_string(id));
+    }
+  } else {
     textures_.resize(id + 1);
   }
   textures_[id] = absl::make_unique<GlTexture>(std::move(texture));

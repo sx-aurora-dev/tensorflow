@@ -22,13 +22,13 @@ from __future__ import print_function
 from absl.testing import parameterized
 
 
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_string_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import test
 
 
-class StringsToBytesOpTest(test_util.TensorFlowTestCase,
+class StringsToBytesOpTest(ragged_test_util.RaggedTensorTestCase,
                            parameterized.TestCase):
 
   @parameterized.parameters(
@@ -62,7 +62,7 @@ class StringsToBytesOpTest(test_util.TensorFlowTestCase,
   def testStringToBytes(self, source, expected):
     expected = ragged_factory_ops.constant_value(expected, dtype=object)
     result = ragged_string_ops.string_bytes_split(source)
-    self.assertAllEqual(expected, result)
+    self.assertRaggedEqual(expected, result)
 
 
 if __name__ == '__main__':

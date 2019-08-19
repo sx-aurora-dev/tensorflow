@@ -249,8 +249,8 @@ def _annotate_ndarray_lines(
 
   curr_indices = [0] * len(dims)
   curr_dim = 0
-  for i, raw_line in enumerate(array_lines):
-    line = raw_line.strip()
+  for i in xrange(len(array_lines)):
+    line = array_lines[i].strip()
 
     if not line:
       # Skip empty lines, which can appear for >= 3D arrays.

@@ -1,6 +1,13 @@
 # Description:
 # TensorFlow SavedModel.
 
+package(
+    default_visibility = ["//visibility:public"],
+    licenses = ["notice"],  # Apache 2.0
+)
+
+exports_files(["LICENSE"])
+
 load(
     "//tensorflow:tensorflow.bzl",
     "if_android",
@@ -14,13 +21,6 @@ load(
     "if_static",
     "if_static_and_not_mobile",
 )
-
-package(
-    default_visibility = ["//visibility:public"],
-    licenses = ["notice"],  # Apache 2.0
-)
-
-exports_files(["LICENSE"])
 
 cc_library(
     name = "constants",

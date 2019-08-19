@@ -62,15 +62,15 @@ TEST(MatchDilatedConvolutionTest, MakesDilatedConvolution) {
 
   ASSERT_TRUE(graph.AddConsumer(sb_node->id, input->id).ok());
 
-  Value<TensorRef<BHWC>>* output;
+  Value<TensorRefFloat32>* output;
   ASSERT_TRUE(AddOutput(&graph, bs_node, &output).ok());
   output->tensor.shape = BHWC(1, 95, 1, 17);
 
-  Value<TensorRef<BHWC>>* sb_link;
+  Value<TensorRefFloat32>* sb_link;
   ASSERT_TRUE(ConnectTwoNodes(&graph, sb_node, dw_node, &sb_link).ok());
   sb_link->tensor.shape = BHWC(21, 128, 1, 17);
 
-  Value<TensorRef<BHWC>>* bs_link;
+  Value<TensorRefFloat32>* bs_link;
   ASSERT_TRUE(ConnectTwoNodes(&graph, dw_node, bs_node, &bs_link).ok());
   bs_link->tensor.shape = BHWC(1, 95, 1, 17);
 

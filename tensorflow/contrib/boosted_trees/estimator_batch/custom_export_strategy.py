@@ -42,8 +42,7 @@ def make_custom_export_strategy(name,
                                 feature_columns,
                                 export_input_fn,
                                 use_core_columns=False,
-                                feature_engineering_fn=None,
-                                default_output_alternative_key=None):
+                                feature_engineering_fn=None):
   """Makes custom exporter of GTFlow tree format.
 
   Args:
@@ -55,17 +54,12 @@ def make_custom_export_strategy(name,
       `InputFnOps`.
     use_core_columns: A boolean, whether core feature columns were used.
     feature_engineering_fn: Feature eng function to be called on the input.
-    default_output_alternative_key: the name of the head to serve when an
-      incoming serving request does not explicitly request a specific head.
-      Not needed for single-headed models.
 
   Returns:
     An `ExportStrategy`.
   """
   base_strategy = saved_model_export_utils.make_export_strategy(
-      serving_input_fn=export_input_fn,
-      strip_default_attrs=True,
-      default_output_alternative_key=default_output_alternative_key)
+      serving_input_fn=export_input_fn, strip_default_attrs=True)
   input_fn = export_input_fn()
   features = input_fn.features
   if feature_engineering_fn is not None:

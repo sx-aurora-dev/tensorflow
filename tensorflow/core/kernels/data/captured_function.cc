@@ -256,36 +256,7 @@ Status FunctionMetadata::Create(
       (*out_metadata)->func_.name(), &(*out_metadata)->lib_def_));
   TF_RETURN_IF_ERROR(CreateShortCircuitInfo(
       ctx, (*out_metadata)->func_, &(*out_metadata)->short_circuit_info_));
-  (*out_metadata)->ValidateMultiDevice();
   return Status::OK();
-}
-
-void FunctionMetadata::ValidateMultiDevice() {
-  const FunctionDef* fdef = lib_def_->Find(func_.name());
-  if (is_multi_device_function_) {
-    auto attr = fdef->attr().find(FunctionLibraryDefinition::kIntsOnDeviceAttr);
-    if (attr != fdef->attr().end() && attr->second.b()) {
-      LOG(WARNING)
-          << "Disabling multi-device execution for a function that uses the "
-          << FunctionLibraryDefinition::kIntsOnDeviceAttr << " attribute.";
-      is_multi_device_function_ = false;
-      return;
-    }
-    auto validate_arg = [this](const OpDef::ArgDef& arg) {
-      if (!arg.number_attr().empty() || !arg.type_list_attr().empty()) {
-        LOG(WARNING) << "Disabling multi-device execution for a function with "
-                        "a vector argument "
-                     << arg.name() << ".";
-        is_multi_device_function_ = false;
-      }
-    };
-    for (const auto& arg : fdef->signature().input_arg()) {
-      validate_arg(arg);
-    }
-    for (const auto& arg : fdef->signature().output_arg()) {
-      validate_arg(arg);
-    }
-  }
 }
 
 /* static */
@@ -552,7 +523,10 @@ Status InstantiatedCapturedFunction::Run(IteratorContext* ctx,
       });
   f_opts.step_container = &step_container;
   f_opts.runner = ctx->runner();
-  f_opts.create_rendezvous = ShouldCreateRendezvous();
+  if (lib_->device()->device_type() != DEVICE_CPU ||
+      captured_func_->is_multi_device_function()) {
+    f_opts.create_rendezvous = true;
+  }
   // TODO(mrry): Add cancellation manager support to IteratorContext
   // so that we can cancel running map functions. The local
   // cancellation manager here is created so that we can run kernels
@@ -590,7 +564,9 @@ Status InstantiatedCapturedFunction::RunWithBorrowedArgs(
       });
   f_opts.step_container = &step_container;
   f_opts.runner = ctx->runner();
-  f_opts.create_rendezvous = ShouldCreateRendezvous();
+  if (lib_->device()->device_type() != DEVICE_CPU) {
+    f_opts.create_rendezvous = true;
+  }
   // TODO(mrry): Add cancellation manager support to IteratorContext
   // so that we can cancel running map functions. The local
   // cancellation manager here is created so that we can run kernels
@@ -628,7 +604,9 @@ Status InstantiatedCapturedFunction::RunInstantiated(
       });
   f_opts.step_container = &step_container;
   f_opts.runner = &captured_runner_;
-  f_opts.create_rendezvous = ShouldCreateRendezvous();
+  if (lib_->device()->device_type() != DEVICE_CPU) {
+    f_opts.create_rendezvous = true;
+  }
   // TODO(mrry): Add cancellation manager support to IteratorContext
   // so that we can cancel running map functions. The local
   // cancellation manager here is created so that we can run kernels
@@ -681,7 +659,9 @@ void InstantiatedCapturedFunction::RunAsync(
       });
   f_opts.step_container = step_container;
   f_opts.runner = ctx->runner();
-  f_opts.create_rendezvous = ShouldCreateRendezvous();
+  if (lib_->device()->device_type() != DEVICE_CPU) {
+    f_opts.create_rendezvous = true;
+  }
   // TODO(mrry): Add cancellation manager support to IteratorContext
   // so that we can cancel running map functions. The local
   // cancellation manager here is created so that we can run kernels
@@ -738,11 +718,6 @@ void InstantiatedCapturedFunction::RunAsync(
       std::move(stats_collector), std::placeholders::_1);
 
   lib_->Run(f_opts, f_handle_, frame, std::move(callback));
-}
-
-bool InstantiatedCapturedFunction::ShouldCreateRendezvous() const {
-  return lib_->device()->device_type() != DEVICE_CPU ||
-         captured_func_->is_multi_device_function();
 }
 
 CapturedFunction::CapturedFunction(

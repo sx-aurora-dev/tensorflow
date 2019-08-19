@@ -49,7 +49,7 @@ Status CreateContext(EGLDisplay display, EGLContext shared_context,
   if (context == EGL_NO_CONTEXT) {
     return InternalError("No EGL error, but eglCreateContext failed.");
   }
-  *egl_context = EglContext(context, display, config, true);
+  *egl_context = EglContext(context, display, config);
   return OkStatus();
 }
 
@@ -61,32 +61,25 @@ bool HasExtension(EGLDisplay display, const char* name) {
 
 void EglContext::Invalidate() {
   if (context_ != EGL_NO_CONTEXT) {
-    if (has_ownership_) {
-      eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-      eglDestroyContext(display_, context_);
-    }
+    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    eglDestroyContext(display_, context_);
     context_ = EGL_NO_CONTEXT;
   }
-  has_ownership_ = false;
 }
 
 EglContext::EglContext(EglContext&& other)
     : context_(other.context_),
       display_(other.display_),
-      config_(other.config_),
-      has_ownership_(other.has_ownership_) {
+      config_(other.config_) {
   other.context_ = EGL_NO_CONTEXT;
-  other.has_ownership_ = false;
 }
 
 EglContext& EglContext::operator=(EglContext&& other) {
   if (this != &other) {
     Invalidate();
-    using std::swap;
-    swap(context_, other.context_);
+    std::swap(context_, other.context_);
     display_ = other.display_;
     config_ = other.config_;
-    swap(has_ownership_, other.has_ownership_);
   }
   return *this;
 }

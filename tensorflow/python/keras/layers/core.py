@@ -26,6 +26,7 @@ import warnings
 import numpy as np
 
 from tensorflow.python.eager import context
+from tensorflow.python.framework import common_shapes
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
@@ -43,7 +44,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn
-from tensorflow.python.ops import sparse_ops
+from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import standard_ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.util import nest
@@ -142,13 +143,8 @@ class Dropout(Layer):
     # which will override `self.noise_shape`, and allows for custom noise
     # shapes with dynamically sized inputs.
     if self.noise_shape is None:
-      return None
-
-    concrete_inputs_shape = array_ops.shape(inputs)
-    noise_shape = []
-    for i, value in enumerate(self.noise_shape):
-      noise_shape.append(concrete_inputs_shape[i] if value is None else value)
-    return ops.convert_to_tensor(noise_shape)
+      return self.noise_shape
+    return nn_ops._get_noise_shape(inputs, self.noise_shape)  # pylint: disable=protected-access
 
   def call(self, inputs, training=None):
     if training is None:
@@ -1033,7 +1029,8 @@ class Dense(Layer):
     self.built = True
 
   def call(self, inputs):
-    rank = len(inputs.shape)
+    inputs = ops.convert_to_tensor(inputs)
+    rank = common_shapes.rank(inputs)
     if rank > 2:
       # Broadcasting is required for the inputs.
       outputs = standard_ops.tensordot(inputs, self.kernel, [[rank - 1], [0]])
@@ -1048,10 +1045,7 @@ class Dense(Layer):
       # will be automatically casted to inputs.dtype.
       if not self._mixed_precision_policy.should_cast_variables:
         inputs = math_ops.cast(inputs, self.dtype)
-      if K.is_sparse(inputs):
-        outputs = sparse_ops.sparse_tensor_dense_matmul(inputs, self.kernel)
-      else:
-        outputs = gen_math_ops.mat_mul(inputs, self.kernel)
+      outputs = gen_math_ops.mat_mul(inputs, self.kernel)
     if self.use_bias:
       outputs = nn.bias_add(outputs, self.bias)
     if self.activation is not None:

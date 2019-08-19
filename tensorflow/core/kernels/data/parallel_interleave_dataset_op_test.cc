@@ -9,7 +9,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/core/kernels/data/parallel_interleave_dataset_op.h"
 
 #include "tensorflow/core/kernels/data/dataset_test_base.h"
 
@@ -18,7 +17,7 @@ namespace data {
 namespace {
 
 constexpr char kNodeName[] = "parallel_interleave_dataset";
-constexpr int kOpVersion = 2;
+constexpr char kOpName[] = "ParallelInterleaveDatasetV2";
 
 class ParallelInterleaveDatasetOpTest : public DatasetOpsTestBase {
  protected:
@@ -40,20 +39,14 @@ class ParallelInterleaveDatasetOpTest : public DatasetOpsTestBase {
       const DataTypeVector &output_types,
       const std::vector<PartialTensorShape> &output_shapes, bool sloppy,
       std::unique_ptr<OpKernel> *op_kernel) {
-    name_utils::OpNameParams params;
-    params.op_version = kOpVersion;
     NodeDef node_def = test::function::NDef(
-        kNodeName,
-        name_utils::OpName(ParallelInterleaveDatasetOp::kDatasetType, params),
-        {ParallelInterleaveDatasetOp::kInputDataset,
-         ParallelInterleaveDatasetOp::kCycleLength,
-         ParallelInterleaveDatasetOp::kBlockLength,
-         ParallelInterleaveDatasetOp::kNumParallelCalls},
-        {{ParallelInterleaveDatasetOp::kFunc, func},
-         {ParallelInterleaveDatasetOp::kTarguments, {}},
-         {ParallelInterleaveDatasetOp::kOutputTypes, output_types},
-         {ParallelInterleaveDatasetOp::kOutputShapes, output_shapes},
-         {ParallelInterleaveDatasetOp::kSloppy, sloppy}});
+        kNodeName, kOpName,
+        {"input_dataset", "cycle_length", "block_length", "num_parallel_calls"},
+        {{"f", func},
+         {"Targuments", {}},
+         {"output_types", output_types},
+         {"output_shapes", output_shapes},
+         {"sloppy", sloppy}});
     TF_RETURN_IF_ERROR(CreateOpKernel(node_def, op_kernel));
     return Status::OK();
   }
@@ -344,7 +337,7 @@ TestCase TestCase9() {
 }
 
 // test case 10: cycle_length = 3, block_length = 3,
-// num_parallel_calls = kAutotune, sloppy = true
+// num_parallel_calls = kAutoTune, sloppy = true
 TestCase TestCase10() {
   return {
       /*input_tensors*/
@@ -361,7 +354,7 @@ TestCase TestCase10() {
       DatasetOpsTestBase::CreateTensor<int64>(TensorShape({}), {4}),
       /*num_parallel_calls*/
       DatasetOpsTestBase::CreateTensor<int64>(TensorShape({}),
-                                              {model::kAutotune}),
+                                              {model::kAutoTune}),
       /*sloppy*/ true,
       /*expected_outputs*/
       ConvertToTensorVec<string>({"a", "b", "c", "d", "e", "f", "g", "h", "i"}),
@@ -610,11 +603,7 @@ TEST_F(ParallelInterleaveDatasetOpTest, DatasetTypeString) {
                              &parallel_interleave_dataset));
   core::ScopedUnref scoped_unref(parallel_interleave_dataset);
 
-  name_utils::OpNameParams params;
-  params.op_version = kOpVersion;
-  EXPECT_EQ(
-      parallel_interleave_dataset->type_string(),
-      name_utils::OpName(ParallelInterleaveDatasetOp::kDatasetType, params));
+  EXPECT_EQ(parallel_interleave_dataset->type_string(), kOpName);
 }
 
 TEST_P(ParameterizedParallelInterleaveDatasetOpTest, DatasetOutputDtypes) {
@@ -891,11 +880,8 @@ TEST_F(ParallelInterleaveDatasetOpTest, IteratorOutputPrefix) {
   std::unique_ptr<IteratorBase> iterator;
   TF_ASSERT_OK(parallel_interleave_dataset->MakeIterator(
       iterator_ctx.get(), "Iterator", &iterator));
-  name_utils::IteratorPrefixParams params;
-  params.op_version = kOpVersion;
-  EXPECT_EQ(iterator->prefix(),
-            name_utils::IteratorPrefix(
-                ParallelInterleaveDatasetOp::kDatasetType, "Iterator", params));
+
+  EXPECT_EQ(iterator->prefix(), "Iterator::ParallelInterleaveV2");
 }
 
 TEST_P(ParameterizedParallelInterleaveDatasetOpTest, Roundtrip) {

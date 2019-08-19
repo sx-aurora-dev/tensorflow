@@ -42,7 +42,8 @@ class HloAliasAnalysis {
   // (xla::FlattenCallGraph) prior to running the analysis.
   static StatusOr<std::unique_ptr<HloAliasAnalysis>> Run(
       const HloModule* module,
-      const HloDataflowAnalysis::CanShareBuffer& can_share_buffer = nullptr);
+      const HloDataflowAnalysis::FusionCanShareBufferFunction&
+          fusion_can_share_buffer = nullptr);
 
   string ToString() const;
 

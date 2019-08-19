@@ -17,25 +17,13 @@ limitations under the License.
 #define TENSORFLOW_CORE_KERNELS_FUSED_BATCH_NORM_OP_H_
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_types.h"
-#include "tensorflow/core/util/tensor_format.h"
 
 namespace tensorflow {
 namespace functor {
 
-// FusedBatchNormEx op supports side inputs and activations:
-//   (1) batch_norm + activation
-//   (2) batch norm + side input + activation
-enum class FusedBatchNormActivationMode { kIdentity, kRelu };
-
-string ToString(FusedBatchNormActivationMode activation_mode);
-
-Status ParseActivationMode(OpKernelConstruction* context,
-                           FusedBatchNormActivationMode* activation_mode);
-
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 // There is a behavior difference between cuDNN v4 and v5 with regard to the
 // scaling factor for function cudnnBatchNormalizationForwardInference.
@@ -67,22 +55,7 @@ struct SetNanFunctor {
   void operator()(const Eigen::GpuDevice& d, typename TTypes<T>::Flat out);
 };
 
-// This is a functor to launch custom CUDA kernel for FusedBatchNorm with side
-// input and activation when 'is_training=False'. In training we rely on cuDNN.
-template <typename Device, typename T, typename U>
-struct FusedBatchNormInferenceFunctor {
-  void operator()(OpKernelContext* context, TensorFormat tensor_format,
-                  typename TTypes<T, 4>::ConstTensor in,
-                  typename TTypes<U>::ConstVec scale,
-                  typename TTypes<U>::ConstVec offset,
-                  typename TTypes<U>::ConstVec estimated_mean,
-                  typename TTypes<U>::ConstVec estimated_variance,
-                  typename TTypes<T, 4>::ConstTensor side_input, U epsilon,
-                  FusedBatchNormActivationMode activation_mode,
-                  typename TTypes<T, 4>::Tensor out);
-};
-
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 // Functor used by FusedBatchNormGradOp to do the computations when
 // is_training=False. Both CPU and GPU will use this functor.

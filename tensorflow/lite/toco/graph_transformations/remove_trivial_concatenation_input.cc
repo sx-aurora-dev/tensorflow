@@ -59,10 +59,13 @@ namespace toco {
   }
 
   // Drop trivial inputs.
-  concat_op->inputs = nontrivial_inputs;
   for (const string& input : trivial_inputs) {
-    DeleteArrayIfUnusedOutsideOfOp(input, concat_op, model);
+    if (IsDiscardableArray(*model, input) &&
+        CountOpsWithInput(*model, input) == 1) {
+      model->EraseArray(input);
+    }
   }
+  concat_op->inputs = nontrivial_inputs;
   *modified = true;
   return ::tensorflow::Status::OK();
 }

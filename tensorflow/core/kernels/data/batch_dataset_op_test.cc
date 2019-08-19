@@ -9,7 +9,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/core/kernels/data/batch_dataset_op.h"
 
 #include "tensorflow/core/kernels/data/dataset_test_base.h"
 
@@ -18,7 +17,7 @@ namespace data {
 namespace {
 
 constexpr char kNodeName[] = "batch_dataset_v2";
-constexpr int kOpVersion = 2;
+constexpr char kOpName[] = "BatchDatasetV2";
 
 class BatchDatasetOpTest : public DatasetOpsTestBase {
  protected:
@@ -27,15 +26,11 @@ class BatchDatasetOpTest : public DatasetOpsTestBase {
       bool parallel_copy, const DataTypeVector& output_types,
       const std::vector<PartialTensorShape>& output_shapes,
       std::unique_ptr<OpKernel>* batch_dataset_op_kernel) {
-    name_utils::OpNameParams params;
-    params.op_version = kOpVersion;
     NodeDef node_def = test::function::NDef(
-        kNodeName, name_utils::OpName(BatchDatasetOp::kDatasetType, params),
-        {BatchDatasetOp::kInputDataset, BatchDatasetOp::kBatchSize,
-         BatchDatasetOp::kDropRemainder},
-        {{BatchDatasetOp::kParallelCopy, parallel_copy},
-         {BatchDatasetOp::kOutputTypes, output_types},
-         {BatchDatasetOp::kOutputShapes, output_shapes}});
+        kNodeName, kOpName, {"input_dataset", "batch_size", "drop_remainder"},
+        {{"parallel_copy", parallel_copy},
+         {"output_types", output_types},
+         {"output_shapes", output_shapes}});
     TF_RETURN_IF_ERROR(CreateOpKernel(node_def, batch_dataset_op_kernel));
     return Status::OK();
   }
@@ -341,10 +336,7 @@ TEST_P(ParameterizedBatchDatasetOpTest, DatasetTypeString) {
                              batch_dataset_context.get(), &batch_dataset));
   core::ScopedUnref scoped_unref_batch_dataset(batch_dataset);
 
-  name_utils::OpNameParams params;
-  params.op_version = kOpVersion;
-  EXPECT_EQ(batch_dataset->type_string(),
-            name_utils::OpName(BatchDatasetOp::kDatasetType, params));
+  EXPECT_EQ(batch_dataset->type_string(), kOpName);
 }
 
 TEST_P(ParameterizedBatchDatasetOpTest, DatasetOutputDtypes) {
@@ -618,11 +610,8 @@ TEST_P(ParameterizedBatchDatasetOpTest, IteratorOutputPrefix) {
   std::unique_ptr<IteratorBase> iterator;
   TF_ASSERT_OK(
       batch_dataset->MakeIterator(iterator_ctx.get(), "Iterator", &iterator));
-  name_utils::IteratorPrefixParams params;
-  params.op_version = kOpVersion;
-  EXPECT_EQ(iterator->prefix(),
-            name_utils::IteratorPrefix(BatchDatasetOp::kDatasetType, "Iterator",
-                                       params));
+
+  EXPECT_EQ(iterator->prefix(), "Iterator::Batch");
 }
 
 TEST_P(ParameterizedBatchDatasetOpTest, Roundtrip) {

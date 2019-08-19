@@ -19,7 +19,6 @@ namespace data {
 namespace {
 
 constexpr char kNodeName[] = "padded_batch_dataset";
-constexpr int kOpVersion = 2;
 
 class PaddedBatchDatasetOpTest : public DatasetOpsTestBase {
  protected:
@@ -98,11 +97,8 @@ class PaddedBatchDatasetOpTest : public DatasetOpsTestBase {
     }
     inputs.push_back(PaddedBatchDatasetOp::kDropRemainder);
 
-    name_utils::OpNameParams params;
-    params.op_version = kOpVersion;
     NodeDef node_def = test::function::NDef(
-        kNodeName,
-        name_utils::OpName(PaddedBatchDatasetOp::kDatasetType, params), inputs,
+        kNodeName, "PaddedBatchDatasetV2", inputs,
         {{PaddedBatchDatasetOp::kParallelCopy, parallel_copy},
          {PaddedBatchDatasetOp::kToutputTypes, output_types},
          {PaddedBatchDatasetOp::kOutputShapes, output_shapes},
@@ -691,10 +687,7 @@ TEST_F(PaddedBatchDatasetOpTest, DatasetTypeString) {
                              &padded_batch_dataset));
   core::ScopedUnref scoped_unref(padded_batch_dataset);
 
-  name_utils::OpNameParams params;
-  params.op_version = kOpVersion;
-  EXPECT_EQ(padded_batch_dataset->type_string(),
-            name_utils::OpName(PaddedBatchDatasetOp::kDatasetType, params));
+  EXPECT_EQ(padded_batch_dataset->type_string(), "PaddedBatchDatasetV2");
 }
 
 TEST_P(ParameterizedPaddedBatchDatasetOpTest, DatasetOutputDtypes) {
@@ -1018,11 +1011,10 @@ TEST_F(PaddedBatchDatasetOpTest, IteratorOutputPrefix) {
   std::unique_ptr<IteratorBase> iterator;
   TF_ASSERT_OK(padded_batch_dataset->MakeIterator(iterator_ctx.get(),
                                                   "Iterator", &iterator));
-  name_utils::IteratorPrefixParams params;
-  params.op_version = kOpVersion;
+
   EXPECT_EQ(iterator->prefix(),
             name_utils::IteratorPrefix(PaddedBatchDatasetOp::kDatasetType,
-                                       "Iterator", params));
+                                       "Iterator"));
 }
 
 TEST_P(ParameterizedPaddedBatchDatasetOpTest, Roundtrip) {

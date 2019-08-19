@@ -20,8 +20,4 @@ tf_module {
     name: "TPUEstimatorSpec"
     mtype: "<type \'type\'>"
   }
-  member {
-    name: "experimental"
-    mtype: "<type \'module\'>"
-  }
 }

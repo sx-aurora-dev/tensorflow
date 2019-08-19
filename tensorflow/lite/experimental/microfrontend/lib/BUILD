@@ -1,13 +1,14 @@
 # Library for generating feature vectors from audio data
 
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+licenses(["notice"])  # Apache 2.0
+
 load(
     "//tensorflow/lite/experimental/micro/testing:micro_test.bzl",
     "tflite_micro_cc_test",
-)
-
-package(
-    default_visibility = ["//visibility:public"],
-    licenses = ["notice"],  # Apache 2.0
 )
 
 cc_library(
@@ -18,16 +19,14 @@ cc_library(
 cc_library(
     name = "fft",
     srcs = [
-        "fft.cc",
-        "fft_util.cc",
+        "fft.c",
+        "fft_util.c",
     ],
     hdrs = [
         "fft.h",
         "fft_util.h",
     ],
-    deps = [
-        "@kissfft//:kiss_fftr_16",
-    ],
+    deps = ["@kissfft//:kiss_fftr_16"],
 )
 
 cc_library(

@@ -565,8 +565,6 @@ XlaBackendRegistrar::XlaBackendRegistrar(
     XlaOpRegistry::BackendOpFilter op_filter) {
   XlaOpRegistry& registry = XlaOpRegistry::Instance();
   registry.RegisterBackend(string(name), types, op_filter);
-
-  AddSymbolicExecutionDevice(name);
 }
 
 }  // namespace tensorflow

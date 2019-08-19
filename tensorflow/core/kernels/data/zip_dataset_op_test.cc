@@ -12,7 +12,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/core/kernels/data/zip_dataset_op.h"
 
 #include "tensorflow/core/kernels/data/dataset_test_base.h"
 
@@ -21,6 +20,7 @@ namespace data {
 namespace {
 
 constexpr char kNodeName[] = "zip_dataset";
+constexpr char kOpName[] = "ZipDataset";
 
 struct RangeDatasetParam {
   int64 start;
@@ -56,15 +56,11 @@ class ZipDatasetOpTest : public DatasetOpsTestBase {
     input_datasets.reserve(n);
     for (int i = 0; i < n; ++i) {
       // Create the placeholder names for the input components of `ZipDataset`.
-      input_datasets.emplace_back(
-          strings::StrCat(ZipDatasetOp::kInputDatasets, "_", i));
+      input_datasets.emplace_back(strings::StrCat("input_dataset_", i));
     }
     NodeDef node_def = test::function::NDef(
-        kNodeName, name_utils::OpName(ZipDatasetOp::kDatasetType),
-        input_datasets,
-        {{ZipDatasetOp::kOutputTypes, dtypes},
-         {ZipDatasetOp::kOutputShapes, output_shapes},
-         {ZipDatasetOp::kNumInputDatasets, n}});
+        kNodeName, kOpName, input_datasets,
+        {{"output_types", dtypes}, {"output_shapes", output_shapes}, {"N", n}});
     TF_RETURN_IF_ERROR(CreateOpKernel(node_def, op_kernel));
     return Status::OK();
   }
@@ -224,8 +220,7 @@ TEST_F(ZipDatasetOpTest, DatasetTypeString) {
                              &zip_dataset));
   core::ScopedUnref scoped_unref(zip_dataset);
 
-  EXPECT_EQ(zip_dataset->type_string(),
-            name_utils::OpName(ZipDatasetOp::kDatasetType));
+  EXPECT_EQ(zip_dataset->type_string(), kOpName);
 }
 
 TEST_P(ParameterizedZipDatasetOpTest, DatasetOutputDtypes) {
@@ -484,8 +479,7 @@ TEST_F(ZipDatasetOpTest, IteratorOutputPrefix) {
   TF_ASSERT_OK(
       zip_dataset->MakeIterator(iterator_ctx.get(), "Iterator", &iterator));
 
-  EXPECT_EQ(iterator->prefix(),
-            name_utils::IteratorPrefix(ZipDatasetOp::kDatasetType, "Iterator"));
+  EXPECT_EQ(iterator->prefix(), "Iterator::Zip");
 }
 
 TEST_P(ParameterizedZipDatasetOpTest, Roundtrip) {

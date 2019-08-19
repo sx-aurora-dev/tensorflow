@@ -41,15 +41,23 @@ limitations under the License.
 namespace tensorflow {
 
 REGISTER_KERNEL_BUILDER(Name("Stack").Device(DEVICE_CPU), StackOp);
-REGISTER_KERNEL_BUILDER(
-    Name("Stack").Device(DEVICE_DEFAULT).HostMemory("handle"), StackOp);
-
+REGISTER_KERNEL_BUILDER(Name("Stack").Device(DEVICE_GPU).HostMemory("handle"),
+                        StackOp);
 REGISTER_KERNEL_BUILDER(Name("StackV2").Device(DEVICE_CPU), StackOp);
 REGISTER_KERNEL_BUILDER(Name("StackV2")
-                            .Device(DEVICE_DEFAULT)
+                            .Device(DEVICE_GPU)
                             .HostMemory("max_size")
                             .HostMemory("handle"),
                         StackOp);
+#ifdef TENSORFLOW_USE_SYCL
+REGISTER_KERNEL_BUILDER(Name("Stack").Device(DEVICE_SYCL).HostMemory("handle"),
+                        StackOp);
+REGISTER_KERNEL_BUILDER(Name("StackV2")
+                            .Device(DEVICE_SYCL)
+                            .HostMemory("max_size")
+                            .HostMemory("handle"),
+                        StackOp);
+#endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
 REGISTER_KERNEL_BUILDER(Name("Stack").Device(DEVICE_VE).HostMemory("handle"),
@@ -66,77 +74,226 @@ REGISTER_KERNEL_BUILDER(Name("StackPush").Device(DEVICE_CPU),
 REGISTER_KERNEL_BUILDER(Name("StackPushV2").Device(DEVICE_CPU),
                         TemplatedStackPushOp</*allow_swapping=*/false>);
 
-REGISTER_KERNEL_BUILDER(Name("StackPop").Device(DEVICE_CPU), StackPopOp);
-REGISTER_KERNEL_BUILDER(Name("StackPopV2").Device(DEVICE_CPU), StackPopOp);
-
-#define REGISTER_DEFAULT_KERNEL(type)                                     \
+#define REGISTER_GPU_KERNEL(type)                                         \
   REGISTER_KERNEL_BUILDER(Name("StackPush")                               \
-                              .Device(DEVICE_DEFAULT)                     \
+                              .Device(DEVICE_GPU)                         \
                               .HostMemory("handle")                       \
                               .TypeConstraint<type>("T"),                 \
                           TemplatedStackPushOp</*allow_swapping=*/true>); \
   REGISTER_KERNEL_BUILDER(Name("StackPushV2")                             \
-                              .Device(DEVICE_DEFAULT)                     \
+                              .Device(DEVICE_GPU)                         \
                               .HostMemory("handle")                       \
                               .TypeConstraint<type>("T"),                 \
-                          TemplatedStackPushOp</*allow_swapping=*/true>); \
-  REGISTER_KERNEL_BUILDER(Name("StackPop")                                \
-                              .Device(DEVICE_DEFAULT)                     \
-                              .HostMemory("handle")                       \
-                              .TypeConstraint<type>("elem_type"),         \
-                          StackPopOp);                                    \
-  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                              \
-                              .Device(DEVICE_DEFAULT)                     \
-                              .HostMemory("handle")                       \
-                              .TypeConstraint<type>("elem_type"),         \
-                          StackPopOp);
+                          TemplatedStackPushOp</*allow_swapping=*/true>);
 
-TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_DEFAULT_KERNEL);
-#undef REGISTER_DEFAULT_KERNEL
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_GPU_KERNEL);
+#undef REGISTER_GPU_KERNEL
 
 // Special GPU kernels for int32 and bool.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel
 // registration requires all int32 inputs and outputs to be in host memory.
-#define REGISTER_DEFAULT_HOST_KERNEL(type)                                \
+#define REGISTER_GPU_HOST_KERNEL(type)                                    \
   REGISTER_KERNEL_BUILDER(Name("StackPush")                               \
-                              .Device(DEVICE_DEFAULT)                     \
+                              .Device(DEVICE_GPU)                         \
                               .HostMemory("handle")                       \
                               .HostMemory("elem")                         \
                               .HostMemory("output")                       \
                               .TypeConstraint<type>("T"),                 \
                           TemplatedStackPushOp</*allow_swapping=*/true>); \
   REGISTER_KERNEL_BUILDER(Name("StackPushV2")                             \
-                              .Device(DEVICE_DEFAULT)                     \
+                              .Device(DEVICE_GPU)                         \
+                              .HostMemory("handle")                       \
+                              .HostMemory("elem")                         \
+                              .HostMemory("output")                       \
+                              .TypeConstraint<type>("T"),                 \
+                          TemplatedStackPushOp</*allow_swapping=*/true>);
+
+REGISTER_GPU_HOST_KERNEL(int32);
+REGISTER_GPU_HOST_KERNEL(bool);
+
+#undef REGISTER_GPU_HOST_KERNEL
+
+#ifdef TENSORFLOW_USE_SYCL
+#define REGISTER_SYCL_KERNEL(type)                        \
+  REGISTER_KERNEL_BUILDER(Name("StackPush")               \
+                              .Device(DEVICE_SYCL)        \
+                              .HostMemory("handle")       \
+                              .TypeConstraint<type>("T"), \
+                          TemplatedStackPushOp</*allow_swapping=*/true>);
+
+TF_CALL_GPU_NUMBER_TYPES(REGISTER_SYCL_KERNEL);
+
+#define REGISTER_SYCL_HOST_KERNEL(type)                   \
+  REGISTER_KERNEL_BUILDER(Name("StackPush")               \
+                              .Device(DEVICE_SYCL)        \
+                              .HostMemory("handle")       \
+                              .HostMemory("elem")         \
+                              .HostMemory("output")       \
+                              .TypeConstraint<type>("T"), \
+                          TemplatedStackPushOp</*allow_swapping=*/true>)
+
+REGISTER_SYCL_HOST_KERNEL(int32);
+REGISTER_SYCL_HOST_KERNEL(bool);
+#undef REGISTER_SYCL_KERNEL
+#undef REGISTER_SYCL_HOST_KERNEL
+#endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                          \
+  REGISTER_KERNEL_BUILDER(Name("StackPush")                               \
+                              .Device(DEVICE_VE)                          \
+                              .HostMemory("handle")                       \
+                              .TypeConstraint<type>("T"),                 \
+                          TemplatedStackPushOp</*allow_swapping=*/true>); \
+  REGISTER_KERNEL_BUILDER(Name("StackPushV2")                             \
+                              .Device(DEVICE_VE)                          \
+                              .HostMemory("handle")                       \
+                              .TypeConstraint<type>("T"),                 \
+                          TemplatedStackPushOp</*allow_swapping=*/true>);
+
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
+
+#define REGISTER_VE_HOST_KERNEL(type)                                     \
+  REGISTER_KERNEL_BUILDER(Name("StackPush")                               \
+                              .Device(DEVICE_VE)                          \
                               .HostMemory("handle")                       \
                               .HostMemory("elem")                         \
                               .HostMemory("output")                       \
                               .TypeConstraint<type>("T"),                 \
                           TemplatedStackPushOp</*allow_swapping=*/true>); \
-  REGISTER_KERNEL_BUILDER(Name("StackPop")                                \
-                              .Device(DEVICE_DEFAULT)                     \
+  REGISTER_KERNEL_BUILDER(Name("StackPushV2")                             \
+                              .Device(DEVICE_VE)                          \
                               .HostMemory("handle")                       \
                               .HostMemory("elem")                         \
-                              .TypeConstraint<type>("elem_type"),         \
-                          StackPopOp);                                    \
-  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                              \
-                              .Device(DEVICE_DEFAULT)                     \
-                              .HostMemory("handle")                       \
-                              .HostMemory("elem")                         \
-                              .TypeConstraint<type>("elem_type"),         \
+                              .HostMemory("output")                       \
+                              .TypeConstraint<type>("T"),                 \
+                          TemplatedStackPushOp</*allow_swapping=*/true>);
+
+REGISTER_VE_HOST_KERNEL(int32);
+REGISTER_VE_HOST_KERNEL(bool);
+
+#undef REGISTER_VE_HOST_KERNEL
+#endif // TENSORFLOW_USE_VE
+
+REGISTER_KERNEL_BUILDER(Name("StackPop").Device(DEVICE_CPU), StackPopOp);
+REGISTER_KERNEL_BUILDER(Name("StackPopV2").Device(DEVICE_CPU), StackPopOp);
+
+#define REGISTER_GPU_KERNEL(type)                                 \
+  REGISTER_KERNEL_BUILDER(Name("StackPop")                        \
+                              .Device(DEVICE_GPU)                 \
+                              .HostMemory("handle")               \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp);                            \
+  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                      \
+                              .Device(DEVICE_GPU)                 \
+                              .HostMemory("handle")               \
+                              .TypeConstraint<type>("elem_type"), \
                           StackPopOp);
 
-REGISTER_DEFAULT_HOST_KERNEL(int32);
-REGISTER_DEFAULT_HOST_KERNEL(bool);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_GPU_KERNEL);
+#undef REGISTER_GPU_KERNEL
 
-#undef REGISTER_DEFAULT_HOST_KERNEL
+// Special GPU kernels for int32 and bool.
+// TODO(b/25387198): Also enable int32 in device memory. This kernel
+// registration requires all int32 inputs and outputs to be in host memory.
+#define REGISTER_GPU_HOST_KERNEL(type)                            \
+  REGISTER_KERNEL_BUILDER(Name("StackPop")                        \
+                              .Device(DEVICE_GPU)                 \
+                              .HostMemory("handle")               \
+                              .HostMemory("elem")                 \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp);                            \
+  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                      \
+                              .Device(DEVICE_GPU)                 \
+                              .HostMemory("handle")               \
+                              .HostMemory("elem")                 \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp);
+
+REGISTER_GPU_HOST_KERNEL(int32);
+REGISTER_GPU_HOST_KERNEL(bool);
+
+#undef REGISTER_GPU_HOST_KERNEL
+
+#ifdef TENSORFLOW_USE_SYCL
+#define REGISTER_SYCL_KERNEL(type)                                \
+  REGISTER_KERNEL_BUILDER(Name("StackPop")                        \
+                              .Device(DEVICE_SYCL)                \
+                              .HostMemory("handle")               \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp)
+
+TF_CALL_GPU_NUMBER_TYPES(REGISTER_SYCL_KERNEL);
+
+#define REGISTER_SYCL_HOST_KERNEL(type)                           \
+  REGISTER_KERNEL_BUILDER(Name("StackPop")                        \
+                              .Device(DEVICE_SYCL)                \
+                              .HostMemory("handle")               \
+                              .HostMemory("elem")                 \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp)
+
+REGISTER_SYCL_HOST_KERNEL(int32);
+REGISTER_SYCL_HOST_KERNEL(bool);
+
+#undef REGISTER_SYCL_KERNEL
+#undef REGISTER_SYCL_HOST_KERNEL
+#endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                  \
+  REGISTER_KERNEL_BUILDER(Name("StackPop")                        \
+                              .Device(DEVICE_VE)                  \
+                              .HostMemory("handle")               \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp);                            \
+  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                      \
+                              .Device(DEVICE_VE)                  \
+                              .HostMemory("handle")               \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp);
+
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
+
+#define REGISTER_VE_HOST_KERNEL(type)                             \
+  REGISTER_KERNEL_BUILDER(Name("StackPop")                        \
+                              .Device(DEVICE_VE)                  \
+                              .HostMemory("handle")               \
+                              .HostMemory("elem")                 \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp);                            \
+  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                      \
+                              .Device(DEVICE_VE)                  \
+                              .HostMemory("handle")               \
+                              .HostMemory("elem")                 \
+                              .TypeConstraint<type>("elem_type"), \
+                          StackPopOp);
+
+REGISTER_VE_HOST_KERNEL(int32);
+REGISTER_VE_HOST_KERNEL(bool);
+
+#undef REGISTER_VE_HOST_KERNEL
+#endif // TENSORFLOW_USE_VE
 
 REGISTER_KERNEL_BUILDER(Name("StackClose").Device(DEVICE_CPU), StackCloseOp);
 REGISTER_KERNEL_BUILDER(
-    Name("StackClose").Device(DEVICE_DEFAULT).HostMemory("handle"),
-    StackCloseOp);
+    Name("StackClose").Device(DEVICE_GPU).HostMemory("handle"), StackCloseOp);
 REGISTER_KERNEL_BUILDER(Name("StackCloseV2").Device(DEVICE_CPU), StackCloseOp);
 REGISTER_KERNEL_BUILDER(
-    Name("StackCloseV2").Device(DEVICE_DEFAULT).HostMemory("handle"),
+    Name("StackCloseV2").Device(DEVICE_GPU).HostMemory("handle"), StackCloseOp);
+#ifdef TENSORFLOW_USE_SYCL
+REGISTER_KERNEL_BUILDER(
+    Name("StackClose").Device(DEVICE_SYCL).HostMemory("handle"), StackCloseOp);
+REGISTER_KERNEL_BUILDER(
+    Name("StackCloseV2").Device(DEVICE_SYCL).HostMemory("handle"),
     StackCloseOp);
-
+#endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(
+    Name("StackClose").Device(DEVICE_VE).HostMemory("handle"), StackCloseOp);
+REGISTER_KERNEL_BUILDER(
+    Name("StackCloseV2").Device(DEVICE_VE).HostMemory("handle"), StackCloseOp);
+#endif // TENSORFLOW_USE_VE
 }  // namespace tensorflow

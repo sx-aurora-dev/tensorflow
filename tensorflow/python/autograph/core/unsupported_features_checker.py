@@ -21,17 +21,11 @@ from __future__ import print_function
 import gast
 
 
-class UnsupportedFeaturesChecker(gast.NodeVisitor):
+class UnsupportedFeaturesChecker(gast.NodeTransformer):
   """Quick check for Python features we know we don't support.
 
   Any features detected will cause AutoGraph to not compile a function.
   """
-
-  def visit_Attribute(self, node):
-    if (node.attr is not None
-        and node.attr.startswith('__') and not node.attr.endswith('__')):
-      raise NotImplementedError(
-          'Mangled names are not yet supported by AutoGraph')
 
   # These checks could potentially be replaced with inspect.isgeneratorfunction
   # to avoid a getsource/parse/ast-walk round trip.
@@ -44,3 +38,4 @@ class UnsupportedFeaturesChecker(gast.NodeVisitor):
 
 def verify(node):
   UnsupportedFeaturesChecker().visit(node)
+

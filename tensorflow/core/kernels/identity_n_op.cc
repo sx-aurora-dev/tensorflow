@@ -23,7 +23,13 @@ limitations under the License.
 
 namespace tensorflow {
 
-REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_DEFAULT), IdentityNOp);
+REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_CPU), IdentityNOp);
+
+#if TENSORFLOW_USE_SYCL
+REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_SYCL), IdentityNOp);
+#endif
+
+REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_GPU), IdentityNOp);
 
 REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_VE), IdentityNOp);
 

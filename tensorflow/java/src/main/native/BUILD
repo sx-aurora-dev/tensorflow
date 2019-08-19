@@ -14,7 +14,7 @@ package(default_visibility = [
 
 licenses(["notice"])  # Apache 2.0
 
-load("//tensorflow:tensorflow.bzl", "tf_copts", "tf_cuda_library")
+load("//tensorflow:tensorflow.bzl", "tf_cuda_library", "tf_copts")
 
 tf_cuda_library(
     name = "native",

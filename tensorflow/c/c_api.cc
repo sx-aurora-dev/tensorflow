@@ -35,7 +35,6 @@ limitations under the License.
 #include "tensorflow/core/framework/op_gen_lib.h"
 #endif  // !defined(IS_MOBILE_PLATFORM) && !defined(IS_SLIM_BUILD)
 #include "tensorflow/c/c_api_internal.h"
-#include "tensorflow/c/tf_status_internal.h"
 #include "tensorflow/c/tf_tensor.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
 #include "tensorflow/core/common_runtime/eval_const_tensor.h"
@@ -220,21 +219,33 @@ Status MessageToBuffer(const tensorflow::protobuf::MessageLite& in,
     return InvalidArgument("Passing non-empty TF_Buffer is invalid.");
   }
   const size_t proto_size = in.ByteSizeLong();
-  void* buf = port::Malloc(proto_size);
+  void* buf = tensorflow::port::Malloc(proto_size);
   if (buf == nullptr) {
     return tensorflow::errors::ResourceExhausted(
         "Failed to allocate memory to serialize message of type '",
         in.GetTypeName(), "' and size ", proto_size);
   }
+  // SerializeToArray takes size as an int.
+  // This next 'if' is a workaround till we update to depend on a version
+  // of protocol buffers that includes
+  // https://github.com/google/protobuf/pull/4739
+  if (proto_size > std::numeric_limits<int>::max()) {
+    return InvalidArgument("Cannot serialize protocol buffer of type ",
+                           in.GetTypeName(), " as the serialized size (",
+                           proto_size,
+                           "bytes) would be larger than the limit (",
+                           std::numeric_limits<int>::max(), " bytes)");
+  }
   if (!in.SerializeToArray(buf, proto_size)) {
-    port::Free(buf);
     return InvalidArgument("Unable to serialize ", in.GetTypeName(),
                            " protocol buffer, perhaps the serialized size (",
                            proto_size, " bytes) is too large?");
   }
   out->data = buf;
   out->length = proto_size;
-  out->data_deallocator = [](void* data, size_t length) { port::Free(data); };
+  out->data_deallocator = [](void* data, size_t length) {
+    tensorflow::port::Free(data);
+  };
   return Status::OK();
 }
 
@@ -351,7 +362,7 @@ bool ExtendSessionGraphHelper(TF_Session* session, TF_Status* status) {
       }
       *graph_def.mutable_library() = graph.flib_def().ToProto();
       session->graph->mu.unlock();
-      status->status = session->session->Extend(std::move(graph_def));
+      status->status = session->session->Extend(graph_def);
       if (TF_GetCode(status) != TF_OK) {
         // Contract is we always delete input_values[i].
         return false;

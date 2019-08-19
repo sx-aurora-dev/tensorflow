@@ -549,13 +549,6 @@ inline TensorShape::operator const PartialTensorShape&() const {
 extern template class TensorShapeBase<TensorShape>;
 extern template class TensorShapeBase<PartialTensorShape>;
 
-// A convenient struct to represent a (DataType, PartialTensorShape) pair. It's
-// often used in shape inference.
-struct DtypeAndPartialTensorShape {
-  DataType dtype;
-  PartialTensorShape shape;
-};
-
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_FRAMEWORK_TENSOR_SHAPE_H_

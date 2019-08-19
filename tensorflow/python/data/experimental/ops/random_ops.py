@@ -19,7 +19,6 @@ from __future__ import print_function
 
 import functools
 
-from tensorflow.python.compat import compat
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.util import random_seed
 from tensorflow.python.data.util import structure
@@ -35,16 +34,12 @@ class RandomDatasetV2(dataset_ops.DatasetSource):
   def __init__(self, seed=None):
     """A `Dataset` of pseudorandom values."""
     self._seed, self._seed2 = random_seed.get_seed(seed)
-    if compat.forward_compatible(2019, 8, 3):
-      variant_tensor = gen_experimental_dataset_ops.random_dataset(
-          seed=self._seed, seed2=self._seed2, **self._flat_structure)
-    else:
-      variant_tensor = gen_experimental_dataset_ops.experimental_random_dataset(
-          seed=self._seed, seed2=self._seed2, **self._flat_structure)
+    variant_tensor = gen_experimental_dataset_ops.experimental_random_dataset(
+        seed=self._seed, seed2=self._seed2, **dataset_ops.flat_structure(self))
     super(RandomDatasetV2, self).__init__(variant_tensor)
 
   @property
-  def element_spec(self):
+  def _element_structure(self):
     return structure.TensorStructure(dtypes.int64, [])
 
 

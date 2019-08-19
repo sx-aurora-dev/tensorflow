@@ -209,10 +209,10 @@ typedef std::unordered_map<string, TaskDeviceMap> GlobalDeviceMap;
 
 // Create a populated GlobalDeviceMap from CollInstanceParams and localities.
 GlobalDeviceMap BuildDevRecs(const CollInstanceParams& ip,
-                             const std::vector<DeviceAttributes>& attributes) {
+                             const std::vector<DeviceLocality>& localities) {
   GlobalDeviceMap gdm;
   CHECK_EQ(ip.device_names.size(), ip.task_names.size());
-  CHECK_EQ(ip.device_names.size(), attributes.size());
+  CHECK_EQ(ip.device_names.size(), localities.size());
   for (int i = 0; i < ip.device_names.size(); ++i) {
     TaskDeviceMap& tdm = gdm[ip.task_names[i]];
     DevRec* dr = &tdm[ip.device_names[i]];
@@ -221,7 +221,7 @@ GlobalDeviceMap BuildDevRecs(const CollInstanceParams& ip,
     dr->original_rank = i;
     dr->local_rank = 0;   // Will be populated later by OrderTaskDeviceMap.
     dr->global_rank = 0;  // Will be populated later by EstablishGlobalRank.
-    dr->locality = &attributes[i].locality();
+    dr->locality = &localities[i];
   }
   return gdm;
 }
@@ -342,9 +342,9 @@ void OrderTaskDeviceMap(const string& gpu_ring_order, TaskDeviceMap* tdm) {
 // sharing the same device group where there is more than one good
 // order.
 GlobalDeviceMap EstablishGlobalRank(
-    CollectiveParams* cp, const std::vector<DeviceAttributes>& attributes) {
+    CollectiveParams* cp, const std::vector<DeviceLocality>& localities) {
   VLOG(1) << "EstablishGlobalRank";
-  GlobalDeviceMap gdm = BuildDevRecs(cp->instance, attributes);
+  GlobalDeviceMap gdm = BuildDevRecs(cp->instance, localities);
   for (auto& iter : gdm) {
     TaskDeviceMap& tdm = iter.second;
     OrderTaskDeviceMap(cp->instance.gpu_ring_order, &tdm);
@@ -472,26 +472,20 @@ void CollectiveParamResolverLocal::InitInstanceSharedParams(
   // Get Locality data for all devices.
 
   // Set is_local and task_names in *shared prior to invoking
-  // GetDeviceAttributesAsync.  In a distributed context this function can be
+  // GetDeviceLocalitiesAsync.  In a distributed context this function can be
   // called by a derived class, some of the devices may be non-local and
-  // GetDeviceAttributesAsync will use those fields to launch RPCs.
+  // GetDeviceLocalitiesAsync will use those fields to launch RPCs.
   CompleteTaskIsLocal(task_name_, &ir->shared);
 
   // Because the callback may execute in a different thread, we release
   // ir->out_mu here.  Before releasing, we mark it as unavailable for other
   // threads.
   ir->out_mu_available = false;
-  const auto device_names = ir->shared.instance.device_names;
-  const auto task_names = ir->shared.instance.task_names;
   ir->out_mu.unlock();
-  std::vector<DeviceAttributes>* attributes = new std::vector<DeviceAttributes>;
-  // Suppress linter warning about access to shared without mutex because in
-  // principle the members are locked due to out_mu_available=false.
-  dev_resolver_->GetAllDeviceAttributesAsync(
-      ir->shared.instance.device_names,  // NOLINT
-      ir->shared.instance.task_names,    // NOLINT
-      attributes,
-      [this, gr, cp, ir, attributes, done](const Status& s)
+  std::vector<DeviceLocality>* localities = new std::vector<DeviceLocality>;
+  dev_resolver_->GetDeviceLocalitiesAsync(
+      ir->shared.instance, localities,
+      [this, gr, cp, ir, localities, done](const Status& s)
           EXCLUSIVE_LOCK_FUNCTION(ir->out_mu) {
             // Then we recover the lock in the callback thread that will hold it
             // through the rest of the call chain.  Signal the cv now, any
@@ -501,26 +495,26 @@ void CollectiveParamResolverLocal::InitInstanceSharedParams(
             ir->out_mu_available = true;
             ir->out_cv.notify_all();
             if (s.ok()) {
-              CompleteDefaultRanking(gr, cp, ir, *attributes);
+              CompleteDefaultRanking(gr, cp, ir, *localities);
               done(Status::OK());
             } else {
               done(s);
             }
-            delete attributes;
+            delete localities;
           });
 }
 
-// NOTE(ayushd): The DeviceLocality objects in attributes will have LocalLinks
+// NOTE(ayushd): The DeviceLocality objects in localities will have LocalLinks
 // to all devices that they are physically connected to and visible to the
 // TensorFlow runtime.  This set of devices may be a superset of the devices
 // participating in this instance of collectives.
 void CollectiveParamResolverLocal::CompleteDefaultRanking(
     const GroupRec* gr, const CollectiveParams* cp, InstanceRec* ir,
-    const std::vector<DeviceAttributes>& attributes) {
+    const std::vector<DeviceLocality>& localities) {
   // Establish an instance-specific default rank order for devices
   // based on localities.  This rank order should be a good ring
   // order, if possible.
-  GlobalDeviceMap gdm = EstablishGlobalRank(&ir->shared, attributes);
+  GlobalDeviceMap gdm = EstablishGlobalRank(&ir->shared, localities);
   // Reflect the new global ranking on shared
   size_t num_devices = ir->shared.group.group_size;
   std::vector<string> new_device_names(num_devices, "");
@@ -605,7 +599,7 @@ void CollectiveParamResolverLocal::CallInitInstanceSharedParams(
   // before all the function stack frames pop. The static analysis will
   // not allow that.
   //
-  // *the lock is dropped just before calling GetDeviceAttributesAsync, because
+  // *the lock is dropped just before calling GetDeviceLocalitiesAsync, because
   // there is no guarantee that the thread that executes the callback is the
   // same as the one that locked ir->out_mu.  To prevent other threads from
   // grabbing ir->out_mu, we mark ir->out_mu_available as false.  Hence, in

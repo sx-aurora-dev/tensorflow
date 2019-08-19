@@ -1,9 +1,8 @@
-load("//tensorflow:tensorflow.bzl", "cuda_py_test")
+licenses(["notice"])  # Apache 2.0
 
-package(
-    default_visibility = ["//visibility:public"],
-    licenses = ["notice"],  # Apache 2.0
-)
+package(default_visibility = ["//visibility:public"])
+
+load("//tensorflow:tensorflow.bzl", "cuda_py_test")
 
 py_library(
     name = "compiler_py",

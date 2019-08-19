@@ -31,6 +31,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import gen_string_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_string_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import test
 
 
@@ -90,7 +91,7 @@ def _make_sparse_tensor(indices, values, dense_shape, dtype=np.int32):
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class UnicodeDecodeTest(test_util.TensorFlowTestCase,
+class UnicodeDecodeTest(ragged_test_util.RaggedTensorTestCase,
                         parameterized.TestCase):
 
   def testScalarDecode(self):
@@ -109,15 +110,15 @@ class UnicodeDecodeTest(test_util.TensorFlowTestCase,
     chars = ragged_string_ops.unicode_decode(text, "utf-8")
     expected_chars = [[ord(c) for c in u"仅今年前"],
                       [ord(c) for c in u"hello"]]
-    self.assertAllEqual(chars, expected_chars)
+    self.assertRaggedEqual(chars, expected_chars)
 
   def testVectorDecodeWithOffset(self):
     text = constant_op.constant([u"仅今年前".encode("utf-8"), b"hello"])
     chars, starts = ragged_string_ops.unicode_decode_with_offsets(text, "utf-8")
     expected_chars = [[ord(c) for c in u"仅今年前"],
                       [ord(c) for c in u"hello"]]
-    self.assertAllEqual(chars, expected_chars)
-    self.assertAllEqual(starts, [[0, 3, 6, 9], [0, 1, 2, 3, 4]])
+    self.assertRaggedEqual(chars, expected_chars)
+    self.assertRaggedEqual(starts, [[0, 3, 6, 9], [0, 1, 2, 3, 4]])
 
   @parameterized.parameters([
       {"texts": u"仅今年前"},
@@ -133,7 +134,7 @@ class UnicodeDecodeTest(test_util.TensorFlowTestCase,
         _nested_encode(texts, "UTF-8"), ragged_rank=ragged_rank, dtype=bytes)
     result = ragged_string_ops.unicode_decode(input_tensor, "UTF-8")
     expected = _nested_codepoints(texts)
-    self.assertAllEqual(expected, result)
+    self.assertRaggedEqual(expected, result)
 
   @parameterized.parameters([
       {"texts": u"仅今年前"},
@@ -151,19 +152,19 @@ class UnicodeDecodeTest(test_util.TensorFlowTestCase,
         input_tensor, "UTF-8")
     expected_codepoints = _nested_codepoints(texts)
     expected_offsets = _nested_offsets(texts, "UTF-8")
-    self.assertAllEqual(expected_codepoints, result[0])
-    self.assertAllEqual(expected_offsets, result[1])
+    self.assertRaggedEqual(expected_codepoints, result[0])
+    self.assertRaggedEqual(expected_offsets, result[1])
 
   def testDocstringExamples(self):
     texts = [s.encode("utf8") for s in [u"G\xf6\xf6dnight", u"\U0001f60a"]]
     codepoints1 = ragged_string_ops.unicode_decode(texts, "UTF-8")
     codepoints2, offsets = ragged_string_ops.unicode_decode_with_offsets(
         texts, "UTF-8")
-    self.assertAllEqual(
+    self.assertRaggedEqual(
         codepoints1, [[71, 246, 246, 100, 110, 105, 103, 104, 116], [128522]])
-    self.assertAllEqual(
+    self.assertRaggedEqual(
         codepoints2, [[71, 246, 246, 100, 110, 105, 103, 104, 116], [128522]])
-    self.assertAllEqual(offsets, [[0, 1, 3, 5, 6, 7, 8, 9, 10], [0]])
+    self.assertRaggedEqual(offsets, [[0, 1, 3, 5, 6, 7, 8, 9, 10], [0]])
 
   @parameterized.parameters([
       dict(
@@ -262,7 +263,7 @@ class UnicodeDecodeTest(test_util.TensorFlowTestCase,
   ])  # pyformat: disable
   def testErrorModes(self, expected=None, **args):
     result = ragged_string_ops.unicode_decode(**args)
-    self.assertAllEqual(expected, result)
+    self.assertRaggedEqual(expected, result)
 
   @parameterized.parameters([
       dict(
@@ -313,8 +314,8 @@ class UnicodeDecodeTest(test_util.TensorFlowTestCase,
                                 expected_offsets=None,
                                 **args):
     result = ragged_string_ops.unicode_decode_with_offsets(**args)
-    self.assertAllEqual(result[0], expected)
-    self.assertAllEqual(result[1], expected_offsets)
+    self.assertRaggedEqual(result[0], expected)
+    self.assertRaggedEqual(result[1], expected_offsets)
 
   @parameterized.parameters(
       ("UTF-8", [u"こんにちは", u"你好", u"Hello"]),
@@ -328,7 +329,7 @@ class UnicodeDecodeTest(test_util.TensorFlowTestCase,
     expected = _nested_codepoints(texts)
     input_tensor = constant_op.constant(_nested_encode(texts, encoding))
     result = ragged_string_ops.unicode_decode(input_tensor, encoding)
-    self.assertAllEqual(expected, result)
+    self.assertRaggedEqual(expected, result)
 
   @parameterized.parameters(
       ("UTF-8", [u"こんにちは", u"你好", u"Hello"]),
@@ -344,8 +345,8 @@ class UnicodeDecodeTest(test_util.TensorFlowTestCase,
     input_tensor = constant_op.constant(_nested_encode(texts, encoding))
     result = ragged_string_ops.unicode_decode_with_offsets(
         input_tensor, encoding)
-    self.assertAllEqual(expected_codepoints, result[0])
-    self.assertAllEqual(expected_offsets, result[1])
+    self.assertRaggedEqual(expected_codepoints, result[0])
+    self.assertRaggedEqual(expected_offsets, result[1])
 
   @parameterized.parameters([
       dict(input=[b"\xFEED"],
@@ -422,7 +423,7 @@ class UnicodeDecodeTest(test_util.TensorFlowTestCase,
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class UnicodeSplitTest(test_util.TensorFlowTestCase,
+class UnicodeSplitTest(ragged_test_util.RaggedTensorTestCase,
                        parameterized.TestCase):
 
   def testScalarSplit(self):
@@ -441,15 +442,15 @@ class UnicodeSplitTest(test_util.TensorFlowTestCase,
     chars = ragged_string_ops.unicode_split(text, "UTF-8")
     expected_chars = [[c.encode("UTF-8") for c in u"仅今年前"],
                       [c.encode("UTF-8") for c in u"hello"]]
-    self.assertAllEqual(chars, expected_chars)
+    self.assertRaggedEqual(chars, expected_chars)
 
   def testVectorSplitWithOffset(self):
     text = constant_op.constant([u"仅今年前".encode("UTF-8"), b"hello"])
     chars, starts = ragged_string_ops.unicode_split_with_offsets(text, "UTF-8")
     expected_chars = [[c.encode("UTF-8") for c in u"仅今年前"],
                       [c.encode("UTF-8") for c in u"hello"]]
-    self.assertAllEqual(chars, expected_chars)
-    self.assertAllEqual(starts, [[0, 3, 6, 9], [0, 1, 2, 3, 4]])
+    self.assertRaggedEqual(chars, expected_chars)
+    self.assertRaggedEqual(starts, [[0, 3, 6, 9], [0, 1, 2, 3, 4]])
 
   @parameterized.parameters([
       {"texts": u"仅今年前"},
@@ -465,7 +466,7 @@ class UnicodeSplitTest(test_util.TensorFlowTestCase,
         _nested_encode(texts, "UTF-8"), ragged_rank=ragged_rank, dtype=bytes)
     result = ragged_string_ops.unicode_split(input_tensor, "UTF-8")
     expected = _nested_splitchars(texts, "UTF-8")
-    self.assertAllEqual(expected, result)
+    self.assertRaggedEqual(expected, result)
 
   @parameterized.parameters([
       {"texts": u"仅今年前"},
@@ -482,23 +483,23 @@ class UnicodeSplitTest(test_util.TensorFlowTestCase,
     result = ragged_string_ops.unicode_split_with_offsets(input_tensor, "UTF-8")
     expected_codepoints = _nested_splitchars(texts, "UTF-8")
     expected_offsets = _nested_offsets(texts, "UTF-8")
-    self.assertAllEqual(expected_codepoints, result[0])
-    self.assertAllEqual(expected_offsets, result[1])
+    self.assertRaggedEqual(expected_codepoints, result[0])
+    self.assertRaggedEqual(expected_offsets, result[1])
 
   def testDocstringExamples(self):
     texts = [s.encode("utf8") for s in [u"G\xf6\xf6dnight", u"\U0001f60a"]]
     codepoints1 = ragged_string_ops.unicode_split(texts, "UTF-8")
     codepoints2, offsets = ragged_string_ops.unicode_split_with_offsets(
         texts, "UTF-8")
-    self.assertAllEqual(
+    self.assertRaggedEqual(
         codepoints1,
         [[b"G", b"\xc3\xb6", b"\xc3\xb6", b"d", b"n", b"i", b"g", b"h", b"t"],
          [b"\xf0\x9f\x98\x8a"]])
-    self.assertAllEqual(
+    self.assertRaggedEqual(
         codepoints2,
         [[b"G", b"\xc3\xb6", b"\xc3\xb6", b"d", b"n", b"i", b"g", b"h", b"t"],
          [b"\xf0\x9f\x98\x8a"]])
-    self.assertAllEqual(offsets, [[0, 1, 3, 5, 6, 7, 8, 9, 10], [0]])
+    self.assertRaggedEqual(offsets, [[0, 1, 3, 5, 6, 7, 8, 9, 10], [0]])
 
   @parameterized.parameters([
       dict(
@@ -603,7 +604,7 @@ class UnicodeSplitTest(test_util.TensorFlowTestCase,
   ])  # pyformat: disable
   def testErrorModes(self, expected=None, **args):
     result = ragged_string_ops.unicode_split(**args)
-    self.assertAllEqual(expected, result)
+    self.assertRaggedEqual(expected, result)
 
   @parameterized.parameters([
       dict(
@@ -643,8 +644,8 @@ class UnicodeSplitTest(test_util.TensorFlowTestCase,
                                 expected_offsets=None,
                                 **args):
     result = ragged_string_ops.unicode_split_with_offsets(**args)
-    self.assertAllEqual(expected, result[0])
-    self.assertAllEqual(expected_offsets, result[1])
+    self.assertRaggedEqual(expected, result[0])
+    self.assertRaggedEqual(expected_offsets, result[1])
 
   @parameterized.parameters(
       ("UTF-8", [u"こんにちは", u"你好", u"Hello"]),
@@ -655,7 +656,7 @@ class UnicodeSplitTest(test_util.TensorFlowTestCase,
     expected = _nested_splitchars(texts, encoding)
     input_tensor = constant_op.constant(_nested_encode(texts, encoding))
     result = ragged_string_ops.unicode_split(input_tensor, encoding)
-    self.assertAllEqual(expected, result)
+    self.assertRaggedEqual(expected, result)
 
   @parameterized.parameters(
       ("UTF-8", [u"こんにちは", u"你好", u"Hello"]),
@@ -668,8 +669,8 @@ class UnicodeSplitTest(test_util.TensorFlowTestCase,
     input_tensor = constant_op.constant(_nested_encode(texts, encoding))
     result = ragged_string_ops.unicode_split_with_offsets(
         input_tensor, encoding)
-    self.assertAllEqual(expected_codepoints, result[0])
-    self.assertAllEqual(expected_offsets, result[1])
+    self.assertRaggedEqual(expected_codepoints, result[0])
+    self.assertRaggedEqual(expected_offsets, result[1])
 
   @parameterized.parameters([
       dict(input=[b"\xFEED"],

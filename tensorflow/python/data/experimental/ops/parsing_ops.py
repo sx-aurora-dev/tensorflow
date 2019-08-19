@@ -17,7 +17,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from tensorflow.python.compat import compat
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.util import structure
 from tensorflow.python.framework import dtypes
@@ -33,8 +32,7 @@ class _ParseExampleDataset(dataset_ops.UnaryDataset):
 
   def __init__(self, input_dataset, features, num_parallel_calls):
     self._input_dataset = input_dataset
-    if not structure.are_compatible(
-        input_dataset.element_spec,
+    if not input_dataset._element_structure.is_compatible_with(  # pylint: disable=protected-access
         structure.TensorStructure(dtypes.string, [None])):
       raise TypeError("Input dataset should be a dataset of vectors of strings")
     self._num_parallel_calls = num_parallel_calls
@@ -77,36 +75,24 @@ class _ParseExampleDataset(dataset_ops.UnaryDataset):
             [ops.Tensor for _ in range(len(self._dense_defaults))] +
             [sparse_tensor.SparseTensor for _ in range(len(self._sparse_keys))
             ]))
-    self._element_spec = structure.convert_legacy_structure(
+    self._structure = structure.convert_legacy_structure(
         output_types, output_shapes, output_classes)
 
-    if compat.forward_compatible(2019, 8, 3):
-      variant_tensor = (
-          gen_experimental_dataset_ops.parse_example_dataset(
-              self._input_dataset._variant_tensor,  # pylint: disable=protected-access
-              self._num_parallel_calls,
-              self._dense_defaults,
-              self._sparse_keys,
-              self._dense_keys,
-              self._sparse_types,
-              self._dense_shapes,
-              **self._flat_structure))
-    else:
-      variant_tensor = (
-          gen_experimental_dataset_ops.experimental_parse_example_dataset(
-              self._input_dataset._variant_tensor,  # pylint: disable=protected-access
-              self._num_parallel_calls,
-              self._dense_defaults,
-              self._sparse_keys,
-              self._dense_keys,
-              self._sparse_types,
-              self._dense_shapes,
-              **self._flat_structure))
+    variant_tensor = (
+        gen_experimental_dataset_ops.experimental_parse_example_dataset(
+            self._input_dataset._variant_tensor,  # pylint: disable=protected-access
+            self._num_parallel_calls,
+            self._dense_defaults,
+            self._sparse_keys,
+            self._dense_keys,
+            self._sparse_types,
+            self._dense_shapes,
+            **dataset_ops.flat_structure(self)))
     super(_ParseExampleDataset, self).__init__(input_dataset, variant_tensor)
 
   @property
-  def element_spec(self):
-    return self._element_spec
+  def _element_structure(self):
+    return self._structure
 
 
 # TODO(b/111553342): add arguments names and example names as well.

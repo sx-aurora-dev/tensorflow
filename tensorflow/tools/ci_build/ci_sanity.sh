@@ -36,12 +36,7 @@ die() {
 
 num_cpus() {
   # Get the number of CPUs
-  if [[ -f /proc/cpuinfo ]]; then
-    N_CPUS=$(grep -c ^processor /proc/cpuinfo)
-  else
-    # Fallback method
-    N_CPUS=`getconf _NPROCESSORS_ONLN`
-  fi
+  N_CPUS=$(grep -c ^processor /proc/cpuinfo)
   if [[ -z ${N_CPUS} ]]; then
     die "ERROR: Unable to determine the number of CPUs"
   fi
@@ -105,7 +100,6 @@ do_pylint() {
 "^tensorflow/contrib/eager/python/evaluator\.py.*\[E0202.*method-hidden "\
 "^tensorflow/contrib/eager/python/metrics_impl\.py.*\[E0202.*method-hidden "\
 "^tensorflow/contrib/rate/rate\.py.*\[E0202.*method-hidden "\
-"^tensorflow/python/training/tracking/tracking\.py.*\[E0202.*method-hidden "\
 "^tensorflow/python/platform/gfile\.py.*\[E0301.*non-iterator "\
 "^tensorflow/python/keras/callbacks\.py.*\[E1133.*not-an-iterable "\
 "^tensorflow/python/keras/engine/base_layer.py.*\[E0203.*access-member-before-definition "\
@@ -312,7 +306,7 @@ do_buildifier(){
   if [[ -s ${BUILDIFIER_OUTPUT_FILE} ]]; then
     echo "FAIL: buildifier found errors and/or warnings in above BUILD files."
     echo "buildifier suggested the following changes:"
-    buildifier -v -mode=diff -diff_command=diff ${BUILD_FILES}
+    buildifier -v -mode=diff ${BUILD_FILES}
     echo "Please fix manually or run buildifier <file> to auto-fix."
     return 1
   else

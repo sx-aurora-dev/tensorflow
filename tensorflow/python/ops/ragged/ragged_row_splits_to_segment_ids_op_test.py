@@ -20,12 +20,13 @@ from __future__ import print_function
 
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import test_util
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.ops.ragged import segment_id_ops
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedSplitsToSegmentIdsOpTest(test_util.TensorFlowTestCase):
+class RaggedSplitsToSegmentIdsOpTest(ragged_test_util.RaggedTensorTestCase):
 
   def testDocStringExample(self):
     splits = [0, 3, 3, 5, 6, 9]

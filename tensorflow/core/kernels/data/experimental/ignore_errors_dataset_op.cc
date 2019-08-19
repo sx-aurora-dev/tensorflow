@@ -140,8 +140,6 @@ class IgnoreErrorsDatasetOp : public UnaryDatasetOpKernel {
   };
 };
 
-REGISTER_KERNEL_BUILDER(Name("IgnoreErrorsDataset").Device(DEVICE_CPU),
-                        IgnoreErrorsDatasetOp);
 REGISTER_KERNEL_BUILDER(
     Name("ExperimentalIgnoreErrorsDataset").Device(DEVICE_CPU),
     IgnoreErrorsDatasetOp);

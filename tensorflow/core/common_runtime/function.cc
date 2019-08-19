@@ -410,8 +410,7 @@ class FunctionLibraryRuntimeImpl : public FunctionLibraryRuntime {
       delete this->overlay_flr;
     }
   };
-  std::unique_ptr<std::unordered_map<Handle, std::unique_ptr<Item>>> items_
-      GUARDED_BY(mu_);
+  std::unordered_map<Handle, std::unique_ptr<Item>> items_ GUARDED_BY(mu_);
 
   ProcessFunctionLibraryRuntime* parent_ = nullptr;  // not owned.
 
@@ -461,7 +460,6 @@ FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl(
                        ? ProcessFunctionLibraryRuntime::kDefaultFLRDevice
                        : device_->name()),
       next_handle_(0),
-      items_(new std::unordered_map<Handle, std::unique_ptr<Item>>),
       parent_(parent) {
   get_func_sig_ = [this](const string& op, const OpDef** sig) {
     return base_lib_def_->LookUpOpDef(op, sig);
@@ -483,16 +481,7 @@ FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl(
   }
 }
 
-FunctionLibraryRuntimeImpl::~FunctionLibraryRuntimeImpl() {
-  // Deleting the items_ list will delete all the function handles registered in
-  // this object. A function may contains a few sub-functions which have also
-  // been registered in this object. Deleting the parent function will call
-  // ReleaseHandle in this class again for each of the sub-functions. These
-  // circular calls may cause segfault since the items_ may have already been
-  // partially deleted when releasing handles of sub-functions. Explicitly
-  // release items_ here and check it in ReleaseHandle to avoid this.
-  items_.reset();
-}
+FunctionLibraryRuntimeImpl::~FunctionLibraryRuntimeImpl() {}
 
 // An asynchronous op kernel which executes an instantiated function
 // defined in a library.
@@ -560,8 +549,8 @@ const FunctionBody* FunctionLibraryRuntimeImpl::GetFunctionBody(Handle h) {
   }
 
   tf_shared_lock l(mu_);
-  auto iter = items_->find(local_handle);
-  CHECK(iter != items_->end());
+  auto iter = items_.find(local_handle);
+  CHECK(iter != items_.end());
   return iter->second->func_graph;
 }
 
@@ -738,8 +727,8 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
         return errors::Internal("LocalHandle not found for handle ", *handle,
                                 ".");
       }
-      auto item_handle = items_->find(handle_on_device);
-      if (item_handle == items_->end()) {
+      auto item_handle = items_.find(handle_on_device);
+      if (item_handle == items_.end()) {
         return errors::Internal("LocalHandle ", handle_on_device,
                                 " for handle ", *handle,
                                 " not found in items.");
@@ -780,7 +769,7 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
     *handle = parent_->GetHandle(key);
     if (*handle != kInvalidHandle) {
       local_handle = parent_->GetHandleOnDevice(device_name_, *handle);
-      ++(*items_)[local_handle]->instantiation_counter;
+      ++items_[local_handle]->instantiation_counter;
     } else {
       *handle = parent_->AddHandle(key, device_name_, next_handle_);
       Item* item = new Item;
@@ -797,7 +786,7 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
         return Status::OK();
       };
       local_handle = next_handle_++;
-      items_->emplace(local_handle, std::unique_ptr<Item>(item));
+      items_.emplace(local_handle, std::unique_ptr<Item>(item));
     }
   }
 
@@ -814,15 +803,13 @@ Status FunctionLibraryRuntimeImpl::ReleaseHandle(Handle handle) {
   if (h == kInvalidLocalHandle) {
     return parent_->ReleaseHandle(handle);
   }
+
   std::unique_ptr<Item> item_to_delete;
   Status parent_status;
   {
     mutex_lock l(mu_);
-    // Return directly if all items has already been released.
-    if (items_ == nullptr) return Status::OK();
-
-    auto it = items_->find(h);
-    if (it == items_->end()) {
+    auto it = items_.find(h);
+    if (it == items_.end()) {
       return errors::Internal(
           "Inconsistent FunctionLibraryRuntime. Expected to find an item for "
           "handle ",
@@ -837,7 +824,7 @@ Status FunctionLibraryRuntimeImpl::ReleaseHandle(Handle handle) {
       // CallOp or PartitionCallOp, their destructors will release cached
       // function handles, resulting in deadlock here.
       item_to_delete = std::move(item);
-      items_->erase(h);
+      items_.erase(h);
       parent_status = parent_->RemoveHandle(handle);
     }
   }
@@ -968,8 +955,8 @@ Status FunctionLibraryRuntimeImpl::GetOrCreateItem(LocalHandle local_handle,
                                                    Item** item) {
   {
     tf_shared_lock l(mu_);
-    auto iter = items_->find(local_handle);
-    if (iter == items_->end()) {
+    auto iter = items_.find(local_handle);
+    if (iter == items_.end()) {
       return errors::Internal("Local function handle ", local_handle,
                               " is not valid. Likely an internal error.");
     }
@@ -1507,27 +1494,6 @@ Status ValidateNoInline(const FunctionBody* fbody) {
 
 using OutputControlSrc = InlineFunctionBodyOptions::OutputControlSource;
 
-// Propagate the debug info of `nodes` in function `func` to the `target` node.
-// If the debug info of any node is missing, its node name and function name
-// is used.
-void PropagateDebugInfoToNode(const string& func,
-                              const std::vector<const Node*>& nodes,
-                              NodeDef* target) {
-  if (nodes.empty() || target->has_experimental_debug_info()) {
-    return;
-  }
-  for (const Node* node : nodes) {
-    const auto& node_def = node->def();
-    if (node_def.has_experimental_debug_info()) {
-      target->mutable_experimental_debug_info()->MergeFrom(
-          node_def.experimental_debug_info());
-    } else {
-      target->mutable_experimental_debug_info()->add_original_node_names(
-          node_def.name());
-      target->mutable_experimental_debug_info()->add_original_func_names(func);
-    }
-  }
-}
 }  // namespace
 
 string InlineFunctionBodyOptions::DebugString() const {
@@ -1549,8 +1515,6 @@ string InlineFunctionBodyOptions::DebugString() const {
       ", ignore_noinline=", true_false(ignore_noinline),
       ", override_device=", true_false(ignore_noinline),
       ", initialize_empty_device=", true_false(initialize_empty_device),
-      ", inline_impl_selection_group_functions=",
-      true_false(inline_impl_selection_group_functions),
       ", keep_caller_node=", keep_caller_node_str(), ", output_control_src=",
       output_control_src == OutputControlSrc::kDataOutputs ? "DataOutputs"
                                                            : "ControlOutputs");
@@ -1600,17 +1564,6 @@ Status ValidateInlining(const Node* node, const FunctionBody* fbody,
   if (options.disable_inlining) {
     return errors::InvalidArgument(
         "Function inlining explicitly disabled by 'options.disable_inlining'");
-  }
-
-  if (!options.inline_impl_selection_group_functions) {
-    bool is_impl_selection_group_function =
-        fbody->fdef.attr().find("api_implements") != fbody->fdef.attr().end();
-    if (is_impl_selection_group_function) {
-      return errors::InvalidArgument(
-          "Inlining of implementation selection group function ",
-          fbody->fdef.signature().name(),
-          " is disabled by options.inline_impl_selection_group_functions");
-    }
   }
 
   if (!options.ignore_noinline) {
@@ -1766,7 +1719,6 @@ Status InlineFunctionBody(const FunctionLibraryDefinition& flib_def, Graph* g,
     if (options.initialize_empty_device && ndef.device().empty()) {
       ndef.set_device(caller->def().device());
     }
-    PropagateDebugInfoToNode(fbody->fdef.signature().name(), {n}, &ndef);
 
     // Add the function node name as a prefix:
     //  1) to node name to avoid collisions

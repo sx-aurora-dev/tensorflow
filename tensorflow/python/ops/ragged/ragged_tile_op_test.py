@@ -26,11 +26,12 @@ from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops.ragged import ragged_array_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedTileOpTest(test_util.TensorFlowTestCase,
+class RaggedTileOpTest(ragged_test_util.RaggedTensorTestCase,
                        parameterized.TestCase):
 
   @parameterized.parameters([
@@ -208,7 +209,7 @@ class RaggedTileOpTest(test_util.TensorFlowTestCase,
       self.assertEqual(tiled.shape.ndims, rt.shape.ndims)
       if multiples_tensor is const_multiples:
         self.assertEqual(tiled.shape.as_list(), expected_shape)
-      self.assertAllEqual(tiled, expected)
+      self.assertRaggedEqual(tiled, expected)
 
   def testRaggedTileWithTensorInput(self):
     # When the input is a `Tensor`, ragged_tile just delegates to tf.tile.
@@ -217,7 +218,7 @@ class RaggedTileOpTest(test_util.TensorFlowTestCase,
     expected = [[1, 2, 1, 2], [3, 4, 3, 4],
                 [1, 2, 1, 2], [3, 4, 3, 4],
                 [1, 2, 1, 2], [3, 4, 3, 4]]  # pyformat: disable
-    self.assertAllEqual(tiled, expected)
+    self.assertRaggedEqual(tiled, expected)
 
 
 if __name__ == '__main__':

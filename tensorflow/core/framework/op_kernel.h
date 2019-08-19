@@ -53,7 +53,6 @@ limitations under the License.
 #include "tensorflow/core/platform/profile_utils/cpu_utils.h"
 #include "tensorflow/core/platform/thread_annotations.h"
 #include "tensorflow/core/platform/types.h"
-#include "tensorflow/core/protobuf/config.pb.h"
 
 namespace Eigen {
 struct ThreadPoolDevice;
@@ -165,6 +164,7 @@ class OpKernel {
   const string& name() const;              // Same as def().name()
   const string& type_string() const;       // Same as def().op()
   const string& requested_device() const;  // Same as def().device()
+  bool is_internal() const { return is_internal_; }
 
   int num_inputs() const { return input_types_.size(); }
   DataType input_type(int i) const { return input_types_[i]; }
@@ -220,6 +220,7 @@ class OpKernel {
   NameRangeMap input_name_map_;
   NameRangeMap output_name_map_;
   const int graph_def_version_;
+  const bool is_internal_;  // True if this is an internal operation
   bool expensive_;
   std::atomic_uint_fast64_t cost_estimate_;
 
@@ -684,9 +685,6 @@ class OpKernelContext {
     // Unique session identifier. Can be empty.
     string session_handle;
 
-    // Metadata about the session. Can be nullptr.
-    const SessionMetadata* session_metadata = nullptr;
-
     // The tensor store for this op.
     TensorStore* tensor_store = nullptr;
 
@@ -1126,11 +1124,6 @@ class OpKernelContext {
   // Unique identifier of the session it belongs to. Can be empty.
   string session_handle() const { return params_->session_handle; }
 
-  // Metadata about the session. Can be nullptr.
-  const SessionMetadata* session_metadata() const {
-    return params_->session_metadata;
-  }
-
   // An op kernel can access the tensor store of the run it belongs to.
   TensorStore* tensor_store() const { return params_->tensor_store; }
 
@@ -1344,17 +1337,6 @@ class OpKernelContext {
 
   TF_DISALLOW_COPY_AND_ASSIGN(OpKernelContext);
 };
-
-template <>
-const Eigen::ThreadPoolDevice& OpKernelContext::eigen_device() const;
-
-template <>
-const Eigen::GpuDevice& OpKernelContext::eigen_device() const;
-
-#ifdef TENSORFLOW_USE_SYCL
-template <>
-const Eigen::SyclDevice& OpKernelContext::eigen_device() const;
-#endif
 
 // Register your OpKernel by specifying the Op's name, the device the
 // kernel runs on, any type attr constraints for this kernel, any

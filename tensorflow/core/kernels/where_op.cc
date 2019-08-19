@@ -17,9 +17,9 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 #define EIGEN_USE_GPU
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 #include "tensorflow/core/kernels/where_op.h"
 
@@ -37,17 +37,13 @@ limitations under the License.
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/types.h"
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 #include "tensorflow/core/common_runtime/gpu/gpu_event_mgr.h"
 #include "tensorflow/core/kernels/cuda_solvers.h"
-#if GOOGLE_CUDA
 #include "tensorflow/core/platform/cuda.h"
+
 using stream_executor::cuda::ScopedActivateExecutorContext;
-#elif TENSORFLOW_USE_ROCM
-#include "tensorflow/core/platform/rocm.h"
-using stream_executor::rocm::ScopedActivateExecutorContext;
-#endif  // TENSORFLOW_USE_ROCM
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 namespace tensorflow {
 
@@ -175,9 +171,6 @@ class WhereCPUOp : public OpKernel {
       HANDLE_DIM(3);
       HANDLE_DIM(4);
       HANDLE_DIM(5);
-      HANDLE_DIM(6);
-      HANDLE_DIM(7);
-      HANDLE_DIM(8);
 
       default:
         OP_REQUIRES(context, false,
@@ -208,7 +201,7 @@ TF_CALL_bool(REGISTER_WHERE_OP);
 
 #undef REGISTER_WHERE_OP
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 namespace functor {
 
@@ -245,10 +238,7 @@ TF_CALL_bool(DECLARE_GPU_NUMTRUE_TYPE);
   DECLARE_GPU_WHERE(2, T);         \
   DECLARE_GPU_WHERE(3, T);         \
   DECLARE_GPU_WHERE(4, T);         \
-  DECLARE_GPU_WHERE(5, T);         \
-  DECLARE_GPU_WHERE(6, T);         \
-  DECLARE_GPU_WHERE(7, T);         \
-  DECLARE_GPU_WHERE(8, T);
+  DECLARE_GPU_WHERE(5, T);
 
 TF_CALL_WHERE_GPU_TYPES(DECLARE_GPU_WHERE_TYPES);
 
@@ -344,9 +334,6 @@ class WhereGPUOp : public AsyncOpKernel {
         HANDLE_DIM(3);
         HANDLE_DIM(4);
         HANDLE_DIM(5);
-        HANDLE_DIM(6);
-        HANDLE_DIM(7);
-        HANDLE_DIM(8);
 
         default:
           OP_REQUIRES_ASYNC(
@@ -392,6 +379,6 @@ REGISTER_KERNEL_BUILDER(Name("Where")
 
 #undef REGISTER_GPU_WHERE_OP
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

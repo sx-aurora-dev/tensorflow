@@ -120,7 +120,7 @@ class BincountOp : public OpKernel {
 TF_CALL_NUMBER_TYPES(REGISTER_KERNELS);
 #undef REGISTER_KERNELS
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 #define REGISTER_KERNELS(type)                            \
   REGISTER_KERNEL_BUILDER(Name("Bincount")                \
@@ -133,6 +133,6 @@ TF_CALL_int32(REGISTER_KERNELS);
 TF_CALL_float(REGISTER_KERNELS);
 #undef REGISTER_KERNELS
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // end namespace tensorflow

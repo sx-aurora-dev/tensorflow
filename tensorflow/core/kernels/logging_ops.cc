@@ -73,10 +73,18 @@ void AssertOp::Compute(OpKernelContext* ctx) {
 }
 
 REGISTER_KERNEL_BUILDER(Name("Assert")
-                            .Device(DEVICE_DEFAULT)
+                            .Device(DEVICE_CPU)
                             .HostMemory("condition")
                             .HostMemory("data"),
                         AssertOp);
+
+#if GOOGLE_CUDA
+REGISTER_KERNEL_BUILDER(Name("Assert")
+                            .Device(DEVICE_GPU)
+                            .HostMemory("condition")
+                            .HostMemory("data"),
+                        AssertOp);
+#endif  // GOOGLE_CUDA
 
 class PrintOp : public OpKernel {
  public:

@@ -20,7 +20,6 @@ from __future__ import division
 from __future__ import print_function
 
 from tensorflow.core.protobuf import config_pb2
-from tensorflow.python.compat import compat as forward_compat
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
@@ -165,7 +164,7 @@ class CondV2Test(test.TestCase):
 
     output = cond_v2.cond_v2(pred, true_fn, false_fn, name=name)
     cond_op = output.op.inputs[0].op
-    self.assertEqual(cond_op.type, "StatelessIf")
+    self.assertEqual(cond_op.type, "If")
     return output, cond_op
 
   def _createNestedCond(self, name):
@@ -181,7 +180,7 @@ class CondV2Test(test.TestCase):
 
     output = cond_v2.cond_v2(pred, true_fn, false_fn, name=name)
     cond_op = output.op.inputs[0].op
-    self.assertEqual(cond_op.type, "StatelessIf")
+    self.assertEqual(cond_op.type, "If")
     return output, cond_op
 
   def testDefaultName(self):
@@ -651,207 +650,12 @@ class CondV2Test(test.TestCase):
         # d2[x]/dx2 = 0
         self.assertEqual(false_val, [0.0])
 
-  @test_util.run_deprecated_v1
-  def testFuncCond(self):
-
-    @def_function.function
-    def fn_with_cond():
-      cond_v2.cond_v2(
-          constant_op.constant(True),
-          lambda: array_ops.zeros([]),
-          lambda: array_ops.ones([]),
-          name="cond_1")
-      return cond_v2.cond_v2(
-          constant_op.constant(False),
-          lambda: array_ops.zeros([]),
-          lambda: array_ops.ones([]),
-          name="cond_2")
-
-    concrete_fn = fn_with_cond.get_concrete_function()
-    cond_1 = concrete_fn.graph.get_operation_by_name("cond_1")
-    cond_2 = concrete_fn.graph.get_operation_by_name("cond_2")
-    # Verify that all functional ops are stateless and cond_2 does not have
-    # any control inputs.
-    self.assertEqual(cond_1.type, "StatelessIf")
-    self.assertEqual(cond_2.type, "StatelessIf")
-    self.assertLen(cond_2.control_inputs, 0)
-    fn_output = concrete_fn()
-    self.assertEqual(fn_output.op.type, "PartitionedCall")
-    self.assertAllEqual(fn_output, 1.0)
-
-  @test_util.run_deprecated_v1
-  def testFuncCondFunc(self):
-
-    @def_function.function
-    def fn_with_cond():
-      cond_v2.cond_v2(
-          constant_op.constant(True),
-          lambda: constant_op.constant(1.),
-          lambda: constant_op.constant(2.),
-          name="cond_1")
-
-      @def_function.function
-      def true_branch():
-        return constant_op.constant(3.)
-
-      return cond_v2.cond_v2(
-          constant_op.constant(True),
-          true_branch,
-          lambda: constant_op.constant(4.),
-          name="cond_2")
-
-    concrete_fn = fn_with_cond.get_concrete_function()
-    cond_1 = concrete_fn.graph.get_operation_by_name("cond_1")
-    cond_2 = concrete_fn.graph.get_operation_by_name("cond_2")
-    # Verify that all functional ops are stateless and cond_2 does not have
-    # any control inputs.
-    self.assertEqual(cond_1.type, "StatelessIf")
-    self.assertEqual(cond_2.type, "StatelessIf")
-    self.assertLen(cond_2.control_inputs, 0)
-    cond_2_true_graph, _ = cond_v2.get_func_graphs(cond_2)
-    cond_2_true_graph_operations = cond_2_true_graph.get_operations()
-    self.assertEmpty([
-        op for op in cond_2_true_graph_operations
-        if op.type == "StatefulPartitionedCall"
-    ])
-    self.assertLen([
-        op for op in cond_2_true_graph_operations
-        if op.type == "PartitionedCall"
-    ], 1)
-    fn_output = concrete_fn()
-    self.assertEqual(fn_output.op.type, "PartitionedCall")
-    self.assertAllEqual(fn_output, 3.0)
-
-  @test_util.run_deprecated_v1
-  def testFuncCondWithVariable(self):
-    v1 = variables.Variable(2.)
-    v2 = variables.Variable(4.)
-
-    self.evaluate(variables.global_variables_initializer())
-
-    @def_function.function
-    def fn_with_cond():
-      cond_v2.cond_v2(
-          constant_op.constant(True),
-          lambda: v1,
-          lambda: constant_op.constant(0.),
-          name="cond_1")
-      cond_2 = cond_v2.cond_v2(
-          constant_op.constant(False),
-          lambda: constant_op.constant(0.),
-          lambda: v1,
-          name="cond_2")
-      cond_v2.cond_v2(
-          constant_op.constant(True),
-          lambda: v2,
-          lambda: constant_op.constant(0.),
-          name="cond_3")
-      cond_4 = cond_v2.cond_v2(
-          constant_op.constant(False),
-          lambda: constant_op.constant(0.),
-          lambda: v2,
-          name="cond_4")
-      stateless_cond = cond_v2.cond_v2(
-          constant_op.constant(False),
-          lambda: constant_op.constant(5.),
-          lambda: constant_op.constant(6.),
-          name="stateless_cond")
-      return cond_2, cond_4, stateless_cond
-
-    concrete_fn = fn_with_cond.get_concrete_function()
-    cond_1 = concrete_fn.graph.get_operation_by_name("cond_1")
-    cond_2 = concrete_fn.graph.get_operation_by_name("cond_2")
-    cond_3 = concrete_fn.graph.get_operation_by_name("cond_3")
-    cond_4 = concrete_fn.graph.get_operation_by_name("cond_4")
-    stateless_cond = concrete_fn.graph.get_operation_by_name("stateless_cond")
-    self.assertEqual(cond_1.type, "If")
-    self.assertEqual(cond_2.type, "If")
-    self.assertEqual(cond_3.type, "If")
-    self.assertEqual(cond_4.type, "If")
-    self.assertEqual(stateless_cond.type, "StatelessIf")
-    self.assertEmpty(cond_1.control_inputs)
-    self.assertLen(cond_2.control_inputs, 1)
-    self.assertIs(cond_2.control_inputs[0], cond_1)
-    self.assertEmpty(cond_3.control_inputs)
-    self.assertLen(cond_4.control_inputs, 1)
-    self.assertIs(cond_4.control_inputs[0], cond_3)
-    # Does not touch any variable so should not have any control inputs.
-    self.assertEmpty(stateless_cond.control_inputs)
-    fn_output = concrete_fn()
-    self.assertEqual(fn_output[0].op.type, "StatefulPartitionedCall")
-    self.assertAllEqual(self.evaluate(fn_output), [2.0, 4.0, 6.0])
-
-  @test_util.run_deprecated_v1
-  def testFuncCondFuncWithVariable(self):
-    v1 = variables.Variable(2.)
-    v2 = variables.Variable(4.)
-
-    self.evaluate(variables.global_variables_initializer())
-
-    @def_function.function
-    def fn_with_cond():
-      cond_v2.cond_v2(
-          constant_op.constant(True),
-          lambda: v1,
-          lambda: constant_op.constant(0.),
-          name="cond_1")
-      cond_2 = cond_v2.cond_v2(
-          constant_op.constant(False),
-          lambda: constant_op.constant(0.),
-          lambda: v1,
-          name="cond_2")
-      cond_v2.cond_v2(
-          constant_op.constant(True),
-          lambda: v2,
-          lambda: constant_op.constant(0.),
-          name="cond_3")
-
-      @def_function.function
-      def cond_4_false_branch():
-        return v2
-
-      cond_4 = cond_v2.cond_v2(
-          constant_op.constant(False),
-          lambda: constant_op.constant(0.),
-          cond_4_false_branch,
-          name="cond_4")
-      return cond_2, cond_4
-
-    concrete_fn = fn_with_cond.get_concrete_function()
-    cond_1 = concrete_fn.graph.get_operation_by_name("cond_1")
-    cond_2 = concrete_fn.graph.get_operation_by_name("cond_2")
-    cond_3 = concrete_fn.graph.get_operation_by_name("cond_3")
-    cond_4 = concrete_fn.graph.get_operation_by_name("cond_4")
-    self.assertEqual(cond_1.type, "If")
-    self.assertEqual(cond_2.type, "If")
-    self.assertEqual(cond_3.type, "If")
-    self.assertEqual(cond_4.type, "If")
-    self.assertEmpty(cond_1.control_inputs)
-    self.assertLen(cond_2.control_inputs, 1)
-    self.assertIs(cond_2.control_inputs[0], cond_1)
-    self.assertEmpty(cond_3.control_inputs)
-    self.assertLen(cond_4.control_inputs, 1)
-    self.assertIs(cond_4.control_inputs[0], cond_3)
-    _, cond_4_false_graph = cond_v2.get_func_graphs(cond_4)
-    cond_4_false_graph_operations = cond_4_false_graph.get_operations()
-    self.assertEmpty([
-        op for op in cond_4_false_graph_operations
-        if op.type == "PartitionedCall"
-    ])
-    self.assertLen([
-        op for op in cond_4_false_graph_operations
-        if op.type == "StatefulPartitionedCall"
-    ], 1)
-    fn_output = concrete_fn()
-    self.assertEqual(fn_output[0].op.type, "StatefulPartitionedCall")
-    self.assertAllEqual(self.evaluate(fn_output), [2.0, 4.0])
-
   def testGradientTapeOfCondWithResourceVariableInFunction(self):
     with context.eager_mode():
       v = variables.Variable(2.)
 
       @def_function.function
-      def fn_with_cond():
+      def fnWithCond():  # pylint: disable=invalid-name
         with backprop.GradientTape() as tape:
           pred = constant_op.constant(True, dtype=dtypes.bool)
 
@@ -864,7 +668,7 @@ class CondV2Test(test.TestCase):
           cond = cond_v2.cond_v2(pred, true_fn, false_fn, name="cond")
         return tape.gradient(cond, v)
 
-      self.assertAllEqual(fn_with_cond(), 12.0)
+      self.assertAllEqual(fnWithCond(), 12.0)
 
   def testLowering(self):
     with ops.Graph().as_default() as g:
@@ -876,14 +680,22 @@ class CondV2Test(test.TestCase):
         sess.run(cond_output, options=run_options, run_metadata=run_metadata)
 
         # If lowering was enabled, there should be a `Switch` node
-        self.assertTrue(
-            _has_node_with_op(run_metadata, "Switch"),
-            "A `Switch` op should exist if the graph was lowered.")
+        switch_found = any(
+            any(node.op == "Switch" for node in graph.node)
+            for graph in run_metadata.partition_graphs
+        )
+
+        self.assertTrue(switch_found,
+                        "A `Switch` op should exist if the graph was lowered.")
 
         # If lowering was enabled, there should be no `If` node
-        self.assertFalse(
-            _has_node_with_op(run_metadata, "StatelessIf"),
-            "An `If` op was found, but it should be lowered.")
+        if_found = any(
+            any(node.op == "If" for node in graph.node)
+            for graph in run_metadata.partition_graphs
+        )
+
+        self.assertFalse(if_found,
+                         "An `If` op was found, but it should be lowered.")
 
   @test_util.run_deprecated_v1
   def testLoweringDisabledInXLA(self):
@@ -904,15 +716,24 @@ class CondV2Test(test.TestCase):
       sess.run(cond_output, options=run_options, run_metadata=run_metadata)
 
       # Lowering disabled in XLA, there should be no `Switch` node
+      switch_found = any(
+          any(node.op == "Switch" for node in graph.node)
+          for graph in run_metadata.partition_graphs
+      )
+
       self.assertFalse(
-          _has_node_with_op(run_metadata, "Switch"),
+          switch_found,
           "A `Switch` op exists, but the graph should not be lowered.")
 
       # Lowering disabled in XLA, there should still be an `If` node
+      if_found = any(
+          any(node.op == "If" for node in graph.node)
+          for graph in run_metadata.partition_graphs
+      )
+
       self.assertTrue(
-          _has_node_with_op(run_metadata, "StatelessIf"),
+          if_found,
           "An `If` op was not found, but the graph should not be lowered.")
-      # pylint: enable=g-complex-comprehension
 
   @test_util.run_deprecated_v1
   def testNestedLoweringDisabledInXLA(self):
@@ -928,8 +749,8 @@ class CondV2Test(test.TestCase):
 
     nested_if_ops = []
     for func in ops.get_default_graph()._functions.values():
-      nested_if_ops.extend(
-          op for op in func.graph.get_operations() if op.type == "StatelessIf")
+      nested_if_ops.extend(op for op in func.graph.get_operations()
+                           if op.type == "If")
     self.assertEqual(len(nested_if_ops), 1)
     with self.assertRaises(ValueError):
       nested_if_ops[0].get_attr("_lower_using_switch_merge")
@@ -1079,7 +900,8 @@ class CondV2Test(test.TestCase):
       return output.stack()
 
     output_t = f()
-    self.assertAllEqual(output_t, [-5, -4, -3, -2, -1, 0, 1, 4, 9, 16])
+    self.assertAllEqual(
+        self.evaluate(output_t), [-5, -4, -3, -2, -1, 0, 1, 4, 9, 16])
 
   @test_util.run_deprecated_v1
   def testForwardPassRewrite(self):
@@ -1088,7 +910,7 @@ class CondV2Test(test.TestCase):
                              lambda: x * 2.0,
                              lambda: x)
     if_op = output.op.inputs[0].op
-    self.assertEqual(if_op.type, "StatelessIf")
+    self.assertEqual(if_op.type, "If")
     # pylint: disable=g-deprecated-assert
     self.assertEqual(len(if_op.outputs), 1)
 
@@ -1400,16 +1222,5 @@ def _is_old_cond():
                     control_flow_ops.CondContext)
 
 
-def _has_node_with_op(run_metadata, op_type):
-  """Whether any node in `run_metadata.partition_graphs` matches `op_type`."""
-  for graph in run_metadata.partition_graphs:
-    for node in graph.node:
-      if node.op == op_type:
-        return True
-  return False
-
-
 if __name__ == "__main__":
-  # Forward compat date for StatelessIf.
-  with forward_compat.forward_compatibility_horizon(2019, 7, 23):
-    test.main()
+  test.main()

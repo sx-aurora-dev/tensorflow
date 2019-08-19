@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+
 #include "tensorflow/core/framework/allocator.h"
 #include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/framework/node_def_builder.h"
@@ -28,26 +29,15 @@ limitations under the License.
 #include "tensorflow/core/platform/test.h"
 
 namespace tensorflow {
-enum class TestDevice { CPU, GPU };
 
-class ResizeBilinearOpTestBase
-    : public OpsTestBase,
-      public ::testing::WithParamInterface<TestDevice> {
+class ResizeBilinearOpTestBase : public OpsTestBase {
  protected:
-  explicit ResizeBilinearOpTestBase()
-      : align_corners_(false), half_pixel_centers_(false) {}
-
-  void SetUp() override {
-    if (GetParam() == TestDevice::GPU) {
-      std::unique_ptr<Device> device_gpu(
-          DeviceFactory::NewDevice("GPU", {}, "/job:a/replica:0/task:0"));
-      SetDevice(DEVICE_GPU, std::move(device_gpu));
-    }
-
+  explicit ResizeBilinearOpTestBase(bool half_pixel_centers)
+      : half_pixel_centers_(half_pixel_centers) {
     TF_EXPECT_OK(NodeDefBuilder("resize_bilinear_op", "ResizeBilinear")
                      .Input(FakeInput(DT_FLOAT))
                      .Input(FakeInput(DT_INT32))
-                     .Attr("align_corners", align_corners_)
+                     .Attr("align_corners", false)
                      .Attr("half_pixel_centers", half_pixel_centers_)
                      .Finalize(node_def()));
     TF_EXPECT_OK(InitOp());
@@ -58,7 +48,8 @@ class ResizeBilinearOpTestBase
 
     CHECK_EQ(shape.dims(), 4) << "All images must have 4 dimensions.";
     bool is_ref = IsRefType(input_types_[inputs_.size()]);
-    Tensor* input = new Tensor(allocator(), DataTypeToEnum<float>::v(), shape);
+    Tensor* input = new Tensor(device_->GetAllocator(AllocatorAttributes()),
+                               DataTypeToEnum<float>::v(), shape);
     input->flat<float>().setRandom();
     tensors_.push_back(input);
     if (is_ref) {
@@ -136,11 +127,12 @@ class ResizeBilinearOpTestBase
     TF_ASSERT_OK(RunOpKernel());
 
     std::unique_ptr<Tensor> expected(new Tensor(
-        allocator(), DataTypeToEnum<float>::v(),
+        device_->GetAllocator(AllocatorAttributes()),
+        DataTypeToEnum<float>::v(),
         TensorShape({batch_size, output_width, output_height, channels})));
     ResizeBilinearBaseline(input->tensor<float, 4>(),
                            expected->tensor<float, 4>());
-    test::ExpectClose(*expected, *GetOutput(0), /*atol=*/1e-5);
+    test::ExpectClose(*expected, *GetOutput(0));
   }
 
   void RunManyRandomTests(int channels) {
@@ -157,39 +149,44 @@ class ResizeBilinearOpTestBase
       }
     }
   }
-
-  bool align_corners_;
   bool half_pixel_centers_;
 };
 
 class ResizeBilinearOpTest : public ResizeBilinearOpTestBase {
  public:
-  ResizeBilinearOpTest() {}
+  ResizeBilinearOpTest() : ResizeBilinearOpTestBase(false) {}
 };
 
 class ResizeBilinearHalfPixelCentersOpTest : public ResizeBilinearOpTestBase {
  public:
-  ResizeBilinearHalfPixelCentersOpTest() { half_pixel_centers_ = true; }
+  ResizeBilinearHalfPixelCentersOpTest() : ResizeBilinearOpTestBase(true) {}
 };
 
-class ResizeBilinearOpAlignCornersTest : public ResizeBilinearOpTestBase {
- public:
-  ResizeBilinearOpAlignCornersTest() { align_corners_ = true; }
+class ResizeBilinearOpAlignCornersTest : public OpsTestBase {
+ protected:
+  ResizeBilinearOpAlignCornersTest() {
+    TF_EXPECT_OK(NodeDefBuilder("resize_bilinear_op", "ResizeBilinear")
+                     .Input(FakeInput(DT_FLOAT))
+                     .Input(FakeInput(DT_INT32))
+                     .Attr("align_corners", true)
+                     .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp());
+  }
 };
 
-TEST_P(ResizeBilinearOpTest, TestResizeRandomDataSeveralInputsSizes1Channel) {
+TEST_F(ResizeBilinearOpTest, TestResizeRandomDataSeveralInputsSizes1Channel) {
   RunManyRandomTests(1);
 }
 
-TEST_P(ResizeBilinearOpTest, TestResizeRandomDataSeveralInputsSizes3Channels) {
+TEST_F(ResizeBilinearOpTest, TestResizeRandomDataSeveralInputsSizes3Channels) {
   RunManyRandomTests(3);
 }
 
-TEST_P(ResizeBilinearOpTest, TestResizeRandomDataSeveralInputsSizes4Channels) {
+TEST_F(ResizeBilinearOpTest, TestResizeRandomDataSeveralInputsSizes4Channels) {
   RunManyRandomTests(4);
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinear2x2To1x1) {
+TEST_F(ResizeBilinearOpTest, TestBilinear2x2To1x1) {
   // Input:
   //  1, 2
   //  3, 4
@@ -204,7 +201,7 @@ TEST_P(ResizeBilinearOpTest, TestBilinear2x2To1x1) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinearRandom2x2To1x1) {
+TEST_F(ResizeBilinearOpTest, TestBilinearRandom2x2To1x1) {
   const Tensor* input = SetRandomImageInput(TensorShape({1, 2, 2, 1}));
   AddInputFromArray<int32>(TensorShape({2}), {1, 1});
   TF_ASSERT_OK(RunOpKernel());
@@ -212,15 +209,16 @@ TEST_P(ResizeBilinearOpTest, TestBilinearRandom2x2To1x1) {
   // When scaling down, we have to arbitrarily pick a pixel from the
   // original input. In this case, we choose the top/left most pixel.
   Tensor* output = GetOutput(0);
-  std::unique_ptr<Tensor> expected(new Tensor(
-      allocator(), DataTypeToEnum<float>::v(), TensorShape({1, 1, 1, 1})));
+  std::unique_ptr<Tensor> expected(
+      new Tensor(device_->GetAllocator(AllocatorAttributes()),
+                 DataTypeToEnum<float>::v(), TensorShape({1, 1, 1, 1})));
   ResizeBilinearBaseline(input->tensor<float, 4>(),
                          expected->tensor<float, 4>());
   EXPECT_EQ(input->flat<float>()(0), output->flat<float>()(0));
   test::ExpectClose(*expected, *output);
 }
 
-TEST_P(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners2x2To1x1) {
+TEST_F(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners2x2To1x1) {
   // Input:
   //  1, 2
   //  3, 4
@@ -235,7 +233,7 @@ TEST_P(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners2x2To1x1) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinear2x2To3x3) {
+TEST_F(ResizeBilinearOpTest, TestBilinear2x2To3x3) {
   // Input:
   //  1, 2
   //  3, 4
@@ -255,7 +253,7 @@ TEST_P(ResizeBilinearOpTest, TestBilinear2x2To3x3) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners2x2To3x3) {
+TEST_F(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners2x2To3x3) {
   // Input:
   //  1, 2
   //  3, 4
@@ -278,7 +276,7 @@ TEST_P(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners2x2To3x3) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinear3x3To2x2) {
+TEST_F(ResizeBilinearOpTest, TestBilinear3x3To2x2) {
   // Input:
   //  1, 2, 3
   //  4, 5, 6
@@ -299,7 +297,7 @@ TEST_P(ResizeBilinearOpTest, TestBilinear3x3To2x2) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners3x3To2x2) {
+TEST_F(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners3x3To2x2) {
   // Input:
   //  1, 2, 3
   //  4, 5, 6
@@ -320,7 +318,7 @@ TEST_P(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners3x3To2x2) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinear3x3To4x4) {
+TEST_F(ResizeBilinearOpTest, TestBilinear3x3To4x4) {
   // Input:
   //  1, 2, 3,
   //  4, 5, 6,
@@ -342,7 +340,7 @@ TEST_P(ResizeBilinearOpTest, TestBilinear3x3To4x4) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinear4x4To3x3) {
+TEST_F(ResizeBilinearOpTest, TestBilinear4x4To3x3) {
   // Input:
   //  1,  2,  3,  4
   //  5,  6,  7,  8
@@ -366,15 +364,15 @@ TEST_P(ResizeBilinearOpTest, TestBilinear4x4To3x3) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearHalfPixelCentersOpTest, TestDownsamples) {
+TEST_F(ResizeBilinearHalfPixelCentersOpTest, TestDownsamples) {
   TestResize(4, 298, 297, 3, 61, 71);
 }
 
-TEST_P(ResizeBilinearHalfPixelCentersOpTest, TestUpsamples) {
+TEST_F(ResizeBilinearHalfPixelCentersOpTest, TestUpsamples) {
   TestResize(4, 61, 71, 3, 298, 297);
 }
 
-TEST_P(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners4x4To3x3) {
+TEST_F(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners4x4To3x3) {
   // Input:
   //  1,  2,  3,  4
   //  5,  6,  7,  8
@@ -398,7 +396,7 @@ TEST_P(ResizeBilinearOpAlignCornersTest, TestBilinearAlignCorners4x4To3x3) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinear2x2To3x3Batch2) {
+TEST_F(ResizeBilinearOpTest, TestBilinear2x2To3x3Batch2) {
   // Input:
   //  1, 2
   //  3, 4
@@ -418,7 +416,7 @@ TEST_P(ResizeBilinearOpTest, TestBilinear2x2To3x3Batch2) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinear2x2x2To3x3x2) {
+TEST_F(ResizeBilinearOpTest, TestBilinear2x2x2To3x3x2) {
   AddInputFromArray<float>(TensorShape({1, 2, 2, 2}),
                            {1, -1, 2, -2, 3, -3, 4, -4});
   AddInputFromArray<int32>(TensorShape({2}), {3, 3});
@@ -442,7 +440,7 @@ TEST_P(ResizeBilinearOpTest, TestBilinear2x2x2To3x3x2) {
   test::ExpectClose(expected, *GetOutput(0));
 }
 
-TEST_P(ResizeBilinearOpTest, TestBilinear2x2To4x4) {
+TEST_F(ResizeBilinearOpTest, TestBilinear2x2To4x4) {
   // Input:
   //  1, 2
   //  3, 4
@@ -462,30 +460,30 @@ TEST_P(ResizeBilinearOpTest, TestBilinear2x2To4x4) {
 }
 
 // similar_size case
-TEST_P(ResizeBilinearOpTest, Test1_1c) { TestResize(1, 183, 299, 1, 299, 299); }
-TEST_P(ResizeBilinearOpTest, Test1_3c) { TestResize(1, 183, 299, 3, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test1_1c) { TestResize(1, 183, 299, 1, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test1_3c) { TestResize(1, 183, 299, 3, 299, 299); }
 
 // Significantly smaller: scale_up case
-TEST_P(ResizeBilinearOpTest, Test2_1c) { TestResize(1, 141, 186, 1, 299, 299); }
-TEST_P(ResizeBilinearOpTest, Test2_3c) { TestResize(1, 141, 186, 3, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test2_1c) { TestResize(1, 141, 186, 1, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test2_3c) { TestResize(1, 141, 186, 3, 299, 299); }
 
 // Significantly larger: scale_down case
-TEST_P(ResizeBilinearOpTest, Test3_1c) { TestResize(1, 749, 603, 1, 299, 299); }
-TEST_P(ResizeBilinearOpTest, Test3_3c) { TestResize(1, 749, 603, 3, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test3_1c) { TestResize(1, 749, 603, 1, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test3_3c) { TestResize(1, 749, 603, 3, 299, 299); }
 
 // Exactly the same size
-TEST_P(ResizeBilinearOpTest, Test4_1c) { TestResize(1, 299, 299, 1, 299, 299); }
-TEST_P(ResizeBilinearOpTest, Test4_3c) { TestResize(1, 299, 299, 3, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test4_1c) { TestResize(1, 299, 299, 1, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test4_3c) { TestResize(1, 299, 299, 3, 299, 299); }
 
 // Slightly smaller: similar_size case
-TEST_P(ResizeBilinearOpTest, Test5_1c) { TestResize(1, 298, 297, 1, 299, 299); }
-TEST_P(ResizeBilinearOpTest, Test5_3c) { TestResize(1, 298, 297, 3, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test5_1c) { TestResize(1, 298, 297, 1, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test5_3c) { TestResize(1, 298, 297, 3, 299, 299); }
 
 // Slightly bigger: similar_size case
-TEST_P(ResizeBilinearOpTest, Test6_1c) { TestResize(1, 304, 303, 1, 299, 299); }
-TEST_P(ResizeBilinearOpTest, Test6_3c) { TestResize(1, 304, 303, 3, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test6_1c) { TestResize(1, 304, 303, 1, 299, 299); }
+TEST_F(ResizeBilinearOpTest, Test6_3c) { TestResize(1, 304, 303, 3, 299, 299); }
 
-TEST_P(ResizeBilinearOpTest, TestInvalidOutputSize) {
+TEST_F(ResizeBilinearOpTest, TestInvalidOutputSize) {
   AddInputFromArray<float>(TensorShape({1, 2, 2, 1}), {1, 2, 3, 4});
   AddInputFromArray<int32>(TensorShape({2}), {0, 0});
   Status s = RunOpKernel();
@@ -494,7 +492,7 @@ TEST_P(ResizeBilinearOpTest, TestInvalidOutputSize) {
       << s;
 }
 
-TEST_P(ResizeBilinearOpTest, TestInvalidInputShape) {
+TEST_F(ResizeBilinearOpTest, TestInvalidInputShape) {
   AddInputFromArray<float>(TensorShape({2, 2, 1}), {1, 2, 3, 4});
   AddInputFromArray<int32>(TensorShape({2}), {4, 4});
   Status s = RunOpKernel();
@@ -503,7 +501,7 @@ TEST_P(ResizeBilinearOpTest, TestInvalidInputShape) {
       << s;
 }
 
-TEST_P(ResizeBilinearOpTest, TestInvalidSizeDim) {
+TEST_F(ResizeBilinearOpTest, TestInvalidSizeDim) {
   AddInputFromArray<float>(TensorShape({1, 2, 2, 1}), {1, 2, 3, 4});
   AddInputFromArray<int32>(TensorShape({2, 1}), {4, 4});
   Status s = RunOpKernel();
@@ -512,7 +510,7 @@ TEST_P(ResizeBilinearOpTest, TestInvalidSizeDim) {
       << s;
 }
 
-TEST_P(ResizeBilinearOpTest, TestInvalidSizeElements) {
+TEST_F(ResizeBilinearOpTest, TestInvalidSizeElements) {
   AddInputFromArray<float>(TensorShape({1, 2, 2, 1}), {1, 2, 3, 4});
   AddInputFromArray<int32>(TensorShape({3}), {4, 4, 1});
   Status s = RunOpKernel();
@@ -521,23 +519,4 @@ TEST_P(ResizeBilinearOpTest, TestInvalidSizeElements) {
       << s;
 }
 
-INSTANTIATE_TEST_SUITE_P(ResizeBilinearOpTestCpu, ResizeBilinearOpTest,
-                         ::testing::Values(TestDevice::CPU));
-INSTANTIATE_TEST_SUITE_P(ResizeBilinearHalfPixelCentersOpTestCpu,
-                         ResizeBilinearHalfPixelCentersOpTest,
-                         ::testing::Values(TestDevice::CPU));
-INSTANTIATE_TEST_SUITE_P(ResizeBilinearOpAlignCornersTestCpu,
-                         ResizeBilinearOpAlignCornersTest,
-                         ::testing::Values(TestDevice::CPU));
-#if GOOGLE_CUDA
-// Instantiate tests for GPU.
-INSTANTIATE_TEST_SUITE_P(ResizeBilinearOpTestGpu, ResizeBilinearOpTest,
-                         ::testing::Values(TestDevice::GPU));
-INSTANTIATE_TEST_SUITE_P(ResizeBilinearHalfPixelCentersOpTestGpu,
-                         ResizeBilinearHalfPixelCentersOpTest,
-                         ::testing::Values(TestDevice::GPU));
-INSTANTIATE_TEST_SUITE_P(ResizeBilinearOpAlignCornersTestGpu,
-                         ResizeBilinearOpAlignCornersTest,
-                         ::testing::Values(TestDevice::GPU));
-#endif  // GOOGLE_CUDA
 }  // namespace tensorflow

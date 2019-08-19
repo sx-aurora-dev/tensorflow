@@ -250,15 +250,7 @@ class SingleOpModel {
   // Build the interpreter for this model. Also, resize and allocate all
   // tensors given the shapes of the inputs.
   void BuildInterpreter(std::vector<std::vector<int>> input_shapes,
-                        int num_threads, bool allow_fp32_relax_to_fp16);
-
-  void BuildInterpreter(std::vector<std::vector<int>> input_shapes,
-                        int num_threads);
-
-  void BuildInterpreter(std::vector<std::vector<int>> input_shapes,
-                        bool allow_fp32_relax_to_fp16);
-
-  void BuildInterpreter(std::vector<std::vector<int>> input_shapes);
+                        bool allow_fp32_relax_to_fp16 = false);
 
   // Executes inference, asserting success.
   void Invoke();
@@ -323,8 +315,8 @@ class SingleOpModel {
 
   // Return a vector with the flattened contents of a tensor.
   template <typename T>
-  std::vector<T> ExtractVector(int index) const {
-    const T* v = interpreter_->typed_tensor<T>(index);
+  std::vector<T> ExtractVector(int index) {
+    T* v = interpreter_->typed_tensor<T>(index);
     CHECK(v);
     return std::vector<T>(v, v + GetTensorSize(index));
   }
@@ -585,16 +577,14 @@ TensorType GetTensorType() {
   if (std::is_same<T, float>::value) return TensorType_FLOAT32;
   if (std::is_same<T, TfLiteFloat16>::value) return TensorType_FLOAT16;
   if (std::is_same<T, int32_t>::value) return TensorType_INT32;
-  if (std::is_same<T, int64_t>::value) return TensorType_INT64;
   if (std::is_same<T, uint8_t>::value) return TensorType_UINT8;
-  if (std::is_same<T, int8_t>::value) return TensorType_INT8;
   if (std::is_same<T, string>::value) return TensorType_STRING;
   return TensorType_MIN;  // default value
 }
 
 // Strings have a special implementation that is in test_util.cc
 template <>
-std::vector<string> SingleOpModel::ExtractVector(int index) const;
+std::vector<string> SingleOpModel::ExtractVector(int index);
 
 // The TypeUnion struct specializations hold a collection of related types.
 // Each struct holds: 1. a primitive type (e.g. float), 2. a TensorType (e.g.

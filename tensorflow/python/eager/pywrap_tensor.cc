@@ -56,13 +56,11 @@ TFE_Context* GetContext(PyObject* ctx) {
 // The two may share underlying storage so changes to one may reflect in the
 // other.
 TFE_TensorHandle* NumpyToTensorHandle(PyObject* obj) {
-  tensorflow::TensorHandle* handle;
   tensorflow::Tensor t;
   auto cppstatus = tensorflow::NdarrayToTensor(obj, &t);
   if (cppstatus.ok()) {
-    cppstatus = tensorflow::TensorHandle::CreateLocalHandle(t, &handle);
-  }
-  if (!cppstatus.ok()) {
+    return TFE_NewTensorHandle(t);
+  } else {
     PyErr_SetString(PyExc_ValueError,
                     tensorflow::strings::StrCat(
                         "Failed to convert numpy ndarray to a Tensor (",
@@ -70,7 +68,6 @@ TFE_TensorHandle* NumpyToTensorHandle(PyObject* obj) {
                         .c_str());
     return nullptr;
   }
-  return new TFE_TensorHandle(handle);
 }
 
 // Convert a TFE_TensorHandle to a Python numpy.ndarray object.
@@ -302,19 +299,15 @@ TFE_TensorHandle* ConvertToEagerTensor(PyObject* value,
     }
     return NumpyToTensorHandle(value);
   } else {
-    tensorflow::TensorHandle* handle;
     tensorflow::Tensor t;
     // TODO(josh11b): Have PySeqToTensor set python errors instead of
     // returning Status.
     auto cppstatus = tensorflow::PySeqToTensor(value, dtype, &t);
-    if (cppstatus.ok()) {
-      cppstatus = tensorflow::TensorHandle::CreateLocalHandle(t, &handle);
-    }
     if (!cppstatus.ok()) {
       PyErr_SetString(PyExc_ValueError, cppstatus.error_message().c_str());
       return nullptr;
     }
-    return new TFE_TensorHandle(handle);
+    return TFE_NewTensorHandle(t);
   }
 }
 }  // namespace tensorflow

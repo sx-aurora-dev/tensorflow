@@ -16,7 +16,6 @@ limitations under the License.
 
 #include "absl/memory/memory.h"
 #include "tensorflow/core/common_runtime/device_factory.h"
-#include "tensorflow/core/common_runtime/eager/context.h"
 #include "tensorflow/core/lib/core/status.h"
 
 namespace tflite {
@@ -38,7 +37,7 @@ tensorflow::Status DelegateData::Prepare(
   TF_RETURN_IF_ERROR(tensorflow::DeviceFactory::AddDevices(
       session_options, "/job:localhost/replica:0/task:0", &devices));
 
-  auto device_mgr =
+  std::unique_ptr<tensorflow::DeviceMgr> device_mgr =
       absl::make_unique<tensorflow::DeviceMgr>(std::move(devices));
   // Note that Rendezvous is ref-counted so it will be automatically deleted.
   tensorflow::Rendezvous* rendezvous =
@@ -46,9 +45,7 @@ tensorflow::Status DelegateData::Prepare(
   eager_context_ = new tensorflow::EagerContext(
       session_options,
       tensorflow::ContextDevicePlacementPolicy::DEVICE_PLACEMENT_SILENT,
-      tensorflow::ContextMirroringPolicy::MIRRORING_NONE,
-      /*async=*/false, device_mgr.release(), /*device_mgr_owned*/ true,
-      rendezvous, nullptr);
+      /*async=*/false, std::move(device_mgr), rendezvous);
   return tensorflow::Status();
 }
 

@@ -22,10 +22,6 @@ limitations under the License.
 #include "tensorflow/core/platform/thread_annotations.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 
-namespace Eigen {
-struct ThreadPoolDevice;
-}
-
 namespace tensorflow {
 
 class RunHandler;
@@ -50,8 +46,6 @@ class RunHandler;
 class RunHandlerPool {
  public:
   explicit RunHandlerPool(int num_inter_op_threads);
-
-  RunHandlerPool(int num_inter_op_threads, int num_intra_op_threads);
   ~RunHandlerPool();
 
   // Returns an inactive RunHandler from the pool.
@@ -62,7 +56,7 @@ class RunHandlerPool {
   // unique_ptr is destroyed.
   //
   // Will block unless there is an inactive handler.
-  std::unique_ptr<RunHandler> Get(int64 step_id = 0);
+  std::unique_ptr<RunHandler> Get();
 
  private:
   class Impl;
@@ -71,10 +65,8 @@ class RunHandlerPool {
   std::unique_ptr<Impl> impl_;
 };
 
-// RunHandler can be used to schedule inter/intra-op closures to run on a global
-// pool shared across all Session::Run(s). The closures are enqueued to a
-// handler specific queue, from which the work is stolen in a priority order
-// (time of the Get() call).
+// RunHandler can be used to schedule inter-op closures to run on a global pool
+// shared across all Session::Run(s).
 //
 // It can only be created via RunHandlerPool::Get().
 //
@@ -86,7 +78,6 @@ class RunHandlerPool {
 class RunHandler {
  public:
   void ScheduleInterOpClosure(std::function<void()> fn);
-  thread::ThreadPoolInterface* AsIntraThreadPoolInterface();
 
   ~RunHandler();
 

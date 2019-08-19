@@ -358,7 +358,7 @@ class Layer(base_layer.Layer):
       instance is returned.
 
     Raises:
-      RuntimeError: If called with partitioned variable regularization and
+      RuntimeError: If called with partioned variable regularization and
         eager execution is enabled.
       ValueError: When trainable has been set to True with synchronization
         set as `ON_READ`.
@@ -542,7 +542,7 @@ class Layer(base_layer.Layer):
     return outputs
 
   def __deepcopy__(self, memo):
-    no_copy = set(['_graph', '_thread_local'])
+    no_copy = set(['_graph'])
     shallow_copy = set(['_scope', '_always_reuse_variable_scope'])
     cls = self.__class__
     result = cls.__new__(cls)

@@ -2,11 +2,6 @@
 #   JNI-based Java inference interface for TensorFlow.
 
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
-load(
-    "//tensorflow:tensorflow.bzl",
-    "if_android",
-    "tf_copts",
-)
 
 package(
     default_visibility = ["//visibility:public"],
@@ -14,6 +9,12 @@ package(
 )
 
 exports_files(["LICENSE"])
+
+load(
+    "//tensorflow:tensorflow.bzl",
+    "if_android",
+    "tf_copts",
+)
 
 exports_files([
     "jni/version_script.lds",

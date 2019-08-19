@@ -34,7 +34,7 @@ namespace gpu {
 //
 class FusionMerger : public HloModulePass {
  public:
-  absl::string_view name() const override { return "fusion_merger"; }
+  absl::string_view name() const override { return "fusion merger"; }
 
   StatusOr<bool> Run(HloModule* module) override;
 };

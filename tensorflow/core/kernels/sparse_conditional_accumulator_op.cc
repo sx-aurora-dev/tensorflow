@@ -41,18 +41,6 @@ class SparseConditionalAccumulatorOp : public ConditionalAccumulatorBaseOp {
     };
   }
 
-  // TODO(tanzheny): actually switch it to resource. You won't be able to use
-  // it with cond2 otherwise.
-  Status CheckSignature(OpKernelContext* ctx) override {
-    TF_RETURN_IF_ERROR(ctx->MatchSignature({}, {DT_STRING_REF}));
-    return Status::OK();
-  }
-
-  void SetHandleToOutput(OpKernelContext* ctx)
-      SHARED_LOCKS_REQUIRED(mu_) override {
-    ctx->set_output_ref(0, &mu_, accumulator_handle_.AccessTensor(ctx));
-  }
-
   TF_DISALLOW_COPY_AND_ASSIGN(SparseConditionalAccumulatorOp);
 };
 
@@ -82,12 +70,13 @@ class SparseAccumulatorApplyGradientOp
       : ConditionalAccumulatorBaseApplyGradientOp(context) {}
 
  protected:
-  DataTypeVector GetExpectedInputs(
-      ConditionalAccumulatorBase* accumulator) override {
+  void CheckSignature(OpKernelContext* ctx,
+                      ConditionalAccumulatorBase* accumulator) override {
+    // Check input signature
     DataTypeVector expected_inputs = {DT_STRING_REF, DT_INT64, DT_INT64};
     expected_inputs.push_back(accumulator->dtype());
     expected_inputs.push_back(DT_INT64);
-    return expected_inputs;
+    OP_REQUIRES_OK(ctx, ctx->MatchSignature(expected_inputs, {}));
   }
 
  private:
@@ -118,11 +107,6 @@ class SparseAccumulatorTakeGradientOp
         ctx->MatchSignature({DT_STRING_REF, DT_INT32},
                             {DT_INT64, accumulator->dtype(), DT_INT64}),
         callback);
-  }
-
-  DataTypeVector GetExpectedInputs(
-      ConditionalAccumulatorBase* accumulator) override {
-    return {DT_STRING_REF, DT_INT32};
   }
 
  private:

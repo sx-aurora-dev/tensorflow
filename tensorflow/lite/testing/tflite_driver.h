@@ -51,7 +51,6 @@ class TfLiteDriver : public TestRunner {
   void Invoke() override;
   bool CheckResults() override;
   string ReadOutput(int id) override;
-  void SetThreshold(double relative_threshold, double absolute_threshold);
 
  private:
   void DeallocateStringTensor(TfLiteTensor* t) {
@@ -79,8 +78,6 @@ class TfLiteDriver : public TestRunner {
   std::map<int, std::unique_ptr<Expectation>> expected_output_shape_;
   bool must_allocate_tensors_ = true;
   std::map<int, TfLiteTensor*> tensors_to_deallocate_;
-  double relative_threshold_;
-  double absolute_threshold_;
 };
 
 }  // namespace testing

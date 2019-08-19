@@ -88,7 +88,8 @@ class PReLUFull : public NodeShader {
     auto output = ctx.graph->FindOutputs(ctx.node->id)[0];
     auto attr =
         absl::any_cast<const PReLUAttributes&>(ctx.node->operation.attributes);
-    auto alpha = absl::get_if<Tensor<HWC, DataType::FLOAT32>>(&attr.alpha);
+    auto alpha = absl::get_if<Tensor<::tflite::gpu::HWC, DataType::FLOAT32>>(
+        &attr.alpha);
     if (!alpha) {
       return InvalidArgumentError("Alpha is missing");
     }
@@ -100,15 +101,12 @@ class PReLUFull : public NodeShader {
 
     auto shape = output->tensor.shape;
 
-    ObjectSize obj_size = uint3(shape.h, shape.w, shape.c);
-
     *generated_code =
         attr.clip
             ? GeneratedCode{
                   /*parameters=*/{{"clip", attr.clip}},
                   /*objects=*/
-                  {{"alpha",
-                    MakeReadonlyObject(obj_size, ConvertToPHWC4(*alpha))}},
+                  {{"alpha", MakeReadonlyObject(ConvertToPHWC4(*alpha))}},
                   // Declare workload explicitly because shader
                   // depends on gid.z.
                   /*workload=*/
@@ -123,8 +121,7 @@ class PReLUFull : public NodeShader {
             : GeneratedCode{
                   /*parameters=*/{},
                   /*objects=*/
-                  {{"alpha",
-                    MakeReadonlyObject(obj_size, ConvertToPHWC4(*alpha))}},
+                  {{"alpha", MakeReadonlyObject(ConvertToPHWC4(*alpha))}},
                   // Declare workload explicitly because shader depends on
                   // gid.z.
                   /*workload=*/

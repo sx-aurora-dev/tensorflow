@@ -22,12 +22,10 @@ limitations under the License.
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cudnn/cudnn.h"
-#endif  // GOOGLE_CUDA
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/kernels/conv_2d.h"
 #include "tensorflow/core/kernels/pooling_ops_common_gpu.h"
 #include "tensorflow/core/platform/stream_executor.h"
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 namespace tensorflow {
 
@@ -127,7 +125,7 @@ TensorShape PoolParameters::forward_output_shape() {
   }
 }
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#ifdef GOOGLE_CUDA
 
 namespace {
 template <typename T>
@@ -269,7 +267,7 @@ void DnnPoolingOp<T>::Compute(OpKernelContext* context,
                                       output_desc, &output_data)
                     .ok();
   OP_REQUIRES(context, status,
-              errors::Internal("dnn PoolForward launch failed"));
+              errors::Internal("cudnn PoolForward launch failed"));
 #if CUDNN_VERSION < 7300
   if (data_format == FORMAT_NHWC) {
     /// Transform the output data from NCHW back to NHWC
@@ -422,7 +420,7 @@ void DnnPoolingGradOp<T>::Compute(
                              output_backprop_data, &input_backprop_data)
           .ok();
   OP_REQUIRES(context, status,
-              errors::Internal("dnn PoolBackward launch failed"));
+              errors::Internal("cudnn PoolBackward launch failed"));
 
   if (data_format == FORMAT_NHWC) {
     /// Transform the output data from NCHW back to NHWC.
@@ -445,6 +443,6 @@ template class DnnPoolingOp<qint8>;
 
 #undef DEFINE_DNN_OPS
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

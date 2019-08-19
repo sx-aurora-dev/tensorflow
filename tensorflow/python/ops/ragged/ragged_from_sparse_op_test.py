@@ -24,12 +24,13 @@ from tensorflow.python.framework import errors
 from tensorflow.python.framework import sparse_tensor
 from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.ops.ragged.ragged_tensor import RaggedTensor
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedTensorToSparseOpTest(test_util.TensorFlowTestCase):
+class RaggedTensorToSparseOpTest(ragged_test_util.RaggedTensorTestCase):
 
   def testDocStringExample(self):
     st = sparse_tensor.SparseTensor(
@@ -38,7 +39,7 @@ class RaggedTensorToSparseOpTest(test_util.TensorFlowTestCase):
         dense_shape=[4, 3])
     rt = RaggedTensor.from_sparse(st)
 
-    self.assertAllEqual(rt, [[1, 2, 3], [4], [], [5]])
+    self.assertRaggedEqual(rt, [[1, 2, 3], [4], [], [5]])
 
   def testEmpty(self):
     st = sparse_tensor.SparseTensor(
@@ -47,7 +48,7 @@ class RaggedTensorToSparseOpTest(test_util.TensorFlowTestCase):
         dense_shape=[4, 3])
     rt = RaggedTensor.from_sparse(st)
 
-    self.assertAllEqual(rt, [[], [], [], []])
+    self.assertRaggedEqual(rt, [[], [], [], []])
 
   def testBadSparseTensorRank(self):
     st1 = sparse_tensor.SparseTensor(indices=[[0]], values=[0], dense_shape=[3])

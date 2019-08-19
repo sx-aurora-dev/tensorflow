@@ -52,7 +52,8 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
     RewriterConfig rewriter_config;
     rewriter_config.set_fail_on_optimizer_errors(true);
     rewriter_config.add_optimizers(kOptimizerName);
-    rewriter_config.set_meta_optimizer_iterations(RewriterConfig::ONE);
+    rewriter_config.set_meta_optimizer_iterations(
+        RewriterConfig_NumIterationsType_ONE);
     auto custom_optimizer = rewriter_config.add_custom_optimizers();
     custom_optimizer->set_name(kOptimizerName);
     AttrValue num_workers_attr;
@@ -63,8 +64,6 @@ class RebatchDatasetOp : public UnaryDatasetOpKernel {
   }
 };
 
-REGISTER_KERNEL_BUILDER(Name("RebatchDataset").Device(DEVICE_CPU),
-                        RebatchDatasetOp);
 REGISTER_KERNEL_BUILDER(Name("ExperimentalRebatchDataset").Device(DEVICE_CPU),
                         RebatchDatasetOp);
 

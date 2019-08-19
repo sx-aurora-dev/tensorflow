@@ -57,7 +57,8 @@ class TfliteInferenceStage : public EvaluationStage {
   }
 
   // Applies provided delegate to the underlying TFLite Interpreter.
-  TfLiteStatus ApplyCustomDelegate(Interpreter::TfLiteDelegatePtr delegate);
+  // NOTE: TFLiteInferenceStage does not take ownership of delegate.
+  TfLiteStatus ApplyCustomDelegate(TfLiteDelegate* delegate);
 
   // Read-only view of a TfliteModelInfo. TfliteInferenceStage retains
   // ownership.
@@ -69,9 +70,6 @@ class TfliteInferenceStage : public EvaluationStage {
   const std::vector<void*>* GetOutputs() const { return &outputs_; }
 
  private:
-  // Sets model_info_ & outputs_ after interpreter tensors are (re)allocated.
-  void UpdateModelInfo();
-
   std::unique_ptr<FlatBufferModel> model_;
   std::unique_ptr<ops::builtin::BuiltinOpResolver> resolver_;
   std::unique_ptr<Interpreter> interpreter_;

@@ -221,8 +221,6 @@ class UniqueDatasetOp : public UnaryDatasetOpKernel {
   };
 };
 
-REGISTER_KERNEL_BUILDER(Name("UniqueDataset").Device(DEVICE_CPU),
-                        UniqueDatasetOp);
 REGISTER_KERNEL_BUILDER(Name("ExperimentalUniqueDataset").Device(DEVICE_CPU),
                         UniqueDatasetOp);
 

@@ -1,5 +1,3 @@
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
-
 #
 # This is a TF Lite delegate that is powered by TensorFlow's Eager.
 #
@@ -10,6 +8,8 @@ package(
     ],
     licenses = ["notice"],  # Apache 2.0
 )
+
+load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 
 cc_library(
     name = "buffer_map",

@@ -40,14 +40,8 @@ const std::unordered_set<std::string>* GetExcludedOps() {
           "QuantizedMatMulWithBias"
           "QuantizedMatMulWithBiasAndRelu"
           "QuantizedMatMulWithBiasAndReluAndRequantize",
+
 #endif  // INTEL_MKL
-#ifdef GOOGLE_TENSORRT
-          "CreateTRTEngineCacheHandle",
-          "PopulateTRTEngineCache",
-          "DumpTRTEngineCache",
-          "GetCalibrationDataOp",
-          "TRTEngineOp",
-#endif  // GOOGLE_TENSORRT
       });
   return excluded_ops;
 }

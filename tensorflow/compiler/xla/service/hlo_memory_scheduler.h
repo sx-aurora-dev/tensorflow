@@ -19,7 +19,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/service/hlo_alias_analysis.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_module.h"
 #include "tensorflow/compiler/xla/service/hlo_ordering.h"
@@ -36,10 +35,8 @@ namespace xla {
 // 'computation' that minimizes peak memory, given a points-to analysis result
 // that describes buffer aliasing, together with a target-specific size function
 // that maps a tensor's logical size to its padded size.
-//
-// TODO(yunxing): Cleanup usage of TuplePointsToAnalysis.
 typedef std::function<StatusOr<HloInstructionSequence>(
-    HloComputation*, const TuplePointsToAnalysis&, const HloAliasAnalysis&,
+    HloComputation*, const TuplePointsToAnalysis&,
     const LogicalBuffer::SizeFunction&,
     const absl::flat_hash_map<const HloComputation*, int64>&)>
     MemorySchedulerAlgorithm;
@@ -48,7 +45,6 @@ typedef std::function<StatusOr<HloInstructionSequence>(
 StatusOr<HloInstructionSequence> ListMemoryScheduler(
     HloComputation* computation,
     const TuplePointsToAnalysis& points_to_analysis,
-    const HloAliasAnalysis& alias_analysis,
     const LogicalBuffer::SizeFunction& size_function,
     const absl::flat_hash_map<const HloComputation*, int64>&
         memory_by_computation);
@@ -57,7 +53,6 @@ StatusOr<HloInstructionSequence> ListMemoryScheduler(
 StatusOr<HloInstructionSequence> DFSMemoryScheduler(
     HloComputation* computation,
     const TuplePointsToAnalysis& points_to_analysis,
-    const HloAliasAnalysis& alias_analysis,
     const LogicalBuffer::SizeFunction& size_function,
     const absl::flat_hash_map<const HloComputation*, int64>&
         memory_by_computation);
@@ -66,7 +61,6 @@ StatusOr<HloInstructionSequence> DFSMemoryScheduler(
 StatusOr<HloInstructionSequence> PostOrderMemoryScheduler(
     HloComputation* computation,
     const TuplePointsToAnalysis& points_to_analysis,
-    const HloAliasAnalysis& alias_analysis,
     const LogicalBuffer::SizeFunction& size_function,
     const absl::flat_hash_map<const HloComputation*, int64>&
         memory_by_computation);
@@ -77,7 +71,6 @@ StatusOr<HloInstructionSequence> PostOrderMemoryScheduler(
 StatusOr<HloInstructionSequence> DefaultMemoryScheduler(
     HloComputation* computation,
     const TuplePointsToAnalysis& points_to_analysis,
-    const HloAliasAnalysis& alias_analysis,
     const LogicalBuffer::SizeFunction& size_function,
     const absl::flat_hash_map<const HloComputation*, int64>&
         memory_by_computation);

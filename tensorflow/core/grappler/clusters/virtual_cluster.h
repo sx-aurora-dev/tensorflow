@@ -33,12 +33,11 @@ namespace grappler {
 // actual graphs.
 class VirtualCluster : public Cluster {
  public:
-  explicit VirtualCluster(
-      const std::unordered_map<string, DeviceProperties>& devices);
+  VirtualCluster(const std::unordered_map<string, DeviceProperties>& devices);
   VirtualCluster(const std::unordered_map<string, DeviceProperties>& devices,
                  std::unique_ptr<OpLevelCostEstimator> node_estimator,
                  std::unique_ptr<ReadyNodeManager> node_manager);
-  explicit VirtualCluster(const DeviceSet* device_set);
+  VirtualCluster(const DeviceSet* device_set);
 
   ~VirtualCluster() override;
 

@@ -28,7 +28,6 @@ from tensorflow.core.framework import graph_pb2 as _graph_pb2
 from tensorflow.lite.experimental.examples.lstm.rnn import dynamic_rnn  # pylint: disable=unused-import
 from tensorflow.lite.experimental.examples.lstm.rnn_cell import TFLiteLSTMCell  # pylint: disable=unused-import
 from tensorflow.lite.experimental.examples.lstm.rnn_cell import TfLiteRNNCell  # pylint: disable=unused-import
-from tensorflow.lite.experimental.microfrontend.python.ops import audio_microfrontend_op  # pylint: disable=unused-import
 from tensorflow.lite.experimental.tensorboard.ops_util import get_potentially_supported_ops  # pylint: disable=unused-import
 from tensorflow.lite.python import lite_constants as constants
 from tensorflow.lite.python.convert import build_toco_convert_protos  # pylint: disable=unused-import
@@ -40,13 +39,10 @@ from tensorflow.lite.python.convert import toco_convert_impl as _toco_convert_im
 from tensorflow.lite.python.convert import toco_convert_protos  # pylint: disable=unused-import
 from tensorflow.lite.python.convert_saved_model import freeze_saved_model as _freeze_saved_model
 from tensorflow.lite.python.interpreter import Interpreter  # pylint: disable=unused-import
-from tensorflow.lite.python.interpreter import load_delegate  # pylint: disable=unused-import
 from tensorflow.lite.python.op_hint import convert_op_hints_to_stubs  # pylint: disable=unused-import
 from tensorflow.lite.python.op_hint import OpHint  # pylint: disable=unused-import
 from tensorflow.lite.python.optimize import calibrator as _calibrator
-from tensorflow.lite.python.util import build_debug_info_func as _build_debug_info_func
 from tensorflow.lite.python.util import freeze_graph as _freeze_graph
-from tensorflow.lite.python.util import get_debug_info as _get_debug_info
 from tensorflow.lite.python.util import get_grappler_config as _get_grappler_config
 from tensorflow.lite.python.util import get_tensor_name as _get_tensor_name
 from tensorflow.lite.python.util import get_tensors_from_tensor_names as _get_tensors_from_tensor_names
@@ -140,19 +136,12 @@ class TargetSpec(object):
   Attributes:
     supported_ops: Experimental flag, subject to change. Set of OpsSet options
       supported by the device. (default set([OpsSet.TFLITE_BUILTINS]))
-    supported_types: List of types for constant values on the target device.
-      Supported values are types exported by lite.constants. Frequently, an
-      optimization choice is driven by the most compact (i.e. smallest)
-      type in this list (default [constants.FLOAT])
   """
 
-  def __init__(self, supported_ops=None, supported_types=None):
+  def __init__(self, supported_ops=None):
     if supported_ops is None:
       supported_ops = set([OpsSet.TFLITE_BUILTINS])
     self.supported_ops = supported_ops
-    if supported_types is None:
-      supported_types = []
-    self.supported_types = supported_types
 
 
 class TFLiteConverterBase(object):
@@ -181,53 +170,30 @@ class TFLiteConverterBase(object):
       if self.representative_dataset.input_gen is None:
         raise ValueError(
             "Provide an input generator for representative_dataset")
-    elif self._is_int8_target_required():
+    elif self._int8_target_required():
       raise ValueError("representative_dataset is required when specifying "
-                       "TFLITE_BUILTINS_INT8 or INT8 supported types.")
+                       "TFLITE_BUILTINS_INT8 target.")
 
-  def _validate_quantization(self):
-    if self._is_int8_target_required():
-      if self.target_spec.supported_types and (self._smallest_supported_type()
-                                               != constants.INT8):
-        raise ValueError("TFLITE_BUILTINS_INT8 requires smallest supported "
-                         "type to be INT8.")
+  def _int8_target_required(self):
+    return set([OpsSet.TFLITE_BUILTINS_INT8]) == set(self._target_ops)
 
-  def _is_int8_target_required(self):
-    return (set([OpsSet.TFLITE_BUILTINS_INT8]) == set(self._target_ops) or
-            self._smallest_supported_type() == constants.INT8)
-
-  def _smallest_supported_type(self):
-    if self.target_spec.supported_types:
-      return min(self.target_spec.supported_types, key=lambda x: x.size)
-    else:
-      return None
-
-  def _any_optimization_enabled(self):
-    return bool(
+  def _is_post_training_optimize(self):
+    return (self._int8_target_required() or bool(
         set(self.optimizations).intersection([
             Optimize.OPTIMIZE_FOR_LATENCY, Optimize.OPTIMIZE_FOR_SIZE,
             Optimize.DEFAULT
-        ]))
+        ])))
 
-  def _is_post_training_optimize(self):
-    return self._is_int8_target_required() or self._any_optimization_enabled()
-
-  def _is_int8_weight_only_quantize(self):
+  def _is_weight_only_quantize(self):
     return (self._is_post_training_optimize() and
             (self.representative_dataset is None))
 
-  def _is_float16_quantize(self):
-    return self._any_optimization_enabled() and (
-        self._smallest_supported_type() == constants.FLOAT16)
-
   def _is_calibration_quantize(self):
-    return (self._is_post_training_optimize() and
-            self.representative_dataset and
-            self._smallest_supported_type() != constants.FLOAT16)
+    return self._is_post_training_optimize() and self.representative_dataset
 
   def _calibrate_quantize_model(self, result, inference_input_type,
                                 inference_output_type):
-    allow_float = not self._is_int8_target_required()
+    allow_float = not self._int8_target_required()
     calibrate_quantize = _calibrator.Calibrator(result)
     return calibrate_quantize.calibrate_and_quantize(
         self.representative_dataset.input_gen, inference_input_type,
@@ -286,7 +252,6 @@ class TFLiteConverterV2(TFLiteConverterBase):
     self._trackable_obj = trackable_obj
     self.allow_custom_ops = False
     self.target_spec = TargetSpec()
-    self._debug_info = None
 
   @classmethod
   def from_concrete_functions(cls, funcs):
@@ -410,26 +375,13 @@ class TFLiteConverterV2(TFLiteConverterBase):
         shape[0] = 1
         tensor.set_shape(shape)
 
-    self._validate_quantization()
     self._validate_representative_dataset()
-    self._debug_info = _get_debug_info(
-        _build_debug_info_func(self._funcs[0].graph), graph_def)
-
-    float16_quantize = self._is_float16_quantize()
 
     converter_kwargs = {
-        "input_format":
-            constants.TENSORFLOW_GRAPHDEF,
-        "allow_custom_ops":
-            self.allow_custom_ops,
-        "post_training_quantize":
-            self._is_int8_weight_only_quantize() or float16_quantize,
-        "quantize_to_float16":
-            float16_quantize,
-        "target_ops":
-            self.target_spec.supported_ops,
-        "debug_info":
-            self._debug_info
+        "input_format": constants.TENSORFLOW_GRAPHDEF,
+        "allow_custom_ops": self.allow_custom_ops,
+        "post_training_quantize": self._is_weight_only_quantize(),
+        "target_ops": self.target_spec.supported_ops,
     }
 
     # Converts model.
@@ -554,8 +506,7 @@ class TFLiteConverter(TFLiteConverterBase):
                input_tensors,
                output_tensors,
                input_arrays_with_shape=None,
-               output_arrays=None,
-               experimental_debug_info_func=None):
+               output_arrays=None):
     """Constructor for TFLiteConverter.
 
     Args:
@@ -571,8 +522,6 @@ class TFLiteConverter(TFLiteConverterBase):
       output_arrays: List of output tensors to freeze graph with. Use only when
         graph cannot be loaded into TensorFlow and when `input_tensors` and
         `output_tensors` are None. (default None)
-      experimental_debug_info_func: An experimental function to retrieve the
-        graph debug info for a set of nodes from the `graph_def`.
 
     Raises:
       ValueError: Invalid arguments.
@@ -595,8 +544,6 @@ class TFLiteConverter(TFLiteConverterBase):
     self.dump_graphviz_dir = None
     self.dump_graphviz_video = False
     self.target_spec = TargetSpec()
-    self._debug_info_func = experimental_debug_info_func
-    self._debug_info = None
 
     # Attributes are used by models that cannot be loaded into TensorFlow.
     if not self._has_valid_tensors():
@@ -621,11 +568,7 @@ class TFLiteConverter(TFLiteConverterBase):
       TFLiteConverter class.
     """
     graph_def = _freeze_graph(sess, input_tensors, output_tensors)
-    return cls(
-        graph_def,
-        input_tensors,
-        output_tensors,
-        experimental_debug_info_func=_build_debug_info_func(sess.graph))
+    return cls(graph_def, input_tensors, output_tensors)
 
   @classmethod
   def from_frozen_graph(cls,
@@ -756,10 +699,7 @@ class TFLiteConverter(TFLiteConverterBase):
     result = _freeze_saved_model(saved_model_dir, input_arrays, input_shapes,
                                  output_arrays, tag_set, signature_key)
     return cls(
-        graph_def=result[0],
-        input_tensors=result[1],
-        output_tensors=result[2],
-        experimental_debug_info_func=_build_debug_info_func(result[3]))
+        graph_def=result[0], input_tensors=result[1], output_tensors=result[2])
 
   @classmethod
   def from_keras_model_file(cls,
@@ -802,12 +742,8 @@ class TFLiteConverter(TFLiteConverterBase):
       frozen_func = _convert_to_constants.convert_variables_to_constants_v2(
           concrete_func)
       _set_tensor_shapes(frozen_func.inputs, input_shapes)
-      return cls(
-          frozen_func.graph.as_graph_def(),
-          frozen_func.inputs,
-          frozen_func.outputs,
-          experimental_debug_info_func=_build_debug_info_func(
-              frozen_func.graph))
+      return cls(frozen_func.graph.as_graph_def(), frozen_func.inputs,
+                 frozen_func.outputs)
 
     # Handles Keras when Eager mode is disabled.
     _keras.backend.clear_session()
@@ -828,11 +764,7 @@ class TFLiteConverter(TFLiteConverterBase):
     _set_tensor_shapes(input_tensors, input_shapes)
 
     graph_def = _freeze_graph(sess, input_tensors, output_tensors)
-    return cls(
-        graph_def,
-        input_tensors,
-        output_tensors,
-        experimental_debug_info_func=_build_debug_info_func(sess.graph))
+    return cls(graph_def, input_tensors, output_tensors)
 
   def __setattr__(self, name, value):
     if name == "post_training_quantize":
@@ -911,7 +843,6 @@ class TFLiteConverter(TFLiteConverterBase):
     else:
       quantized_stats = None
 
-    self._validate_quantization()
     self._validate_representative_dataset()
 
     toco_inference_input_type = self.inference_input_type
@@ -930,7 +861,7 @@ class TFLiteConverter(TFLiteConverterBase):
       if inference_output_type is None:
         inference_output_type = constants.FLOAT
 
-    weight_only_quantize = self._is_int8_weight_only_quantize()
+    weight_only_quantize = self._is_weight_only_quantize()
     if weight_only_quantize:
       # Currently, weight only quantization requires float inputs and outputs.
       if (inference_input_type != constants.FLOAT or
@@ -938,8 +869,6 @@ class TFLiteConverter(TFLiteConverterBase):
         raise ValueError(
             "Provide an inference_input_type and inference_output_type of type "
             "tf.float32.")
-
-    float16_quantize = self._is_float16_quantize()
 
     if not post_training_optimize and self.inference_output_type is not None:
       raise ValueError(
@@ -957,8 +886,7 @@ class TFLiteConverter(TFLiteConverterBase):
         "reorder_across_fake_quant": self.reorder_across_fake_quant,
         "change_concat_input_ranges": self.change_concat_input_ranges,
         "allow_custom_ops": self.allow_custom_ops,
-        "post_training_quantize": weight_only_quantize or float16_quantize,
-        "quantize_to_float16": float16_quantize,
+        "post_training_quantize": weight_only_quantize,
         "target_ops": self._target_ops,
         "dump_graphviz_dir": self.dump_graphviz_dir,
         "dump_graphviz_video": self.dump_graphviz_video
@@ -975,15 +903,12 @@ class TFLiteConverter(TFLiteConverterBase):
       except Exception:
         optimized_graph = self._graph_def
 
-    self._debug_info = _get_debug_info(self._debug_info_func, optimized_graph)
-
     # Converts model.
     if self._has_valid_tensors():
       result = _toco_convert_impl(
           input_data=optimized_graph,
           input_tensors=self._input_tensors,
           output_tensors=self._output_tensors,
-          debug_info=self._debug_info,
           **converter_kwargs)
     else:
       result = _toco_convert_graph_def(

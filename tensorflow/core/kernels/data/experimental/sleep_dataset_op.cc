@@ -133,16 +133,7 @@ class SleepDatasetOp : public UnaryDatasetOpKernel {
   };
 };
 
-REGISTER_KERNEL_BUILDER(Name("SleepDataset").Device(DEVICE_CPU),
-                        SleepDatasetOp);
 REGISTER_KERNEL_BUILDER(Name("ExperimentalSleepDataset").Device(DEVICE_CPU),
-                        SleepDatasetOp);
-
-REGISTER_KERNEL_BUILDER(Name("SleepDataset")
-                            .Device(DEVICE_GPU)
-                            .HostMemory("sleep_microseconds")
-                            .HostMemory("input_dataset")
-                            .HostMemory("handle"),
                         SleepDatasetOp);
 REGISTER_KERNEL_BUILDER(Name("ExperimentalSleepDataset")
                             .Device(DEVICE_GPU)

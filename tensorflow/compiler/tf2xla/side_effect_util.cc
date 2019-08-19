@@ -37,7 +37,7 @@ Status SetDeviceOrdinalAttributeForNode(Node* node, int device_ordinal) {
       node->type_string() == "_XlaSendFromHost") {
     node->ClearAttr("device_ordinal");
     node->AddAttr("device_ordinal", device_ordinal);
-  } else if (node->IsIfNode()) {
+  } else if (node->type_string() == "If") {
     AttrValue device_ordinal_value;
     device_ordinal_value.set_i(device_ordinal);
     for (const string& attr_name :

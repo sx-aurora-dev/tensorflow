@@ -21,16 +21,16 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/threadpool.h"
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#ifdef GOOGLE_CUDA
 #include "tensorflow/core/kernels/gpu_device_array.h"
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#ifdef GOOGLE_CUDA
 typedef Eigen::GpuDevice GPUDevice;
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 template <class T>
 class DynamicStitchOpImplBase : public OpKernel {
@@ -133,7 +133,7 @@ class DynamicStitchOpImplBase : public OpKernel {
   }
 };
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 template <typename T>
 void DynamicStitchGPUImpl(const Eigen::GpuDevice& gpu_device,
@@ -223,7 +223,7 @@ class DynamicStitchOpGPU : public DynamicStitchOpImplBase<T> {
   }
 };
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 template <class T, bool Parallel>
 class DynamicStitchOpImplCPU : public DynamicStitchOpImplBase<T> {
@@ -342,7 +342,7 @@ TF_CALL_variant(REGISTER_DYNAMIC_STITCH);
 TF_CALL_QUANTIZED_TYPES(REGISTER_DYNAMIC_STITCH);
 #undef REGISTER_DYNAMIC_STITCH
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 #define REGISTER_DYNAMIC_STITCH_GPU(type)                \
   REGISTER_KERNEL_BUILDER(Name("DynamicStitch")          \
                               .Device(DEVICE_GPU)        \
@@ -364,7 +364,7 @@ TF_CALL_int64(REGISTER_DYNAMIC_STITCH_GPU);
 TF_CALL_int32(REGISTER_DYNAMIC_STITCH_GPU);
 #undef REGISTER_DYNAMIC_STITCH_GPU
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 #ifdef TENSORFLOW_USE_SYCL
 #define REGISTER_DYNAMIC_STITCH_SYCL(type)               \

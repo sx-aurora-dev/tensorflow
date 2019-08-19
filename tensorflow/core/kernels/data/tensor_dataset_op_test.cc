@@ -12,15 +12,27 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/core/kernels/data/tensor_dataset_op.h"
 
+#include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/fake_input.h"
+#include "tensorflow/core/framework/function_testlib.h"
+#include "tensorflow/core/framework/node_def_builder.h"
+#include "tensorflow/core/framework/partial_tensor_shape.h"
+#include "tensorflow/core/framework/variant.h"
+#include "tensorflow/core/framework/variant_tensor_data.h"
 #include "tensorflow/core/kernels/data/dataset_test_base.h"
+#include "tensorflow/core/kernels/data/dataset_utils.h"
+#include "tensorflow/core/kernels/data/iterator_ops.h"
+#include "tensorflow/core/kernels/ops_testutil.h"
+#include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/util/ptr_util.h"
 
 namespace tensorflow {
 namespace data {
 namespace {
 
 constexpr char kNodeName[] = "tensor_dataset";
+constexpr char kOpName[] = "TensorDataset";
 
 class TensorDatasetOpTest : public DatasetOpsTestBase {
  protected:
@@ -31,14 +43,11 @@ class TensorDatasetOpTest : public DatasetOpsTestBase {
     std::vector<string> components;
     components.reserve(dtypes.size());
     for (int i = 0; i < dtypes.size(); i++) {
-      components.emplace_back(
-          strings::StrCat(TensorDatasetOp::kComponents, "_", i));
+      components.emplace_back(strings::StrCat("component_", i));
     }
     node_def_ = test::function::NDef(
-        kNodeName, name_utils::OpName(TensorDatasetOp::kDatasetType),
-        components,
-        {{TensorDatasetOp::kToutput_types, dtypes},
-         {TensorDatasetOp::kOutputShapes, shapes}});
+        kNodeName, kOpName, components,
+        {{"Toutput_types", dtypes}, {"output_shapes", shapes}});
     TF_RETURN_IF_ERROR(CreateOpKernel(node_def_, tensor_dataset_kernel));
     return Status::OK();
   }
@@ -195,8 +204,7 @@ TEST_F(TensorDatasetOpTest, DatasetTypeString) {
                              tensor_dataset_context.get(), &tensor_dataset));
   core::ScopedUnref scoped_unref(tensor_dataset);
 
-  EXPECT_EQ(tensor_dataset->type_string(),
-            name_utils::OpName(TensorDatasetOp::kDatasetType));
+  EXPECT_EQ(tensor_dataset->type_string(), kOpName);
 }
 
 TEST_F(TensorDatasetOpTest, DatasetNodeName) {
@@ -439,8 +447,7 @@ TEST_F(TensorDatasetOpTest, IteratorOutputPrefix) {
   TF_ASSERT_OK(tensor_dataset->MakeIterator(iterator_context.get(), "Iterator",
                                             &iterator));
 
-  EXPECT_EQ(iterator->prefix(),
-            name_utils::IteratorPrefix("FromTensor", "Iterator"));
+  EXPECT_EQ(iterator->prefix(), "Iterator::FromTensor");
 }
 
 TEST_P(ParametrizedTensorDatasetOpTest, Roundtrip) {

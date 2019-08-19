@@ -46,7 +46,7 @@ def set_verbosity(level, alsologtostdout=False):
   More verbose logging is useful to enable when filing bug reports or doing
   more in-depth debugging.
 
-  There are two means to control the logging verbosity:
+  There are two controls that control the logging verbosity:
 
    * The `set_verbosity` function
 
@@ -70,8 +70,7 @@ def set_verbosity(level, alsologtostdout=False):
   # No effect, because set_verbosity was already called.
   ```
 
-  Logs entries are output to [absl](https://abseil.io)'s 
-  [default output](https://abseil.io/docs/python/guides/logging),
+  Logs entries are output to [absl](https://abseil.io)'s default output,
   with `INFO` level.
   Logs can be mirrored to stdout by using the `alsologtostdout` argument.
   Mirroring is enabled by default when Python runs in interactive mode.
@@ -79,7 +78,7 @@ def set_verbosity(level, alsologtostdout=False):
   Args:
     level: int, the verbosity level; larger values specify increased verbosity;
       0 means no logging. When reporting bugs, it is recommended to set this
-      value to a larger number, like 10.
+      value to a larges number, like 10.
     alsologtostdout: bool, whether to also output log messages to `sys.stdout`.
   """
   global verbosity_level

@@ -60,9 +60,7 @@ class RangeDatasetOp::Dataset : public DatasetBase {
   }
 
   string DebugString() const override {
-    name_utils::DatasetDebugStringParams params;
-    params.set_args(start_, stop_, step_);
-    return name_utils::DatasetDebugString(kDatasetType, params);
+    return name_utils::DatasetDebugString(kDatasetType, start_, stop_, step_);
   }
 
   int64 Cardinality() const override {

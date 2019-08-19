@@ -240,9 +240,7 @@ def get_regularization_loss(scope=None, name="total_regularization_loss"):
 
 
 @tf_export(v1=["losses.get_total_loss"])
-def get_total_loss(add_regularization_losses=True,
-                   name="total_loss",
-                   scope=None):
+def get_total_loss(add_regularization_losses=True, name="total_loss"):
   """Returns a tensor whose value represents the total loss.
 
   In particular, this adds any losses you have added with `tf.add_loss()` to
@@ -255,9 +253,6 @@ def get_total_loss(add_regularization_losses=True,
     add_regularization_losses: A boolean indicating whether or not to use the
       regularization losses in the sum.
     name: The name of the returned tensor.
-    scope: An optional scope name for filtering the losses to return. Note that
-      this filters the losses added with `tf.add_loss()` as well as the
-      regularization losses to that scope.
 
   Returns:
     A `Tensor` whose value represents the total loss.
@@ -265,7 +260,7 @@ def get_total_loss(add_regularization_losses=True,
   Raises:
     ValueError: if `losses` is not iterable.
   """
-  losses = get_losses(scope=scope)
+  losses = get_losses()
   if add_regularization_losses:
-    losses += get_regularization_losses(scope=scope)
+    losses += get_regularization_losses()
   return math_ops.add_n(losses, name=name)

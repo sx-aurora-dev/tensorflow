@@ -49,8 +49,6 @@ _TF_BAZELRC_FILENAME = '.tf_configure.bazelrc'
 _TF_WORKSPACE_ROOT = ''
 _TF_BAZELRC = ''
 _TF_CURRENT_BAZEL_VERSION = None
-_TF_MIN_BAZEL_VERSION = '0.24.1'
-_TF_MAX_BAZEL_VERSION = '0.26.1'
 
 NCCL_LIB_PATHS = [
     'lib64/', 'lib/powerpc64le-linux-gnu/', 'lib/x86_64-linux-gnu/', ''
@@ -236,9 +234,7 @@ def setup_python(environ_cp):
         python_lib_path = default_python_lib_path
     environ_cp['PYTHON_LIB_PATH'] = python_lib_path
 
-  python_major_version = get_python_major_version(python_bin_path)
-  if python_major_version == '2':
-    write_to_bazelrc('build --host_force_python=PY2')
+  _ = get_python_major_version(python_bin_path)
 
   # Convert python path to Windows style before writing into bazel.rc
   if is_windows() or is_cygwin():
@@ -1395,8 +1391,7 @@ def main():
   # environment variables.
   environ_cp = dict(os.environ)
 
-  current_bazel_version = check_bazel_version(_TF_MIN_BAZEL_VERSION,
-                                              _TF_MAX_BAZEL_VERSION)
+  current_bazel_version = check_bazel_version('0.24.1', '0.26.0')
   _TF_CURRENT_BAZEL_VERSION = convert_version_to_int(current_bazel_version)
 
   reset_tf_configure_bazelrc()
@@ -1428,7 +1423,7 @@ def main():
   if is_ppc64le():
     write_action_env_to_bazelrc('OMP_NUM_THREADS', 1)
 
-  xla_enabled_by_default = is_linux() or is_macos()
+  xla_enabled_by_default = is_linux()
   set_build_var(environ_cp, 'TF_ENABLE_XLA', 'XLA JIT', 'with_xla_support',
                 xla_enabled_by_default, 'xla')
 
@@ -1587,7 +1582,6 @@ def main():
   config_info_line(
       'dynamic_kernels',
       '(Experimental) Build kernels into separate shared objects.')
-  config_info_line('v2', 'Build TensorFlow 2.x instead of 1.x.')
   config_info_line('ve', 'Build with VE support.')
 
   print('Preconfigured Bazel build configs to DISABLE default on features:')

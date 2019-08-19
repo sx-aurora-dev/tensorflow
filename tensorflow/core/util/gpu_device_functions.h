@@ -538,7 +538,7 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuAtomicCasHelper, CudaAtomicCasHelper);
 // correctly).
 template <typename F>
 __device__ float GpuAtomicCasHelper(float* ptr, F accumulate) {
-  return __int_as_float(
+  return __float_as_int(
       GpuAtomicCasHelper(reinterpret_cast<int32*>(ptr), [accumulate](int32 a) {
         return __float_as_int(accumulate(__int_as_float(a)));
       }));

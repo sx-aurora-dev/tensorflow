@@ -45,11 +45,7 @@ WORKSPACE="${WORKSPACE:-$(upsearch WORKSPACE)}"
 
 ROOT_CONTAINER=${ROOT_CONTAINER:-tensorflow/tensorflow}
 TF_ROOT_CONTAINER_TAG=${ROOT_CONTAINER_TAG:-devel}
-
-# TF_BUILD_VERSION can be either a tag, branch, commit ID or PR number.
-# For a PR, set TF_BUILD_VERSION_IS_PR="yes"
 TF_BUILD_VERSION=${TF_DOCKER_BUILD_DEVEL_BRANCH:-master}
-TF_BUILD_VERSION_IS_PR=${TF_DOCKER_BUILD_DEVEL_BRANCH_IS_PR:-no}
 TF_REPO=${TF_REPO:-https://github.com/tensorflow/tensorflow}
 FINAL_IMAGE_NAME=${TF_DOCKER_BUILD_IMAGE_NAME:-intel-mkl/tensorflow}
 TF_DOCKER_BUILD_VERSION=${TF_DOCKER_BUILD_VERSION:-nightly}
@@ -64,7 +60,6 @@ ENABLE_SECURE_BUILD=${ENABLE_SECURE_BUILD:-no}
 debug "ROOT_CONTAINER=${ROOT_CONTAINER}"
 debug "TF_ROOT_CONTAINER_TAG=${TF_ROOT_CONTAINER_TAG}"
 debug "TF_BUILD_VERSION=${TF_BUILD_VERSION}"
-debug "TF_BUILD_VERSION_IS_PR=${TF_BUILD_VERSION_IS_PR}"
 debug "FINAL_IMAGE_NAME=${FINAL_IMAGE_NAME}"
 debug "TF_DOCKER_BUILD_VERSION=${TF_DOCKER_BUILD_VERSION}"
 debug "BUILD_AVX_CONTAINERS=${BUILD_AVX_CONTAINERS}"
@@ -85,18 +80,14 @@ function build_container()
   shift
   TF_DOCKER_BUILD_ARGS=("${@}")
 
-  # Add the proxy info build args. This will be later on passed to docker as
-  # --build-arg so that users behind corporate proxy can build the images
+  # Add the proxy info build args
   TF_DOCKER_BUILD_ARGS+=("--build-arg http_proxy=${http_proxy}")
   TF_DOCKER_BUILD_ARGS+=("--build-arg https_proxy=${https_proxy}")
   TF_DOCKER_BUILD_ARGS+=("--build-arg socks_proxy=${socks_proxy}")
   TF_DOCKER_BUILD_ARGS+=("--build-arg no_proxy=${no_proxy}")
-  # In general having uppercase proxies is a good idea because different
-  # applications running inside Docker may only honor uppercase proxies
-  TF_DOCKER_BUILD_ARGS+=("--build-arg HTTP_PROXY=${HTTP_PROXY}")
-  TF_DOCKER_BUILD_ARGS+=("--build-arg HTTPS_PROXY=${HTTPS_PROXY}")
-  TF_DOCKER_BUILD_ARGS+=("--build-arg SOCKS_PROXY=${SOCKS_PROXY}")
-  TF_DOCKER_BUILD_ARGS+=("--build-arg NO_PROXY=${NO_PROXY}")
+  TF_DOCKER_BUILD_ARGS+=("--build-arg HTTP_PROXY=${http_proxy}")
+  TF_DOCKER_BUILD_ARGS+=("--build-arg SOCKS_PROXY=${socks_proxy}")
+  TF_DOCKER_BUILD_ARGS+=("--build-arg NO_PROXY=${no_proxy}")
 
   #Add --config=v2 build arg for TF v2
   if [[ ${BUILD_TF_V2_CONTAINERS} == "no" ]]; then
@@ -170,13 +161,12 @@ function test_container()
 
 function checkout_tensorflow()
 {
-  if [[ "$#" != "3" ]]; then
-    die "Usage: ${FUNCNAME} <REPO_URL> <BRANCH/TAG/COMMIT-ID/PR-ID> <TF_BUILD_VERSION_IS_PR>"
+  if [[ "$#" != "2" ]]; then
+    die "Usage: ${FUNCNAME} <REPO_URL> <BRANCH/TAG/COMMIT-ID>"
   fi
 
   TF_REPO="${1}"
   TF_BUILD_VERSION="${2}"
-  TF_BUILD_VERSION_IS_PR="${3}"
   TENSORFLOW_DIR="tensorflow"
 
   debug "Checking out ${TF_REPO}:${TF_BUILD_VERSION} into ${TENSORFLOW_DIR}"
@@ -184,15 +174,10 @@ function checkout_tensorflow()
   # Clean any existing tensorflow sources
   rm -rf "${TENSORFLOW_DIR}"
 
+  # Let's make this simeple for now; we can be more fancy later
   git clone ${TF_REPO} ${TENSORFLOW_DIR}
   cd ${TENSORFLOW_DIR}
-  if [[ "${TF_BUILD_VERSION_IS_PR}" == "yes" ]]; then
-    # If TF_BUILD_VERSION is a PR number, then fetch first
-    git fetch origin pull/${TF_BUILD_VERSION}/head:pr-${TF_BUILD_VERSION}
-    git checkout pr-${TF_BUILD_VERSION}
-  else
-    git checkout ${TF_BUILD_VERSION}
-  fi
+  git checkout ${TF_BUILD_VERSION}
   if [ $? -ne 0 ]; then
     die "Unable to find ${TF_BUILD_VERSION} on ${TF_REPO}"
   fi
@@ -243,7 +228,7 @@ if [[ ${BUILD_CLX_CONTAINERS} == "yes" ]]; then
 fi
 
 # Checking out sources needs to be done only once
-checkout_tensorflow "${TF_REPO}" "${TF_BUILD_VERSION}" "${TF_BUILD_VERSION_IS_PR}"
+checkout_tensorflow "${TF_REPO}" "${TF_BUILD_VERSION}"
 
 for PLATFORM in "${PLATFORMS[@]}"
 do

@@ -23,11 +23,12 @@ from absl.testing import parameterized
 from tensorflow.python.framework import test_util
 from tensorflow.python.ops.ragged import ragged_array_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedExpandDimsOpTest(test_util.TensorFlowTestCase,
+class RaggedExpandDimsOpTest(ragged_test_util.RaggedTensorTestCase,
                              parameterized.TestCase):
 
   # An example 4-d ragged tensor with shape [3, (D2), (D3), 2], and the
@@ -119,7 +120,7 @@ class RaggedExpandDimsOpTest(test_util.TensorFlowTestCase,
     if expected_shape is not None:
       self.assertEqual(expanded.shape.as_list(), expected_shape)
 
-    self.assertAllEqual(expanded, expected)
+    self.assertRaggedEqual(expanded, expected)
 
 
 if __name__ == '__main__':

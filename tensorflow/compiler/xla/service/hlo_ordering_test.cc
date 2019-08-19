@@ -338,7 +338,7 @@ ENTRY while.v11 {
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnUnverifiedModule(module_str));
+                          ParseHloString(module_str));
   DependencyHloOrdering ordering(module.get());
   ordering.ToString();  // Shouldn't crash.
 }
@@ -375,7 +375,7 @@ ENTRY root {
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnUnverifiedModule(module_str));
+                          ParseHloString(module_str));
   TF_ASSERT_OK_AND_ASSIGN(auto dataflow,
                           HloDataflowAnalysis::Run(*module, /*ssa_form=*/true));
   DependencyHloOrdering ordering(module.get());
@@ -521,9 +521,8 @@ ENTRY InterferenceWithOuterRoot {
 
 )";
   HloModuleConfig hlo_config;
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> module,
-      ParseAndReturnUnverifiedModule(hlo_string, hlo_config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseHloString(hlo_string, hlo_config));
   TF_ASSERT_OK_AND_ASSIGN(auto dataflow,
                           HloDataflowAnalysis::Run(*module, /*ssa_form=*/true));
   DependencyHloOrdering ordering(module.get());

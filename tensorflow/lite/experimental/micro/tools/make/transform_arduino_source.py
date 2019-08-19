@@ -23,27 +23,6 @@ import re
 import sys
 
 
-def replace_includes(line, supplied_headers_list):
-  """Updates any includes to reference the new Arduino library paths."""
-  include_match = re.match(r'(.*#include.*")(.*)(")', line)
-  if include_match:
-    path = include_match.group(2)
-    for supplied_header in supplied_headers_list:
-      if supplied_header.endswith(path):
-        path = supplied_header
-        break
-    line = include_match.group(1) + path + include_match.group(3)
-  return line
-
-
-def replace_main(line):
-  """Updates any occurences of a bare main definition to the Arduino equivalent."""
-  main_match = re.match(r'(.*int )(main)(\(.*)', line)
-  if main_match:
-    line = main_match.group(1) + 'tflite_micro_main' + main_match.group(3)
-  return line
-
-
 def main(unused_args, flags):
   """Resolves third party headers to their full paths in source code."""
   input_file_lines = sys.stdin.read().split('\n')
@@ -52,8 +31,14 @@ def main(unused_args, flags):
 
   output_lines = []
   for line in input_file_lines:
-    line = replace_includes(line, supplied_headers_list)
-    line = replace_main(line)
+    include_match = re.match(r'(.*#include.*")(.*)(")', line)
+    if include_match:
+      path = include_match.group(2)
+      for supplied_header in supplied_headers_list:
+        if supplied_header.endswith(path):
+          path = supplied_header
+          break
+      line = include_match.group(1) + path + include_match.group(3)
     output_lines.append(line)
   output_text = '\n'.join(output_lines)
 

@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifdef GOOGLE_CUDA
-
 #include "tensorflow/stream_executor/cuda/redzone_allocator.h"
 
 #include "tensorflow/core/lib/core/status_test_util.h"
@@ -106,8 +104,7 @@ TEST(RedzoneAllocatorTest, WriteToRedzone) {
     stream.ThenMemcpy(&old_redzone_value, redzone_at_offset, 1)
         .ThenMemZero(&redzone_at_offset, 1);
     EXPECT_REDZONE_VIOLATION(allocator.CheckRedzones(&stream));
-
-    // Checking reinitializes the redzone.
+    stream.ThenMemcpy(&redzone_at_offset, &old_redzone_value, 1);
     EXPECT_REDZONE_OK(allocator.CheckRedzones(&stream));
   };
 
@@ -141,5 +138,3 @@ TEST(RedzoneAllocatorTest, VeryLargeRedzone) {
 }  // namespace
 }  // namespace cuda
 }  // namespace stream_executor
-
-#endif  // GOOGLE_CUDA

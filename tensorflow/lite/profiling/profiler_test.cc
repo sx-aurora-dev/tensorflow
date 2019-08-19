@@ -49,14 +49,14 @@ void ParentFunction(tflite::Profiler* profiler) {
 }
 
 TEST(ProfilerTest, NoProfilesAreCollectedWhenDisabled) {
-  BufferedProfiler profiler(1024);
+  BufferedProfiler profiler;
   ParentFunction(&profiler);
   auto profile_events = profiler.GetProfileEvents();
   EXPECT_EQ(0, profile_events.size());
 }
 
 TEST(ProfilingTest, ProfilesAreCollected) {
-  BufferedProfiler profiler(1024);
+  BufferedProfiler profiler;
   profiler.StartProfiling();
   ParentFunction(&profiler);
   profiler.StopProfiling();
@@ -101,7 +101,7 @@ TEST(ProfilingTest, NullProfiler) {
 }
 
 TEST(ProfilingTest, ScopedProfile) {
-  BufferedProfiler profiler(1024);
+  BufferedProfiler profiler;
   profiler.StartProfiling();
   { SCOPED_OPERATOR_PROFILE(&profiler, 1); }
   profiler.StopProfiling();

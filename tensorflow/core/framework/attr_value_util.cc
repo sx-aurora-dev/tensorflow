@@ -16,7 +16,6 @@ limitations under the License.
 #include "tensorflow/core/framework/attr_value_util.h"
 
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "absl/strings/escaping.h"

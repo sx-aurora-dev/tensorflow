@@ -170,10 +170,7 @@ java_test(
 java_test(
     name = "InterpreterTest",
     size = "small",
-    srcs = [
-        "src/test/java/org/tensorflow/lite/InterpreterTest.java",
-        "src/test/java/org/tensorflow/lite/TestUtils.java",
-    ],
+    srcs = ["src/test/java/org/tensorflow/lite/InterpreterTest.java"],
     data = [
         "src/testdata/add.bin",
         "//tensorflow/lite:testdata/multi_add.bin",
@@ -230,12 +227,6 @@ java_test(
         "@com_google_truth",
         "@junit",
     ],
-)
-
-filegroup(
-    name = "portable_tests",
-    srcs = ["src/test/java/org/tensorflow/lite/InterpreterTest.java"],
-    visibility = ["//visibility:public"],
 )
 
 filegroup(

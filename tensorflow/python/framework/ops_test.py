@@ -28,7 +28,6 @@ from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.client import session
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
-from tensorflow.python.eager import def_function
 from tensorflow.python.eager import function as eager_function
 from tensorflow.python.framework import common_shapes
 from tensorflow.python.framework import composite_tensor
@@ -2049,21 +2048,6 @@ class OpScopeTest(test_util.TensorFlowTestCase):
       with ops.name_scope(None, "default2") as scope2:
         self.assertEqual(scope2, "default/default2/")
 
-  @test_util.run_in_graph_and_eager_modes
-  def testNameScopeV2IsReEntrant(self):
-    foo = ops.name_scope_v2("foo")
-    bar = ops.name_scope_v2("bar")
-    with foo as scope_name:
-      self.assertEqual("foo/", scope_name)
-      with foo as scope_name:
-        self.assertEqual("foo/foo/", scope_name)
-      with bar as scope_name:
-        self.assertEqual("foo/bar/", scope_name)
-        with foo as scope_name:
-          self.assertEqual("foo/bar/foo/", scope_name)
-    with bar as scope_name:
-      self.assertEqual("bar/", scope_name)
-
   @test_util.run_deprecated_v1
   def testNoScopeName(self):
     g0 = ops.Graph()
@@ -2427,25 +2411,16 @@ class InitScopeTest(test_util.TensorFlowTestCase):
 
   def testExecutingEagerlyOutsideFunctions(self):
 
-    @def_function.function
+    @eager_function.defun
     def f():
       return ops.executing_eagerly_outside_functions()
-
-    with context.graph_mode():
-      self.assertFalse(ops.executing_eagerly_outside_functions())
-      with session.Session():
-        # Need self.evaluate for these as the return type of functions is
-        # tensors.
-        self.assertFalse(self.evaluate(f()))
 
     with context.eager_mode():
       self.assertTrue(ops.executing_eagerly_outside_functions())
       self.assertTrue(f())
-
-      with ops.Graph().as_default():
+      g = ops.Graph()
+      with g.as_default():
         self.assertFalse(ops.executing_eagerly_outside_functions())
-        with session.Session():
-          self.assertFalse(self.evaluate(f()))
 
 
 class GraphTest(test_util.TensorFlowTestCase):

@@ -29,9 +29,9 @@ limitations under the License.
 #include "tensorflow/core/util/tensor_format.h"
 #include "tensorflow/core/util/work_sharder.h"
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 #include "tensorflow/core/kernels/maxpooling_op_gpu.h"
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 namespace tensorflow {
 
@@ -96,11 +96,6 @@ class MaxPoolingOp : public OpKernel {
     OP_REQUIRES(context, ksize_.size() == 4,
                 errors::InvalidArgument("Sliding window ksize field must "
                                         "specify 4 dimensions"));
-    for (int i = 0; i < ksize_.size(); ++i) {
-      OP_REQUIRES(context, ksize_[i] > 0,
-                  errors::InvalidArgument("Sliding window ksize for dimension ",
-                                          i, " was zero."));
-    }
     OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
     OP_REQUIRES(context, stride_.size() == 4,
                 errors::InvalidArgument("Sliding window stride field must "
@@ -269,12 +264,11 @@ class MaxPoolingOp : public OpKernel {
 template <typename Device>
 struct LaunchMaxPoolingNoMask_NCHW_VECT_C;
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#ifdef GOOGLE_CUDA
 template <>
 struct LaunchMaxPoolingNoMask_NCHW_VECT_C<Eigen::GpuDevice> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& input, Tensor* output) {
-#if GOOGLE_CUDA
     bool status = functor::MaxPoolForwardNoMask_NCHW_VECT_C()(
         reinterpret_cast<const int32*>(input.flat<qint8>().data()),
         params.tensor_in_batch, params.tensor_in_rows, params.tensor_in_cols,
@@ -287,14 +281,9 @@ struct LaunchMaxPoolingNoMask_NCHW_VECT_C<Eigen::GpuDevice> {
       context->SetStatus(errors::Internal(
           "Failed launching LaunchMaxPoolingNoMask_NCHW_VECT_C"));
     }
-#else
-    // ROCm TODO: add support __vmaxs4 on ROCm
-    context->SetStatus(errors::Internal(
-        "Failed launching LaunchMaxPoolingNoMask_NCHW_VECT_C"));
-#endif  // GOOGLE_CUDA
   }
 };
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif
 
 template <typename Device, typename T>
 class MaxPoolingV2Op : public OpKernel {
@@ -411,7 +400,7 @@ class MaxPoolingV2Op : public OpKernel {
     // Spatial MaxPooling implementation.
     //
     // TODO(vrv): Remove this once we no longer need it.
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#ifdef GOOGLE_CUDA
     if (std::is_same<Device, GPUDevice>::value) {
       Eigen::PaddingType pt = BrainPadding2EigenPadding(padding);
       if (std::is_same<T, qint8>::value) {

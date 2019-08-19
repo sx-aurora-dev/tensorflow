@@ -18,7 +18,6 @@ limitations under the License.
 #include <string>
 
 #include "absl/memory/memory.h"
-#include "tensorflow/lite/c/c_api_internal.h"
 #include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/kernels/register.h"
 #include "tensorflow/lite/model.h"
@@ -444,13 +443,6 @@ InterpreterWrapper* InterpreterWrapper::CreateWrapperCPPFromBuffer(
 PyObject* InterpreterWrapper::ResetVariableTensors() {
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_CHECK(interpreter_->ResetVariableTensors());
-  Py_RETURN_NONE;
-}
-
-PyObject* InterpreterWrapper::ModifyGraphWithDelegate(
-    TfLiteDelegate* delegate) {
-  TFLITE_PY_ENSURE_VALID_INTERPRETER();
-  TFLITE_PY_CHECK(interpreter_->ModifyGraphWithDelegate(delegate));
   Py_RETURN_NONE;
 }
 

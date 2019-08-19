@@ -35,7 +35,6 @@ std::ostream& operator<<(std::ostream& os, const DeviceType& d) {
   return os;
 }
 
-const char* const DEVICE_DEFAULT = "DEFAULT";
 const char* const DEVICE_CPU = "CPU";
 const char* const DEVICE_GPU = "GPU";
 const char* const DEVICE_SYCL = "SYCL";

@@ -78,7 +78,9 @@ XlaOp GetMatrixDiagonal(XlaOp x, int k) {
     // TPUs don't support S64 add reduction at the moment. But fortunately
     // OR-reductions work just as well for integers.
     XlaComputation reducer =
-        CreateScalarIdentityWithZeroComputation(shape.element_type(), builder);
+        primitive_util::IsIntegralType(shape.element_type())
+            ? CreateScalarOrComputation(shape.element_type(), builder)
+            : CreateScalarAddComputation(shape.element_type(), builder);
     // k == 0, we can save one slice op.
     if (k == 0) {
       return Reduce(Select(mask, x, Zeros(builder, shape)), ScalarLike(x, 0),

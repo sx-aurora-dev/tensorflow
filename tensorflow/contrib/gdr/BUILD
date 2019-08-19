@@ -1,12 +1,6 @@
 # Description:
 #   GPU Direct RDMA Out-of-Band Tensor transport for TensorFlow.
 
-# For platform specific build config
-load(
-    "//tensorflow/core:platform/default/build_config.bzl",
-    "tf_proto_library_cc",
-)
-
 package(
     default_visibility = [
         "//tensorflow:__subpackages__",
@@ -22,6 +16,12 @@ filegroup(
         "**/*.cc",
         "**/*.h",
     ]),
+)
+
+# For platform specific build config
+load(
+    "//tensorflow/core:platform/default/build_config.bzl",
+    "tf_proto_library_cc",
 )
 
 tf_proto_library_cc(

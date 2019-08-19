@@ -1199,7 +1199,7 @@ class MapWithCapturedVariableTests(test_base.DatasetTestBase,
 
   # TODO(b/121264236): add eager mode coverage when we have multi-device setup.
   @test_util.run_v1_only("b/121264236")
-  def testSkipEagerRefVariablesWithMultipleDevices(self):
+  def testSkipEagerRefVariablesWithConflictingDevices(self):
     config = config_pb2.ConfigProto(device_count={"CPU": 3})
     with self.cached_session(config=config):
 
@@ -1223,33 +1223,34 @@ class MapWithCapturedVariableTests(test_base.DatasetTestBase,
 
   # TODO(b/121264236): add eager mode coverage when we have multi-device setup.
   @test_util.run_v1_only("b/121264236")
-  def testSkipEagerResourceVariablesWithMultipleDevices(self):
+  def testSkipEagerResourceVariablesWithConflictingDevices(self):
     config = config_pb2.ConfigProto(device_count={"CPU": 3})
 
     def func(_):
       with variable_scope.variable_scope(
           "variable", reuse=variable_scope.AUTO_REUSE):
         with ops.device("/device:CPU:0"):
-          a_var = variable_scope.get_variable(
+          a = variable_scope.get_variable(
               "a", (), dtypes.int32, use_resource=True)
-          a_var = math_ops.add(a_var, 1)
+          a = math_ops.add(a, 1)
         with ops.device("/device:CPU:1"):
-          b_var = variable_scope.get_variable(
+          b = variable_scope.get_variable(
               "b", (), dtypes.int32, use_resource=True)
-      return math_ops.add(a_var, b_var)
+      return math_ops.add(a, b)
 
     g_1 = ops.Graph()
     with self.session(config=config, graph=g_1):
       # The MapDataset node ends up with two ResourceVariable inputs, one on
-      # device CPU:0 and the other on device CPU:1.
+      # device CPU:0 and the other on device CPU:1. The placer cannot resolve
+      # this as it cannot place the MapDatasetOp on both devices.
       dataset = dataset_ops.Dataset.from_tensors(0).repeat(10)
       dataset = dataset.map(func)
-      self.evaluate(variables.global_variables_initializer())
-      expected_output = [1] * 10
+      expected_error = (
+          errors.InvalidArgumentError,
+          "Cannot place the graph because a reference or resource edge "
+          "connects colocation groups with incompatible resource devices")
       self.assertDatasetProduces(
-          dataset,
-          expected_output=expected_output,
-          requires_initialization=True)
+          dataset, expected_error=expected_error, requires_initialization=True)
 
     g_2 = ops.Graph()
     with self.session(config=config, graph=g_2):

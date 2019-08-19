@@ -107,7 +107,12 @@ bool ComputeRandomUniformArray(Model* model, RandomUniformOperator* op) {
       break;
   }
 
-  DeleteOpAndArrays(model, op);
+  // Erase input arrays if no longer used
+  toco::DeleteArrayIfUsedOnce(op->inputs[0], model);
+
+  // Erase the operator
+  model->operators.erase(it);
+
   *modified = true;
   return ::tensorflow::Status::OK();
 }

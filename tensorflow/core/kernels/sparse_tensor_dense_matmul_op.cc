@@ -23,7 +23,6 @@ limitations under the License.
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/kernels/fill_functor.h"
-#include "tensorflow/core/lib/bfloat16/bfloat16.h"
 
 namespace tensorflow {
 
@@ -174,7 +173,6 @@ REGISTER_KERNELS_CPU(double);
 REGISTER_KERNELS_CPU(int32);
 REGISTER_KERNELS_CPU(complex64);
 REGISTER_KERNELS_CPU(complex128);
-REGISTER_KERNELS_CPU(bfloat16);
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 

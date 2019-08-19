@@ -23,7 +23,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
 #include "tensorflow/compiler/xla/literal.h"
@@ -307,8 +306,6 @@ class HloParser {
                            std::vector<bool>* dynamic_dimensions);
   bool ParseShape(Shape* result);
   bool ParseLayout(Layout* layout);
-  bool ParseLayoutIntAttribute(int64* attr_value,
-                               absl::string_view attr_description);
   bool ParseTiles(std::vector<Tile>* tiles);
   bool ParseOpcode(HloOpcode* result);
   bool ParseFftType(FftType* result);
@@ -749,8 +746,6 @@ bool HloParser::ParseInstructionRhs(HloComputation::Builder* builder,
     case HloOpcode::kCeil:
     case HloOpcode::kClz:
     case HloOpcode::kCopy:
-    case HloOpcode::kCopyStart:
-    case HloOpcode::kCopyDone:
     case HloOpcode::kCos:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
@@ -836,12 +831,15 @@ bool HloParser::ParseInstructionRhs(HloComputation::Builder* builder,
       optional<std::vector<std::vector<int64>>> tmp_groups;
       optional<HloComputation*> to_apply;
       optional<std::vector<int64>> replica_group_ids;
-      optional<int64> channel_id;
+      optional<string> barrier;
+      optional<int64> all_reduce_id;
       attrs["to_apply"] = {/*required=*/true, AttrTy::kHloComputation,
                            &to_apply};
       attrs["replica_groups"] = {/*required=*/false,
                                  AttrTy::kBracedInt64ListList, &tmp_groups};
-      attrs["channel_id"] = {/*required=*/false, AttrTy::kInt64, &channel_id};
+      attrs["barrier"] = {/*required=*/false, AttrTy::kString, &barrier};
+      attrs["all_reduce_id"] = {/*required=*/false, AttrTy::kInt64,
+                                &all_reduce_id};
       if (!ParseOperands(&operands) || !ParseAttributes(attrs)) {
         return false;
       }
@@ -850,11 +848,13 @@ bool HloParser::ParseInstructionRhs(HloComputation::Builder* builder,
         replica_groups = CreateReplicaGroups(*tmp_groups);
       }
       instruction = builder->AddInstruction(HloInstruction::CreateAllReduce(
-          shape, operands, *to_apply, replica_groups, channel_id));
+          shape, operands, *to_apply, replica_groups, barrier ? *barrier : "",
+          all_reduce_id));
       break;
     }
     case HloOpcode::kAllToAll: {
       optional<std::vector<std::vector<int64>>> tmp_groups;
+      optional<string> barrier;
       attrs["replica_groups"] = {/*required=*/false,
                                  AttrTy::kBracedInt64ListList, &tmp_groups};
       if (!ParseOperands(&operands) || !ParseAttributes(attrs)) {
@@ -872,8 +872,6 @@ bool HloParser::ParseInstructionRhs(HloComputation::Builder* builder,
       optional<std::vector<std::vector<int64>>> source_targets;
       attrs["source_target_pairs"] = {
           /*required=*/true, AttrTy::kBracedInt64ListList, &source_targets};
-      optional<int64> channel_id;
-      attrs["channel_id"] = {/*required=*/false, AttrTy::kInt64, &channel_id};
       if (!ParseOperands(&operands, /*expected_size=*/1) ||
           !ParseAttributes(attrs)) {
         return false;
@@ -887,9 +885,8 @@ bool HloParser::ParseInstructionRhs(HloComputation::Builder* builder,
         pairs[i].first = (*source_targets)[i][0];
         pairs[i].second = (*source_targets)[i][1];
       }
-      instruction =
-          builder->AddInstruction(HloInstruction::CreateCollectivePermute(
-              shape, operands[0], pairs, channel_id));
+      instruction = builder->AddInstruction(
+          HloInstruction::CreateCollectivePermute(shape, operands[0], pairs));
       break;
     }
     case HloOpcode::kReplicaId: {
@@ -910,15 +907,12 @@ bool HloParser::ParseInstructionRhs(HloComputation::Builder* builder,
       break;
     }
     case HloOpcode::kReshape: {
-      optional<int64> inferred_dimension;
-      attrs["inferred_dimension"] = {/*required=*/false, AttrTy::kInt64,
-                                     &inferred_dimension};
       if (!ParseOperands(&operands, /*expected_size=*/1) ||
           !ParseAttributes(attrs)) {
         return false;
       }
-      instruction = builder->AddInstruction(HloInstruction::CreateReshape(
-          shape, operands[0], inferred_dimension.value_or(-1)));
+      instruction = builder->AddInstruction(
+          HloInstruction::CreateReshape(shape, operands[0]));
       break;
     }
     case HloOpcode::kAfterAll: {
@@ -1456,16 +1450,6 @@ bool HloParser::ParseInstructionRhs(HloComputation::Builder* builder,
           HloInstruction::CreateRng(shape, *distribution, operands));
       break;
     }
-    case HloOpcode::kRngGetAndUpdateState: {
-      optional<int64> delta;
-      attrs["delta"] = {/*required=*/true, AttrTy::kInt64, &delta};
-      if (!ParseAttributes(attrs)) {
-        return false;
-      }
-      instruction = builder->AddInstruction(
-          HloInstruction::CreateRngGetAndUpdateState(shape, *delta));
-      break;
-    }
     case HloOpcode::kReducePrecision: {
       optional<int64> exponent_bits;
       optional<int64> mantissa_bits;
@@ -1833,7 +1817,7 @@ bool HloParser::ParseSharding(OpSharding* sharding) {
       }
     } while (EatIfPresent(TokKind::kComma));
   }
-  sharding->set_type(OpSharding::TUPLE);
+  sharding->set_type(OpSharding::Type::OpSharding_Type_TUPLE);
 
   return ParseToken(TokKind::kRbrace, "expected '}' to end sharding attribute");
 }
@@ -1915,13 +1899,13 @@ bool HloParser::ParseSingleSharding(OpSharding* sharding,
       return Error(loc,
                    "replicated shardings should not have any devices assigned");
     }
-    sharding->set_type(OpSharding::REPLICATED);
+    sharding->set_type(OpSharding::Type::OpSharding_Type_REPLICATED);
   } else if (maximal) {
     if (devices.size() != 1) {
       return Error(loc,
                    "maximal shardings should have exactly one device assigned");
     }
-    sharding->set_type(OpSharding::MAXIMAL);
+    sharding->set_type(OpSharding::Type::OpSharding_Type_MAXIMAL);
     sharding->add_tile_assignment_devices(devices[0]);
   } else {
     if (devices.size() <= 1) {
@@ -1934,7 +1918,7 @@ bool HloParser::ParseSingleSharding(OpSharding* sharding,
           "non-maximal shardings must have a tile assignment list including "
           "dimensions");
     }
-    sharding->set_type(OpSharding::OTHER);
+    sharding->set_type(OpSharding::Type::OpSharding_Type_OTHER);
     for (int64 dim : tile_assignment_dimensions) {
       sharding->add_tile_assignment_dimensions(dim);
     }
@@ -3528,43 +3512,14 @@ bool HloParser::ParseTiles(std::vector<Tile>* tiles) {
   return true;
 }
 
-// int_attribute
-//   ::= /*empty*/
-//   ::= attr_token '(' attr_value ')'
-// attr_token
-//   ::= 'E' | 'S'
-// attr_value
-//   ::= int64
-bool HloParser::ParseLayoutIntAttribute(int64* attr_value,
-                                        absl::string_view attr_description) {
-  if (!ParseToken(TokKind::kLparen,
-                  StrCat("expects ", attr_description, " to start with ",
-                         TokKindToString(TokKind::kLparen)))) {
-    return false;
-  }
-  if (!ParseInt64(attr_value)) {
-    return false;
-  }
-  if (!ParseToken(TokKind::kRparen,
-                  StrCat("expects ", attr_description, " to end with ",
-                         TokKindToString(TokKind::kRparen)))) {
-    return false;
-  }
-  return true;
-}
-
-// layout ::= '{' int64_list (':' tiles element_size_in_bits memory_space)? '}'
+// layout ::= '{' int64_list (':' tiles element_size_in_bits)? '}'
 // element_size_in_bits
 //   ::= /*empty*/
 //   ::= 'E' '(' int64 ')'
-// memory_space
-//   ::= /*empty*/
-//   ::= 'S' '(' int64 ')'
 bool HloParser::ParseLayout(Layout* layout) {
   std::vector<int64> minor_to_major;
   std::vector<Tile> tiles;
   tensorflow::int64 element_size_in_bits = 0;
-  tensorflow::int64 memory_space = 0;
 
   auto parse_and_add_item = [&]() {
     int64 i;
@@ -3598,13 +3553,21 @@ bool HloParser::ParseLayout(Layout* layout) {
       }
 
       if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "E") {
+        // Parse element size in bits.
         lexer_.Lex();
-        ParseLayoutIntAttribute(&element_size_in_bits, "element size in bits");
-      }
-
-      if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "S") {
-        lexer_.Lex();
-        ParseLayoutIntAttribute(&memory_space, "memory space");
+        if (!ParseToken(TokKind::kLparen,
+                        StrCat("expects element size in bits to start with ",
+                               TokKindToString(TokKind::kLparen)))) {
+          return false;
+        }
+        if (!ParseInt64(&element_size_in_bits)) {
+          return false;
+        }
+        if (!ParseToken(TokKind::kRparen,
+                        StrCat("expects element size in bits to end with ",
+                               TokKindToString(TokKind::kRparen)))) {
+          return false;
+        }
       }
     }
   }
@@ -3618,8 +3581,8 @@ bool HloParser::ParseLayout(Layout* layout) {
   for (int i = 0; i < tiles.size(); i++) {
     vec_tiles[i] = Tile(tiles[i]);
   }
-  *layout = LayoutUtil::MakeLayout(minor_to_major, vec_tiles,
-                                   element_size_in_bits, memory_space);
+  *layout =
+      LayoutUtil::MakeLayout(minor_to_major, vec_tiles, element_size_in_bits);
   return true;
 }
 
@@ -4222,7 +4185,7 @@ bool HloParser::ParseSingleInstruction(HloModule* module) {
 
 }  // namespace
 
-StatusOr<std::unique_ptr<HloModule>> ParseAndReturnUnverifiedModule(
+StatusOr<std::unique_ptr<HloModule>> ParseHloString(
     absl::string_view str, const HloModuleConfig& config) {
   auto module = absl::make_unique<HloModule>(/*name=*/"_", config);
   HloParser parser(str);
@@ -4230,18 +4193,11 @@ StatusOr<std::unique_ptr<HloModule>> ParseAndReturnUnverifiedModule(
   return std::move(module);
 }
 
-StatusOr<std::unique_ptr<HloModule>> ParseAndReturnUnverifiedModule(
-    absl::string_view str) {
-  return ParseAndReturnUnverifiedModule(str, HloModuleConfig());
-}
-
-StatusOr<std::unique_ptr<HloModule>> ParseHloString(
-    absl::string_view str, const HloModuleConfig& config) {
-  return ParseAndReturnUnverifiedModule(str, config);
-}
-
 StatusOr<std::unique_ptr<HloModule>> ParseHloString(absl::string_view str) {
-  return ParseAndReturnUnverifiedModule(str);
+  auto module = absl::make_unique<HloModule>(/*name=*/"_", HloModuleConfig());
+  HloParser parser(str);
+  TF_RETURN_IF_ERROR(parser.Run(module.get()));
+  return std::move(module);
 }
 
 Status ParseHloString(absl::string_view str, HloModule* module) {

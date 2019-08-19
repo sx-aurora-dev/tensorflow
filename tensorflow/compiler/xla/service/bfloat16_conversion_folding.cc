@@ -165,7 +165,6 @@ Status BFloat16ConversionFoldingVisitor::DefaultAction(HloInstruction* hlo) {
       hlo->opcode() == HloOpcode::kConstant ||         //
       hlo->opcode() == HloOpcode::kParameter ||        //
       hlo->opcode() == HloOpcode::kFusion ||           //
-      hlo->opcode() == HloOpcode::kBitcastConvert ||   //
       hlo->opcode() == HloOpcode::kConvert ||          //
       hlo->opcode() == HloOpcode::kCall ||             //
       hlo->opcode() == HloOpcode::kCustomCall ||       //

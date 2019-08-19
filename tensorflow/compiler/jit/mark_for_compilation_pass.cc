@@ -84,10 +84,6 @@ class MarkForCompilationPassImpl {
     // If true, do not respect the results of deadness analysis.
     bool ignore_deadness_checks;
 
-    // If true, do not do safety checks to preserve TensorFlow's resource
-    // variable concurrency semantics.
-    bool ignore_resource_variable_checks;
-
     // If true, do not respect the _XlaCompile=false attribute.
     bool ignore_xla_compile_attr;
 
@@ -243,12 +239,8 @@ class MarkForCompilationPassImpl {
   // The pass proceeds in four steps, out of which `RunEdgeContractionLoop` and
   // `CreateClusters` do most of the heavy lifting.
 
-  // Initializes some internal data structures.
-  //
-  // If this returns false then Initialize exited early (either because there is
-  // nothing to do or we saw a graph that we can't handle) and not all the
-  // fields in this MarkForCompilationPassImpl instance are set up.
-  StatusOr<bool> Initialize();
+  // Initialize some internal data structures.
+  Status Initialize();
 
   // Runs through the entire cluster graph in post-order and calls `fn(from,
   // to)` on each edge.  `fn(from, to)` is expected to return true if it was
@@ -588,7 +580,7 @@ Status IgnoreResourceOpForSafetyAnalysis(
   return Status::OK();
 }
 
-StatusOr<bool> MarkForCompilationPassImpl::Initialize() {
+Status MarkForCompilationPassImpl::Initialize() {
   TF_RET_CHECK(!initialized_ && !edges_contracted_ && !clusters_created_);
   initialized_ = true;
 
@@ -596,15 +588,13 @@ StatusOr<bool> MarkForCompilationPassImpl::Initialize() {
 
   if (compilation_candidates_.empty()) {
     VLOG(2) << "No compilable candidates";
-    return false;
+    return Status::OK();
   }
 
   TF_ASSIGN_OR_RETURN(bool cycle_detection_graph_ok,
                       CreateCycleDetectionGraph(graph_, &cycles_graph_));
   if (!cycle_detection_graph_ok) {
-    // TODO(sanjoy): This should be logged via the XLA activity listener.
-    VLOG(2) << "Could not form cycle detection graph";
-    return false;
+    return Status::OK();
   }
 
   if (!debug_options_.ignore_deadness_checks) {
@@ -615,8 +605,7 @@ StatusOr<bool> MarkForCompilationPassImpl::Initialize() {
   // Each compilation candidate belongs to a cluster. The cluster's
   // representative names the node in the 'cycles' graph that represents the
   // cluster.
-  TF_RETURN_IF_ERROR(BuildInitialClusterSet());
-  return true;
+  return BuildInitialClusterSet();
 }
 
 template <typename FnTy>
@@ -728,7 +717,6 @@ Status MarkForCompilationPassImpl::RunEdgeContractionLoop() {
 
   // Phase 0: contract metadata operations with their producer.
 
-  VLOG(4) << "Running phase 0";
   TF_RETURN_IF_ERROR(
       ForEachEdgeInPostOrder([&](Cluster* from, Cluster* to) -> StatusOr<bool> {
         // Shape consuming operations are desirable to cluster with their
@@ -748,10 +736,9 @@ Status MarkForCompilationPassImpl::RunEdgeContractionLoop() {
         return TryToContractEdge(from, to);
       }).status());
 
-  // Phase 1: apply a heuristic to ensure that we don't mess up clustering due
-  // to "group_deps".  After this phase most edges should have been contracted.
+  // Phase 1: apply a heuristic to ensure that we don't mess up clusterig due to
+  // "group_deps".  After this phase most edges should have been contracted.
 
-  VLOG(4) << "Running phase 1";
   TF_RETURN_IF_ERROR(
       ForEachEdgeInPostOrder([&](Cluster* from, Cluster* to) -> StatusOr<bool> {
         // We split out this phase to get good clustering in the presence of a
@@ -807,7 +794,6 @@ Status MarkForCompilationPassImpl::RunEdgeContractionLoop() {
   //    leaving it more contractable. That is, if we have
   //    digraph { X->Y; Y->Z; } then collapsing X->Y does not make it possible
   //    to contract Y->Z if Y->Z was not contractible originally.
-  VLOG(4) << "Running phase 2";
   TF_RETURN_IF_ERROR(ForEachEdgeInPostOrder([&](Cluster* from, Cluster* to) {
                        return TryToContractEdge(from, to);
                      }).status());
@@ -816,7 +802,6 @@ Status MarkForCompilationPassImpl::RunEdgeContractionLoop() {
   // post order gives a maximal clustering) holds.  Once the linear time
   // post-order scheme has been battle tested we can move this to happen only in
   // debug builds.
-  VLOG(2) << "Checking idempotence";
   TF_ASSIGN_OR_RETURN(bool changed,
                       ForEachEdgeInPostOrder([&](Cluster* from, Cluster* to) {
                         return TryToContractEdge(from, to);
@@ -971,7 +956,7 @@ Status MarkForCompilationPassImpl::BuildInitialClusterSet() {
         (node->IsIdentity() || node->IsConstant()) ? 0 : 1;
 
     bool has_functional_control_flow =
-        node->type_string() == "While" || node->IsIfNode();
+        node->type_string() == "While" || node->type_string() == "If";
 
     absl::optional<DeadnessPredicate> deadness_predicate;
     if (deadness_analysis_) {
@@ -1023,39 +1008,6 @@ Status MarkForCompilationPassImpl::BuildInitialClusterSet() {
   }
 
   return Status::OK();
-}
-
-StatusOr<bool> IsIdentityDrivingConstsInLoop(Node* node) {
-  if (!node->IsIdentity()) {
-    return false;
-  }
-
-  // Check if the Identity is driven by a Switch on its true path.
-  auto it = absl::c_find_if(node->in_edges(), [](const Edge* e) {
-    return e->src()->IsSwitch() && e->src_output() == 1;
-  });
-  if (it == node->in_edges().end()) {
-    return false;
-  }
-  const Node* switch_node = (*it)->src();
-
-  // Check if the Switch is driven by LoopCond.
-  const Node* maybe_loop_cond;
-  TF_RETURN_IF_ERROR(switch_node->input_node(1, &maybe_loop_cond));
-  if (!maybe_loop_cond->IsLoopCond()) {
-    return false;
-  }
-
-  // Check if the Identity is driving any const nodes through a control edge.
-  bool driving_any_consts =
-      absl::c_any_of(node->out_edges(), [](const Edge* e) {
-        return e->dst()->IsConstant() && e->IsControlEdge();
-      });
-  if (!driving_any_consts) {
-    return false;
-  }
-
-  return true;
 }
 
 Status MarkForCompilationPassImpl::FindCompilationCandidates() {
@@ -1179,35 +1131,6 @@ Status MarkForCompilationPassImpl::FindCompilationCandidates() {
       }
     }
 
-    // This is a heuristic to avoid creating dependency between while loop
-    // condition and body computations.  Dependency between them can be created
-    // if a special Identity node in the following pattern is clustered in.
-    // That is, an Identity node in the loop cond computation is used to drive
-    // const nodes consumed by the loop body.  If this Identity node goes into
-    // the same cluster with nodes from the loop body, extra dependency is
-    // created between the loop cond and body computations and it hinders the
-    // progression of the loop cond computation at runtime with significant
-    // overhead.  Specifically, we look for the below pattern and do not cluster
-    // in this Identity to avoid the described issue.  Since Identity has low
-    // execution cost in native TF, the fact that this heuristic gives up these
-    // special Identity nodes as candidates should not harm any performance.  If
-    // other considerations emerge in the future, we can revisit the heuristic
-    // and only disallow these Identities to go into the cluster with nodes from
-    // the loop body but still consider them candidates.
-    //
-    // LoopCond ->
-    // Merge    -> Switch -> Identity -> i++ -> ... -> NextIteration
-    //                               ..> Const -> LoopBody
-    //                            (control edge)
-    TF_ASSIGN_OR_RETURN(bool is_identity_driving_consts_in_loop,
-                        IsIdentityDrivingConstsInLoop(node));
-    if (is_identity_driving_consts_in_loop) {
-      VLOG(2) << "Rejecting " << node->name()
-              << ": including it can create dependencies between while loop "
-                 "condition and body computations with runtime overhead.";
-      continue;
-    }
-
     compilation_candidates_.insert(node);
     --(*debug_options_.fuel);
   }
@@ -1298,24 +1221,22 @@ StatusOr<bool> MarkForCompilationPassImpl::TryToContractEdge(Cluster* from,
   // Check if contracting this edge will break the resource variable concurrency
   // semantics.  In theory this is quadratic in the number of nodes, but seems
   // to not be a problem in practice so far.
-  if (!debug_options_.ignore_resource_variable_checks) {
-    for (int resource_var_from : from->resource_var_operation_node_ids()) {
-      for (int resource_var_to : to->resource_var_operation_node_ids()) {
-        // If unsafe_resource_deps_ contains {A, B} then
-        //
-        //  a. A and B are resource operations.
-        //  b. A and B cannot be placed in the same cluster.
-        //  c. There is no path from B to A in the cycles graph (but there may
-        //     be a path from A to B).
-        //
-        // So check the legality of the edge contraction by checking if any of
-        // the n^2 pairs of resource variable operations are forbidden.
-        if (unsafe_resource_deps_.contains(
-                {resource_var_from, resource_var_to})) {
-          return LogNotContractableAndReturnFalse(
-              from, to,
-              "the new cluster would break resource variable semantics");
-        }
+  for (int resource_var_from : from->resource_var_operation_node_ids()) {
+    for (int resource_var_to : to->resource_var_operation_node_ids()) {
+      // If unsafe_resource_deps_ contains {A, B} then
+      //
+      //  a. A and B are resource operations.
+      //  b. A and B cannot be placed in the same cluster.
+      //  c. There is no path from B to A in the cycles graph (but there may be
+      //     a path from A to B).
+      //
+      // So check the legality of the edge contraction by checking if any of the
+      // n^2 pairs of resource variable operations are forbidden.
+      if (unsafe_resource_deps_.contains(
+              {resource_var_from, resource_var_to})) {
+        return LogNotContractableAndReturnFalse(
+            from, to,
+            "the new cluster would break resource variable semantics");
       }
     }
   }
@@ -1331,13 +1252,7 @@ Status MarkForCompilationPassImpl::Run() {
   // some one-time work.
   XLA_SCOPED_LOGGING_TIMER_LEVEL("MarkForCompilationPassImpl::Run", 1);
 
-  TF_ASSIGN_OR_RETURN(bool initialized, Initialize());
-  if (!initialized) {
-    // Initialization exited early which means this instance of
-    // MarkForCompilationPassImpl is not set up to run the subsequent phases.
-    return Status::OK();
-  }
-
+  TF_RETURN_IF_ERROR(Initialize());
   TF_RETURN_IF_ERROR(RunEdgeContractionLoop());
   TF_RETURN_IF_ERROR(CreateClusters());
   TF_RETURN_IF_ERROR(DumpDebugInfo());
@@ -1381,36 +1296,46 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
     return;
   }
 
-  XlaAutoClusteringSummary auto_clustering_info =
-      GetXlaAutoClusteringSummary(*graph_);
+  std::map<absl::string_view, int> cluster_name_to_size;
+  std::map<absl::string_view, std::map<absl::string_view, int>>
+      cluster_name_to_op_histogram;
+  std::map<absl::string_view, int> unclustered_op_histogram;
+  int clustered_node_count = 0;
+
+  for (Node* n : graph_->nodes()) {
+    absl::optional<absl::string_view> cluster_name = GetXlaClusterForNode(*n);
+    if (cluster_name) {
+      clustered_node_count++;
+      cluster_name_to_size[*cluster_name]++;
+      cluster_name_to_op_histogram[*cluster_name][n->type_string()]++;
+    } else {
+      unclustered_op_histogram[n->type_string()]++;
+    }
+  }
+
+  int unclustered_node_count = graph_->num_nodes() - clustered_node_count;
 
   VLOG(2) << "*** Clustering info for graph of size " << graph_->num_nodes();
-  VLOG(2) << " Built " << auto_clustering_info.clusters_size()
-          << " clusters, size "
-          << RatioToString(auto_clustering_info.clustered_node_count(),
-                           graph_->num_nodes());
+  VLOG(2) << " Built " << cluster_name_to_size.size() << " clusters, size "
+          << RatioToString(clustered_node_count, graph_->num_nodes());
 
-  for (XlaAutoClusteringSummary::Cluster cluster :
-       auto_clustering_info.clusters()) {
-    absl::string_view cluster_name = cluster.name();
-    int size = cluster.size();
+  for (const auto& cluster_name_size_pair : cluster_name_to_size) {
+    absl::string_view cluster_name = cluster_name_size_pair.first;
+    int size = cluster_name_size_pair.second;
     VLOG(2) << "  " << cluster_name << " "
             << RatioToString(size, graph_->num_nodes());
-    for (const XlaAutoClusteringSummary::OpAndCount& op_count :
-         cluster.op_histogram()) {
-      VLOG(3) << "   " << op_count.op() << ": " << op_count.count()
+    for (const auto& op_count_pair :
+         cluster_name_to_op_histogram[cluster_name]) {
+      VLOG(3) << "   " << op_count_pair.first << ": " << op_count_pair.second
               << " instances";
     }
   }
 
-  if (!auto_clustering_info.unclustered_op_histogram().empty()) {
+  if (!unclustered_op_histogram.empty()) {
     VLOG(2) << " Unclustered nodes: "
-            << RatioToString(auto_clustering_info.unclustered_node_count(),
-                             graph_->num_nodes());
-    for (const XlaAutoClusteringSummary::OpAndCount& op_count :
-         auto_clustering_info.unclustered_op_histogram()) {
-      VLOG(3) << "  " << op_count.op() << ": " << op_count.count()
-              << " instances";
+            << RatioToString(unclustered_node_count, graph_->num_nodes());
+    for (const auto& pair : unclustered_op_histogram) {
+      VLOG(3) << "  " << pair.first << ": " << pair.second << " instances";
     }
   }
 
@@ -1464,9 +1389,9 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
     }
   }
 
-  VLOG(4) << "*** Inter-Cluster edges:";
+  VLOG(2) << "*** Inter-Cluster edges:";
   if (cluster_names_to_print.empty()) {
-    VLOG(4) << "   [none]";
+    VLOG(2) << "   [none]";
   }
 
   auto print_edge_info_set_for_cluster = [&](absl::string_view cluster_name,
@@ -1474,19 +1399,19 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
                                              absl::string_view desc) {
     auto it = edge_info_map.find(cluster_name);
     if (it != edge_info_map.end()) {
-      VLOG(4) << "  " << it->second.size() << " " << desc << " edges";
+      VLOG(2) << "  " << it->second.size() << " " << desc << " edges";
       for (const auto& edge_info_count_pair : it->second) {
-        VLOG(4) << "   " << edge_info_count_pair.first.GetClusterName() << " "
+        VLOG(2) << "   " << edge_info_count_pair.first.GetClusterName() << " "
                 << edge_info_count_pair.first.node_name << " # "
                 << edge_info_count_pair.second;
       }
     } else {
-      VLOG(4) << "  No " << desc << " edges.";
+      VLOG(2) << "  No " << desc << " edges.";
     }
   };
 
   for (absl::string_view cluster_name : cluster_names_to_print) {
-    VLOG(4) << " ** Cluster " << cluster_name;
+    VLOG(2) << " ** Cluster " << cluster_name;
     print_edge_info_set_for_cluster(cluster_name, incoming_edge_infos,
                                     "incoming");
     print_edge_info_set_for_cluster(cluster_name, outgoing_edge_infos,
@@ -1628,10 +1553,7 @@ std::atomic<int64>* GetPointerToFuel(int64 initial_value) {
 }
 }  // anonymous namespace
 
-bool IsCompilable(
-    FunctionLibraryRuntime* flr, const NodeDef& ndef,
-    std::vector<RecursiveCompilabilityChecker::UncompilableNodeInfo>*
-        uncompilable_node_info) {
+bool IsCompilable(FunctionLibraryRuntime* flr, const NodeDef& ndef) {
   Device* device = flr->device();
   const XlaOpRegistry::DeviceRegistration* registration;
   CHECK(XlaOpRegistry::GetCompilationDevice(device->device_type(),
@@ -1651,16 +1573,8 @@ bool IsCompilable(
   op_filter.allow_slow_ops = true;
   op_filter.allow_inaccurate_ops = true;
 
-  RecursiveCompilabilityChecker checker{&op_filter, &jit_device_type};
-  if (!uncompilable_node_info) {
-    // We do not need uncompilable node info. Just return the result.
-    return checker.IsCompilableCall(ndef, flr);
-  }
-
-  std::vector<RecursiveCompilabilityChecker::UncompilableNodeInfo>
-      uncompilable_node_result = checker.FindUncompilableNodes(ndef, flr);
-  uncompilable_node_info->swap(uncompilable_node_result);
-  return uncompilable_node_info->empty();
+  return RecursiveCompilabilityChecker{&op_filter, &jit_device_type}
+      .IsCompilableCall(ndef, flr);
 }
 
 Status MarkForCompilationPass::Run(
@@ -1670,8 +1584,6 @@ Status MarkForCompilationPass::Run(
   MarkForCompilationPassImpl::DebugOptions debug_options;
   debug_options.ignore_deadness_checks =
       flags->tf_xla_disable_deadness_safety_checks_for_debugging;
-  debug_options.ignore_resource_variable_checks =
-      flags->tf_xla_disable_resource_variable_safety_checks_for_debugging;
   debug_options.ignore_xla_compile_attr = false;
   debug_options.max_cluster_size = flags->tf_xla_max_cluster_size;
   debug_options.min_cluster_size = flags->tf_xla_min_cluster_size;
@@ -1688,8 +1600,6 @@ Status MarkForCompilationPass::RunForTest(
 
   MarkForCompilationPassImpl::DebugOptions debug_options;
   debug_options.ignore_deadness_checks = disable_deadness_analysis;
-  debug_options.ignore_resource_variable_checks =
-      flags->tf_xla_disable_resource_variable_safety_checks_for_debugging;
   debug_options.ignore_xla_compile_attr = true;
   debug_options.max_cluster_size = flags->tf_xla_max_cluster_size;
   debug_options.min_cluster_size = flags->tf_xla_min_cluster_size;

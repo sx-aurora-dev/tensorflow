@@ -169,14 +169,9 @@ class Shape {
       ignore_element_size_in_layout_ = true;
       return *this;
     }
-    Equal& IgnoreMemorySpaceInLayout() {
-      ignore_memory_space_in_layout_ = true;
-      return *this;
-    }
     Equal& MinorToMajorOnlyInLayout() {
       ignore_tiles_in_layout_ = true;
       ignore_element_size_in_layout_ = true;
-      ignore_memory_space_in_layout_ = true;
       return *this;
     }
     Equal& IgnoreElementType() {
@@ -196,7 +191,6 @@ class Shape {
     bool ignore_layout_ = false;
     bool ignore_tiles_in_layout_ = false;
     bool ignore_element_size_in_layout_ = false;
-    bool ignore_memory_space_in_layout_ = false;
     bool ignore_element_type_ = false;
     bool ignore_fp_precision_ = false;
     bool ignore_dynamic_dimension_ = false;

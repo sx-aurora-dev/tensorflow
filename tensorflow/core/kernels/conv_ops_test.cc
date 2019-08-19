@@ -36,7 +36,7 @@ limitations under the License.
 
 namespace tensorflow {
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 struct ConvParametersPeer {
   template <typename T>
@@ -91,7 +91,7 @@ TEST(ConvParameters, WinogradNonfusedAlgoSize) {
       conv_params_large.ShouldIncludeWinogradNonfusedAlgoPreCudnn7<float>());
 }
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 class FusedResizePadConvOpTest : public OpsTestBase {
  protected:

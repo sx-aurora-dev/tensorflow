@@ -7,12 +7,14 @@ package(
 
 exports_files(["LICENSE"])
 
+load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+
 cc_library(
     name = "all_kernels",
     deps = [
         ":masked_matmul_ops",
         ":wals_solver_ops",
-        "@com_google_protobuf//:protobuf_headers",
+        "@protobuf_archive//:protobuf_headers",
     ],
 )
 
@@ -22,7 +24,7 @@ cc_library(
     deps = [
         "//tensorflow/core:framework_headers_lib",
         "//third_party/eigen3",
-        "@com_google_protobuf//:protobuf_headers",
+        "@protobuf_archive//:protobuf_headers",
     ],
     alwayslink = 1,
 )
@@ -34,7 +36,7 @@ cc_library(
         "//tensorflow/core:framework_headers_lib",
         "//tensorflow/core/kernels:bounds_check",
         "//third_party/eigen3",
-        "@com_google_protobuf//:protobuf_headers",
+        "@protobuf_archive//:protobuf_headers",
     ],
     alwayslink = 1,
 )

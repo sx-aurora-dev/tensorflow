@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/data/prefetch_autotuner.h"
 
-#include "tensorflow/core/framework/model.h"
 #include "tensorflow/core/platform/test.h"
 
 namespace tensorflow {
@@ -33,7 +32,7 @@ TEST(PrefetchAutotuner, Disabled) {
 }
 
 TEST(PrefetchAutotuner, Enabled) {
-  PrefetchAutotuner t(model::kAutotune);
+  PrefetchAutotuner t(PrefetchAutotuner::kAutoTune);
   EXPECT_EQ(1, t.buffer_limit());
   t.RecordConsumption(0);  // Expect buffer limit to stay the same.
   EXPECT_EQ(1, t.buffer_limit());
@@ -58,7 +57,7 @@ TEST(PrefetchAutotuner, Enabled) {
 }
 
 TEST(PrefetchAutotuner, EnabledSteady) {
-  PrefetchAutotuner t(model::kAutotune);
+  PrefetchAutotuner t(PrefetchAutotuner::kAutoTune);
   EXPECT_EQ(1, t.buffer_limit());
   t.RecordConsumption(0);  // Expect buffer limit to increase.
   EXPECT_EQ(1, t.buffer_limit());

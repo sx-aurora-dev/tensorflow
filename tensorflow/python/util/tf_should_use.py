@@ -23,8 +23,6 @@ import traceback
 
 import six  # pylint: disable=unused-import
 
-
-from tensorflow.python.eager import context
 from tensorflow.python.framework import ops
 from tensorflow.python.platform import tf_logging
 from tensorflow.python.util import tf_decorator
@@ -36,8 +34,7 @@ class _TFShouldUseHelper(object):
 
   When it is deleted it will emit a warning or error if its `sate` method
   has not been called by time of deletion, and Tensorflow is not executing
-  eagerly or inside a tf.function (which use autodeps and resolve the
-  main issues this wrapper warns about).
+  eagerly outside of functions.
   """
 
   def __init__(self, type_, repr_, stack_frame, fatal_error_if_unsated):
@@ -45,10 +42,7 @@ class _TFShouldUseHelper(object):
     self._repr = repr_
     self._stack_frame = stack_frame
     self._fatal_error_if_unsated = fatal_error_if_unsated
-    # If in eager mode or building a function with autodeps, we generally do not
-    # need these warnings since behavior is eager-like.
-    self._sated = (context.executing_eagerly()
-                   or ops.get_default_graph()._building_function)  # pylint: disable=protected-access
+    self._sated = False
 
   def sate(self):
     self._sated = True
@@ -58,6 +52,8 @@ class _TFShouldUseHelper(object):
     self._logging_module = None
 
   def __del__(self):
+    if ops.executing_eagerly_outside_functions():
+      return
     if self._sated:
       return
     if self._fatal_error_if_unsated:

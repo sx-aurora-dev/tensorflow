@@ -24,7 +24,6 @@ import copy
 import itertools
 import json
 import os
-import threading
 
 from six.moves import zip  # pylint: disable=redefined-builtin
 
@@ -39,7 +38,6 @@ from tensorflow.python.keras import backend
 from tensorflow.python.keras import saving
 from tensorflow.python.keras.engine import base_layer
 from tensorflow.python.keras.engine import base_layer_utils
-from tensorflow.python.keras.engine import node as node_module
 from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.mixed_precision.experimental import policy
 from tensorflow.python.keras.utils import generic_utils
@@ -191,9 +189,6 @@ class Network(base_layer.Layer):
 
     generic_utils.validate_kwargs(kwargs, {'trainable', 'dtype', 'dynamic'})
 
-    # Object to store all thread local layer properties.
-    self._thread_local = threading.local()
-
     self._init_set_name(name, zero_based=True)
     self._activity_regularizer = None
     # This acts just like the `trainable` attribute of any layer instance.
@@ -217,10 +212,13 @@ class Network(base_layer.Layer):
     self._maybe_create_attribute('_non_trainable_weights', [])
     self._updates = []  # Used in symbolic mode only.
     self._losses = []
+    self._eager_losses = []
     self._callable_losses = []
     # A list of metric instances corresponding to the symbolic metric tensors
     # added using the `add_metric` API.
     self._metrics = []
+    # A dictionary that maps metric names to metric result tensors.
+    self._metrics_tensors = {}
     self._scope = None  # Never used.
     self._reuse = None  # Never used.
     if context.executing_eagerly():
@@ -325,7 +323,7 @@ class Network(base_layer.Layer):
     self._track_layers(layers)
 
     # Create the node linking internal inputs to internal outputs.
-    node_module.Node(
+    base_layer.Node(
         outbound_layer=self,
         inbound_layers=[],
         node_indices=[],
@@ -374,10 +372,8 @@ class Network(base_layer.Layer):
   def _init_subclassed_network(self, name=None, **kwargs):
     self._base_init(name=name, **kwargs)
     self._is_graph_network = False
-    self._expects_training_arg = ('training' in self._call_fn_args or
-                                  self._call_accepts_kwargs)
-    self._expects_mask_arg = ('mask' in self._call_fn_args or
-                              self._call_accepts_kwargs)
+    self._expects_training_arg = 'training' in self._call_fn_args
+    self._expects_mask_arg = 'mask' in self._call_fn_args
     call_argspec = tf_inspect.getfullargspec(self.call)
     self._call_convention = self._determine_call_convention(call_argspec)
     self.outputs = []
@@ -572,6 +568,13 @@ class Network(base_layer.Layer):
         return layer
     raise ValueError('No such layer: ' + name)
 
+  @trackable.no_automatic_dependency_tracking
+  def _clear_losses(self):
+    """Used every step in eager to reset losses."""
+    self._eager_losses = []
+    for layer in self.layers:
+      layer._clear_losses()
+
   @property
   def trainable_weights(self):
     self._assert_weights_created()
@@ -587,6 +590,19 @@ class Network(base_layer.Layer):
         trainable=self.trainable,
         sub_layers=self._layers,
         extra_variables=self._non_trainable_weights + self._trainable_weights)
+
+  @property
+  def _all_metrics_tensors(self):
+    """Returns the network's symbolic metric tensors."""
+    # TODO(psv): Remove this property.
+    metrics_tensors = {}
+    for layer in self.layers:
+      if isinstance(layer, Network):
+        metrics_tensors.update(layer._all_metrics_tensors)
+      else:
+        metrics_tensors.update(layer._metrics_tensors)
+    metrics_tensors.update(self._metrics_tensors)
+    return metrics_tensors
 
   @property
   def input_spec(self):
@@ -1777,15 +1793,12 @@ def _map_graph_network(inputs, outputs):
       nodes_depths[inbound_node] = max(depth + 1, previous_depth)
 
   # Handle inputs that are not connected to outputs.
-  # We do not error out here because the inputs may be used to compute losses
-  # and metrics.
   for input_t in inputs:
     input_layer = input_t._keras_history[0]
     if input_layer not in layers_depths:
       layers_depths[input_layer] = 0
       layer_indices[input_layer] = -1
       nodes_depths[input_layer._inbound_nodes[0]] = 0
-      network_nodes.add(_make_node_key(input_layer.name, 0))
 
   # Build a dict {depth: list of nodes with this depth}
   nodes_by_depth = collections.defaultdict(list)

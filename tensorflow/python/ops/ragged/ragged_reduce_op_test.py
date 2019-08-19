@@ -28,6 +28,7 @@ from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
 from tensorflow.python.ops.ragged import ragged_math_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 _MAX_INT32 = dtypes.int32.max
@@ -40,7 +41,7 @@ def mean(*values):
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedReduceOpsTest(test_util.TensorFlowTestCase,
+class RaggedReduceOpsTest(ragged_test_util.RaggedTensorTestCase,
                           parameterized.TestCase):
 
   @parameterized.parameters(
@@ -319,7 +320,7 @@ class RaggedReduceOpsTest(test_util.TensorFlowTestCase,
   def testReduce(self, ragged_reduce_op, rt_input, axis, expected):
     rt_input = ragged_factory_ops.constant(rt_input)
     reduced = ragged_reduce_op(rt_input, axis)
-    self.assertAllEqual(reduced, expected)
+    self.assertRaggedEqual(reduced, expected)
 
   def assertEqualWithNan(self, actual, expected):
     """Like assertEqual, but NaN==NaN."""
@@ -339,7 +340,7 @@ class RaggedReduceOpsTest(test_util.TensorFlowTestCase,
     tensor = [[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]
     expected = [2.0, 20.0]
     reduced = ragged_math_ops.reduce_mean(tensor, axis=1)
-    self.assertAllEqual(reduced, expected)
+    self.assertRaggedEqual(reduced, expected)
 
   def testErrors(self):
     rt_input = ragged_factory_ops.constant([[1, 2, 3], [4, 5]])

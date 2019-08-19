@@ -1,8 +1,6 @@
 # Description:
 #    Tests for LLVM-based CPU backend for XLA.
 
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
-
 package(
     default_visibility = [":friends"],
     licenses = ["notice"],  # Apache 2.0
@@ -14,6 +12,8 @@ package_group(
         "//tensorflow/compiler/xla:friends",
     ],
 )
+
+load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 
 # Filegroup used to collect source files for dependency checking.
 filegroup(

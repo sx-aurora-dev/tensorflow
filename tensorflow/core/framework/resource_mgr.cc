@@ -32,10 +32,9 @@ namespace tensorflow {
 // Used to generate unique names for anonymous variables
 static std::atomic<int64> current_id_;
 
-ResourceHandle MakeResourceHandle(
-    OpKernelContext* ctx, const string& container, const string& name,
-    const TypeIndex& type_index,
-    const std::vector<DtypeAndPartialTensorShape>& dtypes_and_shapes) {
+ResourceHandle MakeResourceHandle(OpKernelContext* ctx, const string& container,
+                                  const string& name,
+                                  const TypeIndex& type_index) {
   ResourceHandle result;
   result.set_device(ctx->device()->attributes().name());
   string actual_container;
@@ -52,7 +51,6 @@ ResourceHandle MakeResourceHandle(
   }
   result.set_hash_code(type_index.hash_code());
   result.set_maybe_type_name(type_index.name());
-  result.set_dtypes_and_shapes(dtypes_and_shapes);
   return result;
 }
 
@@ -107,20 +105,14 @@ ResourceMgr::ResourceMgr(const string& default_container)
 ResourceMgr::~ResourceMgr() { Clear(); }
 
 void ResourceMgr::Clear() {
-  // We do the deallocation outside of the lock to avoid a potential deadlock
-  // in case any of the destructors access the resource manager.
-  std::unordered_map<string, Container*> tmp_containers;
-  {
-    mutex_lock l(mu_);
-    tmp_containers = std::move(containers_);
-  }
-  for (const auto& p : tmp_containers) {
+  mutex_lock l(mu_);
+  for (const auto& p : containers_) {
     for (const auto& q : *p.second) {
       q.second->Unref();
     }
     delete p.second;
   }
-  tmp_containers.clear();
+  containers_.clear();
 }
 
 string ResourceMgr::DebugString() const {

@@ -41,5 +41,6 @@
 @property(strong, nonatomic) CATextLayer* predictionTextLayer;
 
 - (IBAction)takePicture:(id)sender;
+- (IBAction)switchCameras:(id)sender;
 
 @end

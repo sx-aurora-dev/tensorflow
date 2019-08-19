@@ -69,13 +69,8 @@ struct ReadFromTextureGenerator {
       return RewriteStatus::ERROR;
     }
     // 1D textures are emulated as 2D textures
-    if (sampler_textures) {
-      absl::StrAppend(result, "texelFetch(", element.object_name, ", ivec2(",
-                      element.indices[0], ", 0), 0)");
-    } else {
-      absl::StrAppend(result, "imageLoad(", element.object_name, ", ivec2(",
-                      element.indices[0], ", 0))");
-    }
+    absl::StrAppend(result, "imageLoad(", element.object_name, ", ivec2(",
+                    element.indices[0], ", 0))");
     return RewriteStatus::SUCCESS;
   }
 
@@ -85,20 +80,13 @@ struct ReadFromTextureGenerator {
       result->append("WRONG_NUMBER_OF_INDICES");
       return RewriteStatus::ERROR;
     }
-    if (sampler_textures) {
-      absl::StrAppend(result, "texelFetch(", element.object_name, ", ivec",
-                      Shape::size(), "(", absl::StrJoin(element.indices, ", "),
-                      "), 0)");
-    } else {
-      absl::StrAppend(result, "imageLoad(", element.object_name, ", ivec",
-                      Shape::size(), "(", absl::StrJoin(element.indices, ", "),
-                      "))");
-    }
+    absl::StrAppend(result, "imageLoad(", element.object_name, ", ivec",
+                    Shape::size(), "(", absl::StrJoin(element.indices, ", "),
+                    "))");
     return RewriteStatus::SUCCESS;
   }
 
   const object_accessor_internal::IndexedElement& element;
-  const bool sampler_textures;
   std::string* result;
 };
 
@@ -164,16 +152,15 @@ struct ReadFromBufferGenerator {
 RewriteStatus GenerateReadAccessor(
     const Object& object,
     const object_accessor_internal::IndexedElement& element,
-    bool sampler_textures, std::string* result, bool* requires_sizes) {
+    std::string* result, bool* requires_sizes) {
   switch (object.object_type) {
     case ObjectType::BUFFER:
       return absl::visit(ReadFromBufferGenerator{object.data_type, element,
                                                  result, requires_sizes},
                          object.size);
     case ObjectType::TEXTURE:
-      return absl::visit(
-          ReadFromTextureGenerator{element, sampler_textures, result},
-          object.size);
+      return absl::visit(ReadFromTextureGenerator{element, result},
+                         object.size);
     case ObjectType::UNKNOWN:
       return RewriteStatus::ERROR;
   }
@@ -354,25 +341,8 @@ struct TextureImageTypeGetter {
   DataType type;
 };
 
-struct TextureSamplerTypeGetter {
-  std::string operator()(uint32_t) const {
-    // 1D textures are emulated as 2D textures
-    return (*this)(uint2());
-  }
-
-  std::string operator()(const uint2&) const { return "sampler2D"; }
-
-  std::string operator()(const uint3&) const { return "sampler2DArray"; }
-
-  DataType type;
-};
-
-std::string ToImageType(const Object& object, bool sampler_textures) {
-  if (sampler_textures && (object.access == AccessType::READ)) {
-    return absl::visit(TextureSamplerTypeGetter{object.data_type}, object.size);
-  } else {
-    return absl::visit(TextureImageTypeGetter{object.data_type}, object.size);
-  }
+std::string ToImageType(const Object& object) {
+  return absl::visit(TextureImageTypeGetter{object.data_type}, object.size);
 }
 
 std::string ToImageLayoutQualifier(DataType type) {
@@ -441,8 +411,7 @@ void AddSizeParameters(absl::string_view object_name, const Object& object,
 }
 
 void GenerateObjectDeclaration(absl::string_view name, const Object& object,
-                               std::string* declaration, bool is_mali,
-                               bool sampler_textures) {
+                               std::string* declaration, bool is_mali) {
   switch (object.object_type) {
     case ObjectType::BUFFER:
       // readonly modifier used to fix shader compilation for Mali on Android 8,
@@ -453,19 +422,12 @@ void GenerateObjectDeclaration(absl::string_view name, const Object& object,
                       " data[]; } ", name, ";\n");
       break;
     case ObjectType::TEXTURE:
-      if (sampler_textures && (object.access == AccessType::READ)) {
-        absl::StrAppend(declaration, "layout(binding = ", object.binding,
-                        ") uniform ", ToImagePrecision(object.data_type), " ",
-                        ToImageType(object, sampler_textures), " ", name,
-                        ";\n");
-      } else {
-        absl::StrAppend(
-            declaration, "layout(", ToImageLayoutQualifier(object.data_type),
-            ", binding = ", object.binding, ")",
-            ToAccessModifier(object.access, true), " uniform ",
-            ToImagePrecision(object.data_type), " ",
-            ToImageType(object, sampler_textures), " ", name, ";\n");
-      }
+      absl::StrAppend(declaration, "layout(",
+                      ToImageLayoutQualifier(object.data_type),
+                      ", binding = ", object.binding, ")",
+                      ToAccessModifier(object.access, true), " uniform ",
+                      ToImagePrecision(object.data_type), " ",
+                      ToImageType(object), " ", name, ";\n");
       break;
     case ObjectType::UNKNOWN:
       // do nothing.
@@ -502,8 +464,8 @@ RewriteStatus ObjectAccessor::RewriteRead(absl::string_view location,
     return RewriteStatus::NOT_RECOGNIZED;
   }
   bool requires_sizes = false;
-  auto status = GenerateReadAccessor(it->second, element, sampler_textures_,
-                                     output, &requires_sizes);
+  auto status =
+      GenerateReadAccessor(it->second, element, output, &requires_sizes);
   if (requires_sizes) {
     AddSizeParameters(it->first, it->second, parameter_accessor_);
   }
@@ -542,8 +504,7 @@ bool ObjectAccessor::AddObject(const std::string& name, Object object) {
 std::string ObjectAccessor::GetObjectDeclarations() const {
   std::string declarations;
   for (auto& o : name_to_object_) {
-    GenerateObjectDeclaration(o.first, o.second, &declarations, is_mali_,
-                              sampler_textures_);
+    GenerateObjectDeclaration(o.first, o.second, &declarations, is_mali_);
   }
   return declarations;
 }

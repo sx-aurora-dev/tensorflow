@@ -9,7 +9,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/core/kernels/data/window_dataset_op.h"
 
 #include "tensorflow/core/kernels/data/dataset_test_base.h"
 
@@ -18,6 +17,7 @@ namespace data {
 namespace {
 
 constexpr char kNodeName[] = "window_dataset";
+constexpr char kOpName[] = "WindowDataset";
 
 class WindowDatasetOpTest : public DatasetOpsTestBase {
  protected:
@@ -27,12 +27,9 @@ class WindowDatasetOpTest : public DatasetOpsTestBase {
       const std::vector<PartialTensorShape>& output_shapes,
       std::unique_ptr<OpKernel>* op_kernel) {
     NodeDef node_def = test::function::NDef(
-        kNodeName, name_utils::OpName(WindowDatasetOp::kDatasetType),
-        {WindowDatasetOp::kInputDataset, WindowDatasetOp::kSize,
-         WindowDatasetOp::kShift, WindowDatasetOp::kStride,
-         WindowDatasetOp::kDropRemainder},
-        {{WindowDatasetOp::kOutputTypes, output_types},
-         {WindowDatasetOp::kOutputShapes, output_shapes}});
+        kNodeName, kOpName,
+        {"input_dataset", "size", "shift", "stride", "drop_remainder"},
+        {{"output_types", output_types}, {"output_shapes", output_shapes}});
     TF_RETURN_IF_ERROR(CreateOpKernel(node_def, op_kernel));
     return Status::OK();
   }
@@ -467,8 +464,7 @@ TEST_F(WindowDatasetOpTest, DatasetTypeString) {
                              window_dataset_op_ctx.get(), &dataset));
   core::ScopedUnref scoped_unref_dataset(dataset);
 
-  EXPECT_EQ(dataset->type_string(),
-            name_utils::OpName(WindowDatasetOp::kDatasetType));
+  EXPECT_EQ(dataset->type_string(), kOpName);
 }
 
 TEST_P(ParameterizedWindowDatasetOpTest, DatasetOutputDtypes) {
@@ -764,8 +760,7 @@ TEST_F(WindowDatasetOpTest, IteratorOutputPrefix) {
   TF_ASSERT_OK(
       dataset->MakeIterator(iterator_ctx.get(), "Iterator", &iterator));
 
-  EXPECT_EQ(iterator->prefix(), name_utils::IteratorPrefix(
-                                    WindowDatasetOp::kDatasetType, "Iterator"));
+  EXPECT_EQ(iterator->prefix(), "Iterator::Window");
 }
 
 TEST_P(ParameterizedWindowDatasetOpTest, Roundtrip) {

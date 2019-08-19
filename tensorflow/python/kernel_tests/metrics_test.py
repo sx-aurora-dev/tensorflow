@@ -810,8 +810,8 @@ class PrecisionTest(test.TestCase):
 
     with self.cached_session() as sess:
       self.evaluate(variables.local_variables_initializer())
-      self.assertAlmostEqual(1.0, self.evaluate(update_op), 6)
-      self.assertAlmostEqual(1.0, precision.eval(), 6)
+      self.assertAlmostEqual(1, self.evaluate(update_op))
+      self.assertAlmostEqual(1, precision.eval())
 
   @test_util.run_deprecated_v1
   def testSomeCorrect_multipleInputDtypes(self):
@@ -1011,7 +1011,7 @@ class RecallTest(test.TestCase):
     with self.cached_session() as sess:
       self.evaluate(variables.local_variables_initializer())
       self.evaluate(update_op)
-      self.assertAlmostEqual(1.0, recall.eval(), 6)
+      self.assertEqual(1, recall.eval())
 
   @test_util.run_deprecated_v1
   def testSomeCorrect_multipleInputDtypes(self):
@@ -1650,8 +1650,8 @@ class SensitivityAtSpecificityTest(test.TestCase):
 
     with self.cached_session() as sess:
       self.evaluate(variables.local_variables_initializer())
-      self.assertAlmostEqual(1.0, self.evaluate(update_op), 6)
-      self.assertAlmostEqual(1.0, specificity.eval(), 6)
+      self.assertEqual(1, self.evaluate(update_op))
+      self.assertEqual(1, specificity.eval())
 
   @test_util.run_deprecated_v1
   def testSomeCorrectHighSpecificity(self):

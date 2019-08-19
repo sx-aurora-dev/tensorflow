@@ -173,7 +173,6 @@ class IrEmitterUnnested : public IrEmitter {
   Status HandleInfeed(HloInstruction* xla_infeed) override;
   Status HandleOutfeed(HloInstruction* outfeed) override;
   Status HandleRng(HloInstruction* random) override;
-  Status HandleRngGetAndUpdateState(HloInstruction* rng_state) override;
   Status HandleScatter(HloInstruction* scatter) override;
   Status HandleSelect(HloInstruction* select) override;
   Status HandleSort(HloInstruction* sort) override;
@@ -181,8 +180,6 @@ class IrEmitterUnnested : public IrEmitter {
   Status HandleTupleSelect(HloInstruction* tuple_select) override;
   Status HandleAllReduce(HloInstruction* crs) override;
   Status HandleAfterAll(HloInstruction* after_all) override;
-  Status HandleReplicaId(HloInstruction* hlo) override;
-  Status HandleCollectivePermute(HloInstruction* hlo) override;
 
   Status EmitTargetElementLoop(
       const HloInstruction& hlo,

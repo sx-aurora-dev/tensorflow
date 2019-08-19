@@ -360,7 +360,13 @@ void FuseMulOrDivParamsIntoPrecedingAffine(Model* model, Operator* preceding_op,
   preceding_op->outputs[0] = binary_op->outputs[0];
   preceding_op->fused_activation_function =
       binary_op->fused_activation_function;
-  DeleteOpAndArrays(model, binary_op);
+  const auto& old_constant_param_name =
+      binary_op->inputs[index_of_constant_input];
+  CHECK(IsConstantParameterArray(*model, old_constant_param_name));
+  if (CountOpsWithInput(*model, old_constant_param_name) == 1) {
+    model->EraseArray(old_constant_param_name);
+  }
+  model->operators.erase(binary_it);
   *modified = true;
   return ::tensorflow::Status::OK();
 }

@@ -128,13 +128,7 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
         tf_shared_lock l(mu_);
         buffer_limit = auto_tuner_.buffer_limit();
       }
-      string prefetch_with_slack_trace = "";
-      if (dataset()->slack_period_ > 0) {
-        int64 slack_us = slack_us_;
-        prefetch_with_slack_trace = strings::StrCat(",slack=", slack_us);
-      }
-      return strings::StrCat(prefix(), "#buffer_limit=", buffer_limit,
-                             prefetch_with_slack_trace, "#");
+      return strings::StrCat(prefix(), "#buffer_limit=", buffer_limit, "#");
     }
 
     Status Initialize(IteratorContext* ctx) override {
@@ -466,12 +460,14 @@ void PrefetchDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
   int64 buffer_size = 0;
   OP_REQUIRES_OK(ctx,
                  ParseScalarArgument<int64>(ctx, kBufferSize, &buffer_size));
-  OP_REQUIRES(ctx, buffer_size >= 0 || buffer_size == model::kAutotune,
+  OP_REQUIRES(ctx,
+              buffer_size >= 0 || buffer_size == PrefetchAutotuner::kAutoTune,
               errors::InvalidArgument("buffer_size must be >= 0 or set "
                                       "buffer_size to be ",
-                                      model::kAutotune, " for auto-tuning"));
+                                      PrefetchAutotuner::kAutoTune,
+                                      " for auto-tuning"));
 
-  if (buffer_size == model::kAutotune) {
+  if (buffer_size == PrefetchAutotuner::kAutoTune) {
     metrics::RecordTFDataAutotune(kDatasetType);
   }
 

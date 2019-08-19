@@ -81,6 +81,12 @@ _api_usage_gauge = monitoring.BoolGauge(
 
 # pylint: disable=protected-access
 _TensorLike = tensor_like._TensorLike
+_tensor_conversion_func_registry = \
+    tensor_conversion_registry._tensor_conversion_func_registry
+_tensor_conversion_func_cache = \
+    tensor_conversion_registry._tensor_conversion_func_cache
+_tensor_conversion_func_lock = \
+    tensor_conversion_registry._tensor_conversion_func_lock
 # pylint: enable=protected-access
 
 
@@ -945,12 +951,10 @@ class _EagerTensorBase(Tensor):
     """
     return self._copy_nograd(context.context(), "CPU:0")
 
-  @deprecation.deprecated(None, "Use tf.identity instead.")
   def cpu(self):
     """A copy of this Tensor with contents backed by host memory."""
     return self._copy(context.context(), "CPU:0")
 
-  @deprecation.deprecated(None, "Use tf.identity instead.")
   def gpu(self, gpu_index=0):
     """A copy of this Tensor with contents backed by memory on the GPU.
 
@@ -1024,6 +1028,15 @@ class _EagerTensorBase(Tensor):
 EagerTensor = c_api.TFE_Py_InitEagerTensor(_EagerTensorBase)
 
 
+def _TensorTensorConversionFunction(t, dtype=None, name=None, as_ref=False):
+  _ = name, as_ref
+  if dtype and not dtype.is_compatible_with(t.dtype):
+    raise ValueError(
+        "Tensor conversion requested dtype %s for Tensor with dtype %s: %r" %
+        (dtype.name, t.dtype.name, str(t)))
+  return t
+tensor_conversion_registry.register_tensor_conversion_function(
+    Tensor, _TensorTensorConversionFunction, 0)
 register_dense_tensor_like_type(Tensor)
 
 
@@ -1155,26 +1168,51 @@ def internal_convert_to_tensor(value,
                                as_ref=False,
                                preferred_dtype=None,
                                ctx=None,
+                               accept_symbolic_tensors=True,
                                accept_composite_tensors=False):
   """Implementation of the public convert_to_tensor."""
-  if dtype is not None:
-    dtype = dtypes.as_dtype(dtype)
   if ctx is None:
     ctx = context.context()
-  if isinstance(value, EagerTensor) and not ctx.executing_eagerly():
-    graph = get_default_graph()
-    if not graph.building_function:
-      raise RuntimeError("Attempting to capture an EagerTensor without "
-                         "building a function.")
-    return graph.capture(value, name=name)
-  elif isinstance(value, Tensor):
-    if dtype is not None and not dtype.is_compatible_with(value.dtype):
-      raise ValueError(
-          "Tensor conversion requested dtype %s for Tensor with dtype %s: %r" %
-          (dtype.name, value.dtype.name, value))
-    return value
+  if isinstance(value, EagerTensor):
+    if ctx.executing_eagerly():
+      if dtype is not None:
+        dtype = dtypes.as_dtype(dtype)
+        value = _TensorTensorConversionFunction(value, dtype=dtype)
+      return value
+    else:
+      graph = get_default_graph()
+      if not graph.building_function:
+        raise RuntimeError("Attempting to capture an EagerTensor without "
+                           "building a function.")
+      return graph.capture(value, name=name)
+  elif ((not accept_symbolic_tensors) and isinstance(value, Tensor) and
+        ctx.executing_eagerly()):
+    # Found a symbolic tensor in an eager context.
+    # This happens when we use the Keras functional API (i.e. calling layers
+    # on the output of `keras.Input()`, which is symbolic) while eager
+    # execution is enabled.
+    if _is_keras_symbolic_tensor(value):
+      # If the graph of the tensor isn't the Keras graph, we should still
+      # fail, for the time being. TODO(fchollet): consider allowing
+      # all symbolic tensors to raise this exception in this case.
+      raise core._SymbolicException(  # pylint: disable=protected-access
+          "Using the symbolic output of a Keras layer during eager execution.")
 
-  for base_type, conversion_func in tensor_conversion_registry.get(type(value)):
+  if dtype is not None:
+    dtype = dtypes.as_dtype(dtype)
+  unwrapped_type = type(value)
+  conversion_func_list = _tensor_conversion_func_cache.get(unwrapped_type, None)
+  if conversion_func_list is None:
+    with _tensor_conversion_func_lock:
+      conversion_func_list = []
+      for _, funcs_at_priority in sorted(
+          _tensor_conversion_func_registry.items()):
+        for base_type, conversion_func in funcs_at_priority:
+          if isinstance(value, base_type):
+            conversion_func_list.append((base_type, conversion_func))
+      _tensor_conversion_func_cache[unwrapped_type] = conversion_func_list
+
+  for base_type, conversion_func in conversion_func_list:
     # If dtype is None but preferred_dtype is not None, we try to
     # cast to preferred_dtype first.
     ret = None
@@ -1660,11 +1698,11 @@ class Operation(object):
     # context managers.
     self._colocation_code_locations = None
     self._control_flow_context = self.graph._get_control_flow_context()
+    # pylint: enable=protected-access
 
     # Initialize self._c_op.
     if c_op:
       self._c_op = c_op
-      op_def = g._get_op_def(c_api.TF_OperationOpType(c_op))
     else:
       if op_def is None:
         op_def = self._graph._get_op_def(node_def.op)
@@ -1674,9 +1712,6 @@ class Operation(object):
           op_def, inputs, node_def.attr)
       self._c_op = _create_c_op(self._graph, node_def, grouped_inputs,
                                 control_input_ops)
-    # pylint: enable=protected-access
-
-    self._is_stateful = op_def.is_stateful
 
     # Initialize self._outputs.
     num_outputs = c_api.TF_OperationNumOutputs(self._c_op)
@@ -3232,55 +3267,11 @@ class Graph(object):
       An `Operation` object.
     """
     del compute_shapes
+
+    self._check_not_finalized()
     for idx, a in enumerate(inputs):
       if not isinstance(a, Tensor):
         raise TypeError("Input #%d is not a tensor: %s" % (idx, a))
-    return self._create_op_internal(op_type, inputs, dtypes, input_types, name,
-                                    attrs, op_def, compute_device)
-
-  def _create_op_internal(
-      self,
-      op_type,
-      inputs,
-      dtypes=None,  # pylint: disable=redefined-outer-name
-      input_types=None,
-      name=None,
-      attrs=None,
-      op_def=None,
-      compute_device=True):
-    """Creates an `Operation` in this graph.
-
-    Implements `Graph.create_op()` without the overhead of the deprecation
-    wrapper.
-
-    Args:
-      op_type: The `Operation` type to create. This corresponds to the
-        `OpDef.name` field for the proto that defines the operation.
-      inputs: A list of `Tensor` objects that will be inputs to the `Operation`.
-      dtypes: (Optional) A list of `DType` objects that will be the types of the
-        tensors that the operation produces.
-      input_types: (Optional.) A list of `DType`s that will be the types of the
-        tensors that the operation consumes. By default, uses the base `DType`
-        of each input in `inputs`. Operations that expect reference-typed inputs
-        must specify `input_types` explicitly.
-      name: (Optional.) A string name for the operation. If not specified, a
-        name is generated based on `op_type`.
-      attrs: (Optional.) A dictionary where the key is the attribute name (a
-        string) and the value is the respective `attr` attribute of the
-        `NodeDef` proto that will represent the operation (an `AttrValue`
-        proto).
-      op_def: (Optional.) The `OpDef` proto that describes the `op_type` that
-        the operation will have.
-      compute_device: (Optional.) If True, device functions will be executed to
-        compute the device property of the Operation.
-
-    Raises:
-      ValueError: if colocation conflicts with existing device assignment.
-
-    Returns:
-      An `Operation` object.
-    """
-    self._check_not_finalized()
     if name is None:
       name = op_type
     # If a names ends with a '/' it is a "name scope" and we use it as-is,
@@ -3410,7 +3401,7 @@ class Graph(object):
     # (2) "is_stateful" is set in OpDef
     # (3) "container" attribute is in OpDef
     # (4) "container" attribute is None
-    if self._container and op._is_stateful:  # pylint: disable=protected-access
+    if self._container and op.op_def.is_stateful:
       try:
         container_attr = op.get_attr("container")
       except ValueError:
@@ -4915,6 +4906,48 @@ class Graph(object):
   def _global_distribute_strategy_scope(self, distribute_strategy_scope):
     self._thread_local.distribute_strategy_scope = (distribute_strategy_scope)
 
+  @property
+  def _auto_cast_variable_read_dtype(self):
+    """The dtype that instances of `AutoCastVariable` will be casted to.
+
+    This is None if `AutoCastVariables` should not be casted.
+
+    See `AutoCastVariable` for more information.
+
+    Returns:
+      The dtype that instances of `AutoCastVariable` will be casted to.
+    """
+    if not hasattr(self._thread_local, "_auto_cast_variable_read_dtype"):
+      self._thread_local._auto_cast_variable_read_dtype = None  # pylint: disable=protected-access
+    return self._thread_local._auto_cast_variable_read_dtype  # pylint: disable=protected-access
+
+  @_auto_cast_variable_read_dtype.setter
+  def _auto_cast_variable_read_dtype(self, _auto_cast_variable_read_dtype):
+    self._thread_local._auto_cast_variable_read_dtype = (  # pylint: disable=protected-access
+        _auto_cast_variable_read_dtype)
+
+  @tf_contextlib.contextmanager
+  def _enable_auto_casting_variables(self, dtype):
+    """Context manager to automatically cast AutoCastVariables.
+
+    If an AutoCastVariable `var` is used under this context manager, it will be
+    casted to `dtype` before being used.
+
+    See `AutoCastVariable` for more information.
+
+    Args:
+      dtype: The dtype that AutoCastVariables should be casted to.
+
+    Yields:
+      Nothing.
+    """
+    prev_read_dtype = self._auto_cast_variable_read_dtype
+    try:
+      self._auto_cast_variable_read_dtype = dtype
+      yield
+    finally:
+      self._auto_cast_variable_read_dtype = prev_read_dtype
+
   def _mutation_lock(self):
     """Returns a lock to guard code that creates & mutates ops.
 
@@ -4951,21 +4984,12 @@ def device(device_name_or_function):
     RuntimeError: If eager execution is enabled and a function is passed in.
   """
   if context.executing_eagerly():
+    # TODO(agarwal): support device functions in EAGER mode.
     if callable(device_name_or_function):
       raise RuntimeError(
           "tf.device does not support functions when eager execution "
           "is enabled.")
     return context.device(device_name_or_function)
-  elif executing_eagerly_outside_functions():
-    @tf_contextlib.contextmanager
-    def combined(device_name_or_function):
-      with get_default_graph().device(device_name_or_function):
-        if not callable(device_name_or_function):
-          with context.device(device_name_or_function):
-            yield
-        else:
-          yield
-    return combined(device_name_or_function)
   else:
     return get_default_graph().device(device_name_or_function)
 
@@ -5000,7 +5024,10 @@ def device_v2(device_name):
   """
   if callable(device_name):
     raise RuntimeError("tf.device does not support functions.")
-  return device(device_name)
+  if context.executing_eagerly():
+    return context.device(device_name)
+  else:
+    return get_default_graph().device(device_name)
 
 
 @tf_export(v1=["container"])
@@ -5316,46 +5343,6 @@ class _DefaultGraphStack(_DefaultStack):  # pylint: disable=protected-access
 _default_graph_stack = _DefaultGraphStack()
 
 
-# Shared helper used in init_scope and executing_eagerly_outside_functions
-# to obtain the outermost context that is not building a function, and the
-# innermost non empty device stack.
-def _get_outer_context_and_inner_device_stack():
-  """Get the outermost context not building a function."""
-  default_graph = get_default_graph()
-  outer_context = None
-  innermost_nonempty_device_stack = default_graph._device_function_stack  # pylint: disable=protected-access
-
-  if not _default_graph_stack.stack:
-    # If the default graph stack is empty, then we cannot be building a
-    # function. Install the global graph (which, in this case, is also the
-    # default graph) as the outer context.
-    if default_graph.building_function:
-      raise RuntimeError("The global graph is building a function.")
-    outer_context = default_graph.as_default
-  else:
-    # Find a context that is not building a function.
-    for stack_entry in reversed(context.context().context_switches.stack):
-      if not innermost_nonempty_device_stack:
-        innermost_nonempty_device_stack = stack_entry.device_stack
-      if not stack_entry.is_building_function:
-        outer_context = stack_entry.enter_context_fn
-        break
-
-    if outer_context is None:
-      # As a last resort, obtain the global default graph; this graph doesn't
-      # necessarily live on the graph stack (and hence it doesn't necessarily
-      # live on the context stack), but it is stored in the graph stack's
-      # encapsulating object.
-      outer_context = _default_graph_stack._GetGlobalDefaultGraph().as_default  # pylint: disable=protected-access
-
-  if outer_context is None:
-    # Sanity check; this shouldn't be triggered.
-    raise RuntimeError("All graphs are building functions, and no "
-                       "eager context was previously active.")
-
-  return outer_context, innermost_nonempty_device_stack
-
-
 # pylint: disable=g-doc-return-or-yield,line-too-long
 @tf_export("init_scope")
 @tf_contextlib.contextmanager
@@ -5416,14 +5403,42 @@ def init_scope():
   else:
     # Retrieve the active name scope: entering an `init_scope` preserves
     # the name scope of the current context.
-    scope = get_default_graph().get_name_scope()
+    default_graph = get_default_graph()
+    scope = default_graph.get_name_scope()
     if scope and scope[-1] != "/":
       # Names that end with trailing slashes are treated by `name_scope` as
       # absolute.
       scope = scope + "/"
+    innermost_nonempty_device_stack = default_graph._device_function_stack  # pylint: disable=protected-access
 
-    outer_context, innermost_nonempty_device_stack = (
-        _get_outer_context_and_inner_device_stack())
+    outer_context = None
+    if not _default_graph_stack.stack:
+      # If the default graph stack is empty, then we cannot be building a
+      # function. Install the global graph (which, in this case, is also the
+      # default graph) as the outer context.
+      if default_graph.building_function:
+        raise RuntimeError("The global graph is building a function.")
+      outer_context = default_graph.as_default
+    else:
+      # Find a context that is not building a function.
+      for stack_entry in reversed(context.context().context_switches.stack):
+        if not innermost_nonempty_device_stack:
+          innermost_nonempty_device_stack = stack_entry.device_stack
+        if not stack_entry.is_building_function:
+          outer_context = stack_entry.enter_context_fn
+          break
+
+      if outer_context is None:
+        # As a last resort, obtain the global default graph; this graph doesn't
+        # necessarily live on the graph stack (and hence it doesn't necessarily
+        # live on the context stack), but it is stored in the graph stack's
+        # encapsulating object.
+        outer_context = _default_graph_stack._GetGlobalDefaultGraph().as_default  # pylint: disable=protected-access
+
+    if outer_context is None:
+      # Sanity check; this shouldn't be triggered.
+      raise RuntimeError("All graphs are building functions, and no "
+                         "eager context was previously active.")
 
     outer_graph = None
     outer_device_stack = None
@@ -5464,12 +5479,12 @@ def init_scope():
 
 def executing_eagerly_outside_functions():
   """Returns True if executing eagerly, even if inside a graph function."""
+  # Fastpath for when this is called eagerly (its not necessary to init_scope).
   if context.executing_eagerly():
     return True
-  else:
-    outer_context, _ = _get_outer_context_and_inner_device_stack()
-    with outer_context():
-      return context.executing_eagerly()
+
+  with init_scope():
+    return context.executing_eagerly()
 
 
 def inside_function():
@@ -6071,6 +6086,9 @@ def get_all_collection_keys():
   return get_default_graph().get_all_collection_keys()
 
 
+name_scope_cache = {}
+
+
 # Named like a function for backwards compatibility with the
 # @tf_contextlib.contextmanager version, which was switched to a class to avoid
 # some object creation overhead.
@@ -6143,7 +6161,25 @@ class name_scope(object):  # pylint: disable=invalid-name
       return self._name_scope.__enter__()
 
     if self._in_eager_mode:
-      scope_name, self._old_name = enter_eager_name_scope(self._ctx, self._name)
+      self._old_name = self._ctx.scope_name
+      if not self._name:
+        scope_name = ""
+      else:
+        cache_key = self._name, self._old_name, self._default_name
+        if cache_key in name_scope_cache:
+          self._ctx.scope_name = name_scope_cache[cache_key]
+          return self._ctx.scope_name
+        elif self._name[-1] == "/":
+          # A trailing slash breaks out of nested name scopes, indicating a
+          # fully specified scope name, for compatibility with Graph.name_scope.
+          scope_name = self._name
+        else:
+          name_with_trailing_slash = self._name + "/"
+          scope_name = (
+              self._old_name + name_with_trailing_slash
+              if self._old_name else name_with_trailing_slash)
+        name_scope_cache[cache_key] = scope_name
+      self._ctx.scope_name = scope_name
       return scope_name
     else:
       if self._name is None and self._values is not None:
@@ -6155,19 +6191,14 @@ class name_scope(object):  # pylint: disable=invalid-name
             % (self._name, self._default_name))
       if self._values is None:
         self._values = []
-      if self._values:
-        g = _get_graph_from_inputs(self._values)
-        self._g_manager = g.as_default()
-        self._g_manager.__enter__()
-      else:
-        g = get_default_graph()
-        self._g_manager = None
+      g = _get_graph_from_inputs(self._values)
+      self._g_manager = g.as_default()
+      self._g_manager.__enter__()
       try:
         self._name_scope = g.name_scope(self._name)
         return self._name_scope.__enter__()
       except:
-        if self._g_manager is not None:
-          self._g_manager.__exit__(*sys.exc_info())
+        self._g_manager.__exit__(*sys.exc_info())
         raise
 
   def __exit__(self, type_arg, value_arg, traceback_arg):
@@ -6177,27 +6208,8 @@ class name_scope(object):  # pylint: disable=invalid-name
       self._ctx.scope_name = self._old_name
     else:
       self._name_scope.__exit__(type_arg, value_arg, traceback_arg)
-      if self._g_manager is not None:
-        self._g_manager.__exit__(type_arg, value_arg, traceback_arg)
+      self._g_manager.__exit__(type_arg, value_arg, traceback_arg)
     return False  # False values do not suppress exceptions
-
-
-def enter_eager_name_scope(ctx, name):
-  """Updates the eager context to enter the given name scope."""
-  old_name = ctx.scope_name
-  if not name:
-    scope_name = ""
-  else:
-    if name.endswith("/"):
-      # A trailing slash breaks out of nested name scopes, indicating a
-      # fully specified scope name, for compatibility with Graph.name_scope.
-      scope_name = name
-    else:
-      scope_name = name + "/"
-      if old_name:
-        scope_name = old_name + scope_name
-  ctx.scope_name = scope_name
-  return scope_name, old_name
 
 
 @tf_export("name_scope", v1=[])
@@ -6238,38 +6250,7 @@ class name_scope_v2(name_scope):
     """
     if name is None or not isinstance(name, six.string_types):
       raise ValueError("name for name_scope must be a string.")
-    self._name = name
-    self._exit_fns = []
-
-  @property
-  def name(self):
-    return self._name
-
-  def __enter__(self):
-    """Start the scope block.
-
-    Returns:
-      The scope name.
-
-    Raises:
-      ValueError: if neither `name` nor `default_name` is provided
-        but `values` are.
-    """
-    ctx = context.context()
-    if ctx.executing_eagerly():
-      scope_name, old_scope_name = enter_eager_name_scope(ctx, self._name)
-      self._exit_fns.append(
-          lambda *a: setattr(ctx, "scope_name", old_scope_name))
-    else:
-      scope = get_default_graph().name_scope(self._name)
-      scope_name = scope.__enter__()
-      self._exit_fns.append(scope.__exit__)
-    return scope_name
-
-  def __exit__(self, type_arg, value_arg, traceback_arg):
-    exit_fn = self._exit_fns.pop()
-    exit_fn(type_arg, value_arg, traceback_arg)
-    return False  # False values do not suppress exceptions
+    super(name_scope_v2, self).__init__(name=None, default_name=name)
 
 
 def strip_name_scope(name, export_scope):

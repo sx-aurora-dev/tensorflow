@@ -33,8 +33,7 @@ TEST(PatternMatcherTest, AddOp) {
       ROOT %two_plus_two = f32[] add(f32[] %two, f32[] %two)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
 
   const HloInstruction* matched_inst;
   HloInstruction* matched_operand;
@@ -187,8 +186,7 @@ TEST(PatternMatcherTest, FusionKind) {
       p0 = f32[] parameter(0)
       ROOT fusion = f32[] fusion(p0), kind=kLoop, calls=fused_computation
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
 
   auto* root = hlo_module->entry_computation()->root_instruction();
   EXPECT_TRUE(Match(
@@ -207,8 +205,7 @@ TEST(PatternMatcherTest, GetTupleElement) {
       p0 = (f32[], f32[], f32[]) parameter(0)
       ROOT gte = f32[] get-tuple-element(p0), index=1
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
 
   auto* root = hlo_module->entry_computation()->root_instruction();
   EXPECT_FALSE(Match(root, match::Op().WithTupleIndex(0)));
@@ -221,8 +218,7 @@ TEST(PatternMatcherTest, GetTupleElement) {
 TEST(PatternMatcherTest, AnyOf) {
   constexpr char kModuleStr[] = R"(
     HloModule test_module ENTRY test { ROOT constant = f16[] constant(1) })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
 
   EXPECT_TRUE(
@@ -252,8 +248,7 @@ TEST(PatternMatcherTest, ConstantScalar) {
       e = f32[] constant(1.25)
       ROOT tuple = (s32[], s32[1,1], s32[1,2], f32[], f32[]) tuple(a,b,c,d,e)
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
 
   const HloInstruction* a = root->operand(0);
@@ -319,8 +314,7 @@ TEST(PatternMatcherTest, MultiplyAnyOrder) {
       rhs = f16[] constant(52)
       ROOT multiply = f16[] multiply(lhs, rhs)
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
   const HloInstruction* instr;
 
@@ -351,8 +345,7 @@ TEST(PatternMatcherTest, AnyOfShortCircuit) {
       rhs = f16[] constant(52)
       ROOT multiply = f16[] multiply(lhs, rhs)
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
 
   {
@@ -383,8 +376,7 @@ TEST(PatternMatcherTest, AllOf) {
 
   constexpr char kModuleStr[] = R"(
     HloModule test_module ENTRY test { ROOT constant = f16[] constant(1) })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
 
   auto f16_scalar = ShapeUtil::MakeShape(F16, {});
@@ -418,8 +410,7 @@ TEST(PatternMatcherTest, AllOfNoCaptureIfNotMatch) {
     ENTRY test {
       ROOT v = f16[] constant(42)
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
 
   const HloInstruction* constant = nullptr;
@@ -438,8 +429,7 @@ TEST(PatternMatcherTest, TestNoCapture) {
     ENTRY test {
       ROOT v = f16[] constant(42)
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
 
   const HloInstruction* constant = nullptr;
@@ -460,8 +450,7 @@ TEST(PatternMatcherTest, TestCaptureMatchedSubPatternForAnyOf) {
       v = f16[] parameter(1)
       ROOT add = f16[] add(u, v)
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
 
   const HloInstruction* addend0 = nullptr;
@@ -496,8 +485,7 @@ TEST(PatternMatcherTest, TestConcat) {
       r4 = u32[1] reshape(c4)
       ROOT concat = u32[4] concatenate(r1, r2, r3, r4), dimensions={0}
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloString(kModuleStr));
   auto* root = hlo_module->entry_computation()->root_instruction();
   ASSERT_TRUE(Match(
       root,
@@ -575,29 +563,6 @@ TEST(PatternMatcherTest, LayoutDescribeToAndExplain) {
                               " * equal to {1,2} AND\n"
                               " * with format SPARSE",
                               "Layout has format DENSE but expected SPARSE");
-}
-
-TEST(PatternMatcherTest, CustomCallTargetMatcherDescribeAndExplain) {
-  constexpr char kModuleStr[] = R"(
-    HloModule test_module
-
-    ENTRY test {
-      ROOT out = f32[] custom-call(), custom_call_target="test_target"
-    }
-  )";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
-
-  auto* root = hlo_module->entry_computation()->root_instruction();
-  EXPECT_TRUE(Match(root, match::Op().WithCustomCallTarget("test_target")));
-  EXPECT_FALSE(Match(root, match::Op().WithCustomCallTarget("other_target")));
-
-  EXPECT_DESC_AND_EXPLANATION(
-      root, match::Op().WithCustomCallTarget("other_target"),
-      "an HloInstruction custom call with target 'other_target'",
-      "HloInstruction is not a custom call with a target 'other_target'\nin "
-      "out = f32[] custom-call(), custom_call_target=\"test_target\"");
 }
 
 TEST(PatternMatcherTest, ShapeDescribeToAndExplain) {

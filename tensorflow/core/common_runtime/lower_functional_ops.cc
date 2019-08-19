@@ -137,7 +137,7 @@ Status LowerFunctionalOpsPass::Run(
     }
 
     if (LowerUsingSwitchMergeIsOn(n)) {
-      if (n->IsIfNode()) {
+      if (n->type_string() == "If") {
         TF_RETURN_IF_ERROR(
             RewriteIfNode(n, g, *flib_def, keep_lowered_nodes_fetchable));
       } else if (n->type_string() == "Case") {

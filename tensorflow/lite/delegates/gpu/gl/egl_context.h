@@ -37,15 +37,10 @@ class EglContext {
   EglContext()
       : context_(EGL_NO_CONTEXT),
         display_(EGL_NO_DISPLAY),
-        config_(EGL_NO_CONFIG_KHR),
-        has_ownership_(false) {}
+        config_(EGL_NO_CONFIG_KHR) {}
 
-  EglContext(EGLContext context, EGLDisplay display, EGLConfig config,
-             bool has_ownership)
-      : context_(context),
-        display_(display),
-        config_(config),
-        has_ownership_(has_ownership) {}
+  EglContext(EGLContext context, EGLDisplay display, EGLConfig config)
+      : context_(context), display_(display), config_(config) {}
 
   // Move only
   EglContext(EglContext&& other);
@@ -72,18 +67,12 @@ class EglContext {
   // Returns true if this is the currently bound EGL context.
   bool IsCurrent() const;
 
-  // Returns true if this object actually owns corresponding EGL context
-  // and manages it's lifetime.
-  bool has_ownership() const { return has_ownership_; }
-
  private:
   void Invalidate();
 
   EGLContext context_;
   EGLDisplay display_;
   EGLConfig config_;
-
-  bool has_ownership_;
 };
 
 // It uses the EGL_KHR_no_config_context extension to create a no config context

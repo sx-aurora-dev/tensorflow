@@ -132,7 +132,13 @@ void GetBoundsForQuantizedDataType(ArrayDataType quantized_data_type,
   tflite::FakeQuantizeArray(scale, nudged_min, nudged_max,
                             input_buffer.data.data(), output_buffer.data.data(),
                             size);
-  DeleteOpAndArrays(model, fakequant_op);
+
+  if (IsDiscardableArray(*model, fakequant_op->inputs[0]) &&
+      CountOpsWithInput(*model, fakequant_op->inputs[0]) == 1) {
+    model->EraseArray(fakequant_op->inputs[0]);
+  }
+  model->operators.erase(fakequant_it);
+
   *modified = true;
   return ::tensorflow::Status::OK();
 }

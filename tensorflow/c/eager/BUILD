@@ -1,5 +1,9 @@
 # Experimental extensions to the C API for eager execution of kernels.
 
+package(
+    licenses = ["notice"],  # Apache 2.0
+)
+
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_copts",
@@ -17,16 +21,11 @@ load(
     "tf_cuda_tests_tags",
 )
 
-package(
-    licenses = ["notice"],  # Apache 2.0
-)
-
 tf_cuda_library(
     name = "c_api",
     srcs = [
         "c_api.cc",
         "c_api_debug.cc",
-        "c_api_experimental.h",
         "c_api_internal.h",
     ],
     hdrs = ["c_api.h"],
@@ -82,7 +81,6 @@ tf_cuda_library(
 
 tf_cuda_library(
     name = "c_api_internal",
-    srcs = ["c_api_experimental.h"],
     hdrs = ["c_api_internal.h"],
     visibility = [
         "//learning/deepmind/courier:__subpackages__",
@@ -151,7 +149,6 @@ tf_cuda_cc_test(
     tags = [
         "guitar",
         "multi_gpu",
-        "no_gpu",  # flaky, b/136267687
     ],
     deps = [
         ":c_api",
@@ -277,6 +274,7 @@ filegroup(
         ],
         exclude = [
             "c_api_experimental.cc",
+            "c_api_experimental.h",
             "*test*",
         ],
     ),

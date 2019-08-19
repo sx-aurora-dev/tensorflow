@@ -21,7 +21,6 @@ from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.data.experimental.ops import prefetching_ops
 from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.data.util import structure
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
@@ -43,9 +42,10 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_one_shot_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(structure.are_compatible(
-        dataset_ops.get_structure(host_dataset),
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
         dataset_ops.get_structure(device_dataset)))
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element.dtype)
     self.assertEqual([], next_element.shape)
@@ -68,9 +68,10 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_one_shot_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(structure.are_compatible(
-        dataset_ops.get_structure(host_dataset),
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
         dataset_ops.get_structure(device_dataset)))
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element.dtype)
     self.assertEqual([], next_element.shape)
@@ -92,9 +93,10 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_one_shot_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(structure.are_compatible(
-        dataset_ops.get_structure(host_dataset),
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
         dataset_ops.get_structure(device_dataset)))
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element["a"].dtype)
     self.assertEqual([], next_element["a"].shape)
@@ -120,9 +122,10 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_one_shot_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(structure.are_compatible(
-        dataset_ops.get_structure(host_dataset),
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
         dataset_ops.get_structure(device_dataset)))
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element.dtype)
 
@@ -166,9 +169,10 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_initializable_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(structure.are_compatible(
-        dataset_ops.get_structure(host_dataset),
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
         dataset_ops.get_structure(device_dataset)))
+    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element.dtype)
     self.assertEqual([], next_element.shape)

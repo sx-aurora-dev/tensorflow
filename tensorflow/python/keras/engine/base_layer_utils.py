@@ -378,7 +378,6 @@ class CallContext(object):
     frozen: Whether currently executing inside a `Layer` with `trainable` set to
       `False`.
     in_call: Whether currently inside the `call` of a Layer.
-    training: Whether currently executing in training or inference mode.
     in_keras_graph: Whether executing inside the Keras Graph.
   """
 
@@ -387,29 +386,25 @@ class CallContext(object):
     self.inputs = None
     self.frozen = False
     self.in_call = False
-    self.training = None
     self._in_keras_graph = False
 
   @tf_contextlib.contextmanager
-  def enter(self, layer, inputs, build_graph, training):
+  def enter(self, layer, inputs, build_graph):
     """Push a Layer and its inputs and state onto the current call context."""
     prev_layer = self.layer
     prev_inputs = self.inputs
     prev_frozen = self.frozen
     prev_in_call = self.in_call
-    prev_training = self.training
     prev_in_keras_graph = self._in_keras_graph
 
     self.layer = layer
     self.inputs = inputs
     self.frozen = self.frozen or not layer.trainable
     self.in_call = True
-    self.training = training
     self._in_keras_graph = (
         self._in_keras_graph or
         (build_graph and
          getattr(backend.get_graph(), 'name', None) == 'keras_graph'))
-
     try:
       yield
     finally:
@@ -417,7 +412,6 @@ class CallContext(object):
       self.inputs = prev_inputs
       self.frozen = prev_frozen
       self.in_call = prev_in_call
-      self.training = prev_training
       self._in_keras_graph = prev_in_keras_graph
 
   @property
@@ -438,8 +432,35 @@ def training_arg_passed_to_call(argspec, args, kwargs):
   return 'training' in full_args and full_args['training'] is not None
 
 
+def _get_var_read_dtype(input_list, should_cast):
+  """Gets the dtype that AutoCastVariables should be read in."""
+  if should_cast and input_list and input_list[0].dtype.is_floating:
+    return input_list[0].dtype.base_dtype
+  else:
+    return None
+
+
+def autocast_context_manager(input_list, should_cast):
+  """Returns a context manager to autocast AutoCastVariables.
+
+  Under this context manager, if `should_cast` is True, AutoCastVariables will
+  be casted. If `should_cast` is False, AutoCastVariables will not be casted,
+  which can be used to disable autocasting if nested under another
+  call to `autocast_context_manager`.
+
+  Args:
+    input_list: The inputs to the layer with the AutoCastVariables.
+    should_cast: Whether AutoCastVariables should be casted.
+
+  Returns:
+    A context manager to automatically cast AutoCastVariables.
+  """
+  var_read_dtype = _get_var_read_dtype(input_list, should_cast)
+  return ops.get_default_graph()._enable_auto_casting_variables(  # pylint: disable=protected-access
+      var_read_dtype)
+
+
 def is_subclassed(layer):
-  """Returns True if the object is a subclassed layer or subclassed model."""
   return (layer.__module__.find('keras.engine') == -1 and
           layer.__module__.find('keras.layers') == -1)
 

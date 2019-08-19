@@ -19,7 +19,6 @@ RUN ${PIP} --no-cache-dir install \
     scipy \
     sklearn \
     pandas \
-    future \
     portpicker \
     && test "${USE_PYTHON_3_NOT_2}" -eq 1 && true || ${PIP} --no-cache-dir install \
     enum34

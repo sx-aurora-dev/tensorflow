@@ -27,7 +27,6 @@ namespace xla {
 
 class WhileLoopInvariantCodeMotion : public HloModulePass {
  public:
-  using ShapeSizeFunction = std::function<int64(const Shape&)>;
   // If `hoist_constants` is true then constants are always hoisted out of while
   // loop bodies.  Otherwise they are only hoisted out if they enable other
   // non-trivial computations to be hoisted out.
@@ -39,12 +38,10 @@ class WhileLoopInvariantCodeMotion : public HloModulePass {
   // instructions where the size of the output(s) is larger than the size of the
   // input(s). This is useful on platforms on which it's important to prevent
   // blow-ups in memory size.
-  explicit WhileLoopInvariantCodeMotion(
-      bool hoist_constants = false, bool hoist_size_inflating_ops = true,
-      ShapeSizeFunction shape_size_function = ShapeUtil::ByteSizeOfElements)
+  explicit WhileLoopInvariantCodeMotion(bool hoist_constants = false,
+                                        bool hoist_size_inflating_ops = true)
       : hoist_constants_(hoist_constants),
-        hoist_size_inflating_ops_(hoist_size_inflating_ops),
-        shape_size_function_(shape_size_function) {}
+        hoist_size_inflating_ops_(hoist_size_inflating_ops) {}
   ~WhileLoopInvariantCodeMotion() override = default;
 
   absl::string_view name() const override {
@@ -59,7 +56,6 @@ class WhileLoopInvariantCodeMotion : public HloModulePass {
 
   bool hoist_constants_;
   bool hoist_size_inflating_ops_;
-  ShapeSizeFunction shape_size_function_;
 };
 }  // namespace xla
 

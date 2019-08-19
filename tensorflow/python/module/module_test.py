@@ -25,12 +25,10 @@ import itertools
 from absl.testing import parameterized
 import six
 
-from tensorflow.python import tf2
+from tensorflow.python.compat import v2_compat
 from tensorflow.python.distribute import values as distributed_values
-from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import test_util
 from tensorflow.python.keras import layers
 from tensorflow.python.keras import models
 from tensorflow.python.module import module
@@ -38,7 +36,7 @@ from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
 
 
-class TestModuleNaming(test_util.TensorFlowTestCase):
+class TestModuleNaming(test.TestCase):
 
   def test_single_name(self):
     mod = module.Module(name="simple")
@@ -112,11 +110,7 @@ class TestModuleNaming(test_util.TensorFlowTestCase):
     with self.assertRaisesRegexp(ValueError, msg):
       module.Module(name="$Foo")
 
-  @test_util.run_in_graph_and_eager_modes
   def test_modules_not_numbered_in_eager(self):
-    if not context.executing_eagerly():
-      self.skipTest("Eager specific")
-
     mod = RecursiveModule(2)
     self.assertEqual(mod.name_scope.name, "badger/")
     self.assertEqual(mod.child.name_scope.name, "badger/badger/")
@@ -125,18 +119,15 @@ class TestModuleNaming(test_util.TensorFlowTestCase):
     self.assertEqual(mod.name_scope.name, "badger/")
     self.assertEqual(mod.child.name_scope.name, "badger/badger/")
 
-  @test_util.run_in_graph_and_eager_modes
   def test_module_numbering_in_graph(self):
-    if context.executing_eagerly():
-      self.skipTest("Graph specific")
+    with ops.Graph().as_default():
+      mod = RecursiveModule(2)
+      self.assertEqual(mod.name_scope.name, "badger/")
+      self.assertEqual(mod.child.name_scope.name, "badger/badger/")
 
-    mod = RecursiveModule(2)
-    self.assertEqual(mod.name_scope.name, "badger/")
-    self.assertEqual(mod.child.name_scope.name, "badger/badger/")
-
-    mod = RecursiveModule(2)
-    self.assertEqual(mod.name_scope.name, "badger_1/")
-    self.assertEqual(mod.child.name_scope.name, "badger_1/badger/")
+      mod = RecursiveModule(2)
+      self.assertEqual(mod.name_scope.name, "badger_1/")
+      self.assertEqual(mod.child.name_scope.name, "badger_1/badger/")
 
   def test_ctor_error_closes_name_scope(self):
     with self.assertRaises(ErrorModuleError):
@@ -192,7 +183,7 @@ class TestModuleNaming(test_util.TensorFlowTestCase):
     self.assertIn(("does_not_exist", ""), scope_names)
 
 
-class VariableNamingTest(test_util.TensorFlowTestCase):
+class VariableNamingTest(test.TestCase):
 
   def test_variable_names(self):
     mod = RecursiveModule(3)
@@ -201,30 +192,7 @@ class VariableNamingTest(test_util.TensorFlowTestCase):
     self.assertEqual(mod.child.child.w.name, "badger/badger/badger/mushroom:0")
 
 
-class NameScopeTest(test_util.TensorFlowTestCase):
-
-  @test_util.run_deprecated_v1
-  def test_not_memoized_in_tf1(self):
-    if tf2.enabled():
-      self.skipTest("Requires TF1")
-
-    mod = module.Module(name="name")
-    name_scope_1 = mod.name_scope
-    name_scope_2 = mod.name_scope
-    self.assertIsNot(name_scope_1, name_scope_2)
-    self.assertEqual(name_scope_1.name, name_scope_2.name)
-
-  def test_memoized_in_tf2(self):
-    if not tf2.enabled():
-      self.skipTest("Requires TF2")
-
-    mod = module.Module(name="name")
-    name_scope_1 = mod.name_scope
-    name_scope_2 = mod.name_scope
-    self.assertIs(name_scope_1, name_scope_2)
-
-
-class VariableTrackingTest(test_util.TensorFlowTestCase):
+class VariableTrackingTest(test.TestCase):
 
   def test_variables(self):
     m = RecursiveModule(3)
@@ -266,7 +234,7 @@ class VariableTrackingTest(test_util.TensorFlowTestCase):
     self.assertEqual(m.variables, (mirrored, tpu, aggregating))
 
 
-class ModuleTrackingTest(test_util.TensorFlowTestCase):
+class ModuleTrackingTest(test.TestCase):
 
   def test_submodules(self):
     m = RecursiveModule(3)
@@ -282,7 +250,7 @@ class ModuleTrackingTest(test_util.TensorFlowTestCase):
     self.assertEqual(set(m.submodules), {leaf1, leaf2})
 
 
-class ForwardMethodsTest(test_util.TensorFlowTestCase):
+class ForwardMethodsTest(test.TestCase):
 
   def testFunctionType(self):
     mod = ModuleWithFunctionAnnotatedCall()
@@ -291,20 +259,20 @@ class ForwardMethodsTest(test_util.TensorFlowTestCase):
 
   def testEntersNameScope_call(self):
     mod = ModuleWithFunctionAnnotatedCall()
-    self.assertEqual(self.evaluate(mod.forward()),
+    self.assertEqual(mod.forward().numpy(),
                      b"module_with_function_annotated_call/")
-    self.assertEqual(self.evaluate(mod.forward_ag()),
+    self.assertEqual(mod.forward_ag().numpy(),
                      b"module_with_function_annotated_call/")
 
   def testEntersNameScope_concreteFunction(self):
     mod = ModuleWithFunctionAnnotatedCall()
-    self.assertEqual(self.evaluate(mod.forward.get_concrete_function()()),
+    self.assertEqual(mod.forward.get_concrete_function()().numpy(),
                      b"module_with_function_annotated_call/")
-    self.assertEqual(self.evaluate(mod.forward_ag.get_concrete_function()()),
+    self.assertEqual(mod.forward_ag.get_concrete_function()().numpy(),
                      b"module_with_function_annotated_call/")
 
 
-class AbcTest(test_util.TensorFlowTestCase):
+class AbcTest(test.TestCase):
 
   def testAbstract(self):
     msg = "Can't instantiate .* abstract methods"
@@ -321,8 +289,7 @@ class AbcTest(test_util.TensorFlowTestCase):
 
 def get_name_scope():
   with ops.name_scope("x") as ns:
-    ns = "/".join(ns.split("/")[:-2])
-    return ns + "/" if ns else ""
+    return ns[:-2]
 
 
 class ErrorModuleError(Exception):
@@ -455,7 +422,7 @@ NamedPair = collections.namedtuple("NamedPair", ("first", "second"))
 mk_index_dict = lambda v: dict(enumerate(v))
 
 
-class FlattenTest(parameterized.TestCase, test_util.TensorFlowTestCase):
+class FlattenTest(parameterized.TestCase, test.TestCase):
 
   @parameterized.parameters(lambda v: NamedPair(*v), list, tuple, mk_index_dict)
   def test_flatten(self, container_type):
@@ -581,4 +548,5 @@ class SimpleModule(module.Module):
 is_member = lambda v: isinstance(v, MemberType)
 
 if __name__ == "__main__":
+  v2_compat.enable_v2_behavior()
   test.main()

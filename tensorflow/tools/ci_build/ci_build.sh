@@ -73,20 +73,14 @@ CI_TENSORFLOW_SUBMODULE_PATH="${CI_TENSORFLOW_SUBMODULE_PATH:-.}"
 CI_COMMAND_PREFIX=("${CI_COMMAND_PREFIX[@]:-${CI_TENSORFLOW_SUBMODULE_PATH}/tensorflow/tools/ci_build/builds/with_the_same_user "\
 "${CI_TENSORFLOW_SUBMODULE_PATH}/tensorflow/tools/ci_build/builds/configured ${CONTAINER_TYPE}}")
 
-# cmake (CPU) and micro builds do not require configuration.
-if [[ "${CONTAINER_TYPE}" == "cmake" ]] || [[ "${CONTAINER_TYPE}" == "micro" ]]; then
+# cmake (CPU) builds do not require configuration.
+if [[ "${CONTAINER_TYPE}" == "cmake" ]]; then
   CI_COMMAND_PREFIX=("")
 fi
 
 # Use nvidia-docker if the container is GPU.
 if [[ "${CONTAINER_TYPE}" == gpu* ]]; then
   DOCKER_BINARY="nvidia-docker"
-  if [[ -z `which ${DOCKER_BINARY}` ]]; then
-    # No nvidia-docker; fall back on docker to allow build operations that
-    # require CUDA but don't require a GPU to run.
-    echo "Warning: nvidia-docker not found in PATH. Falling back on 'docker'."
-    DOCKER_BINARY="docker"
-  fi
 else
   DOCKER_BINARY="docker"
 fi

@@ -1,4 +1,4 @@
-package(licenses = ["notice"])
+licenses(["notice"])
 
 exports_files(["LICENSE"])
 

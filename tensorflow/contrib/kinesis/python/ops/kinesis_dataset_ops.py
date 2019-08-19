@@ -86,5 +86,5 @@ class KinesisDataset(dataset_ops.DatasetSource):
         self._stream, self._shard, self._read_indefinitely, self._interval)
 
   @property
-  def element_spec(self):
+  def _element_structure(self):
     return structure.TensorStructure(dtypes.string, [])

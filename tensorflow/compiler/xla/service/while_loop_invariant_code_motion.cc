@@ -219,19 +219,18 @@ WhileLoopInvariantCodeMotion::TryHoistingInvariantInstructionsFromWhileBody(
 
       for (auto* operand : instruction->operands()) {
         ShapeUtil::ForEachSubshape(
-            operand->shape(), [&input_size, this](const Shape& subshape,
-                                                  const ShapeIndex& /*index*/) {
+            operand->shape(),
+            [&input_size](const Shape& subshape, const ShapeIndex& /*index*/) {
               if (subshape.IsArray()) {
-                input_size += shape_size_function_(subshape);
+                input_size += ShapeUtil::ByteSizeOfElements(subshape);
               }
             });
       }
       ShapeUtil::ForEachSubshape(
           instruction->shape(),
-          [&output_size, this](const Shape& subshape,
-                               const ShapeIndex& /*index*/) {
+          [&output_size](const Shape& subshape, const ShapeIndex& /*index*/) {
             if (subshape.IsArray()) {
-              output_size += shape_size_function_(subshape);
+              output_size += ShapeUtil::ByteSizeOfElements(subshape);
             }
           });
 

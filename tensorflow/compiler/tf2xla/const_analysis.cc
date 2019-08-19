@@ -131,7 +131,7 @@ Status GetCompileTimeConstInputs(const NodeDef& node, const OpKernel* op_kernel,
       }
     }
     return Status::OK();
-  } else if (node.op() == "If" || node.op() == "StatelessIf") {
+  } else if (node.op() == "If") {
     const FunctionBody* fthen = nullptr;
     const FunctionBody* felse = nullptr;
     TF_RETURN_IF_ERROR(

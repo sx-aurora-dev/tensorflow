@@ -17,7 +17,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from tensorflow.python.compat import compat
 from tensorflow.python.data.experimental.ops import random_ops
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.ops import readers
@@ -120,32 +119,25 @@ class _DirectedInterleaveDataset(dataset_ops.Dataset):
               nest.flatten(dataset_ops.get_legacy_output_shapes(data_input)))
       ])
 
-    self._element_spec = structure.convert_legacy_structure(
+    self._structure = structure.convert_legacy_structure(
         first_output_types, output_shapes, first_output_classes)
     super(_DirectedInterleaveDataset, self).__init__()
 
   def _as_variant_tensor(self):
     # pylint: disable=protected-access
-    if compat.forward_compatible(2019, 8, 3):
-      return (
-          gen_experimental_dataset_ops.directed_interleave_dataset(
-              self._selector_input._variant_tensor,
-              [data_input._variant_tensor for data_input in self._data_inputs],
-              **self._flat_structure))
-    else:
-      return (
-          gen_experimental_dataset_ops.experimental_directed_interleave_dataset(
-              self._selector_input._variant_tensor,
-              [data_input._variant_tensor for data_input in self._data_inputs],
-              **self._flat_structure))
+    return (
+        gen_experimental_dataset_ops.experimental_directed_interleave_dataset(
+            self._selector_input._variant_tensor,
+            [data_input._variant_tensor for data_input in self._data_inputs],
+            **dataset_ops.flat_structure(self)))
     # pylint: enable=protected-access
 
   def _inputs(self):
     return [self._selector_input] + self._data_inputs
 
   @property
-  def element_spec(self):
-    return self._element_spec
+  def _element_structure(self):
+    return self._structure
 
 
 @tf_export("data.experimental.sample_from_datasets", v1=[])
@@ -275,8 +267,8 @@ def choose_from_datasets_v2(datasets, choice_dataset):
     TypeError: If the `datasets` or `choice_dataset` arguments have the wrong
       type.
   """
-  if not structure.are_compatible(choice_dataset.element_spec,
-                                  structure.TensorStructure(dtypes.int64, [])):
+  if not dataset_ops.get_structure(choice_dataset).is_compatible_with(
+      structure.TensorStructure(dtypes.int64, [])):
     raise TypeError("`choice_dataset` must be a dataset of scalar "
                     "`tf.int64` tensors.")
   return _DirectedInterleaveDataset(choice_dataset, datasets)

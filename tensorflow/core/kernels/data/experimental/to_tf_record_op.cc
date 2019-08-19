@@ -100,8 +100,6 @@ class ToTFRecordOp : public AsyncOpKernel {
   BackgroundWorker background_worker_;
 };
 
-REGISTER_KERNEL_BUILDER(Name("DatasetToTFRecord").Device(DEVICE_CPU),
-                        ToTFRecordOp);
 REGISTER_KERNEL_BUILDER(
     Name("ExperimentalDatasetToTFRecord").Device(DEVICE_CPU), ToTFRecordOp);
 

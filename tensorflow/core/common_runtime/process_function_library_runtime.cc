@@ -37,7 +37,6 @@ limitations under the License.
 #include "tensorflow/core/graph/graph_partition.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
-#include "tensorflow/core/lib/random/random.h"
 #include "tensorflow/core/util/device_name_utils.h"
 #include "tensorflow/core/util/dump_graph.h"
 #include "tensorflow/core/util/ptr_util.h"
@@ -71,18 +70,16 @@ ProcessFunctionLibraryRuntime::ProcessFunctionLibraryRuntime(
       device_mgr_(device_mgr),
       lib_def_(lib_def),
       default_thread_pool_(default_thread_pool),
-      flr_map_(new std::unordered_map<Device*,
-                                      std::unique_ptr<FunctionLibraryRuntime>>),
       next_handle_(0),
       parent_(parent) {
   if (device_mgr == nullptr) {
-    (*flr_map_)[nullptr] = NewFunctionLibraryRuntime(
+    flr_map_[nullptr] = NewFunctionLibraryRuntime(
         nullptr, env, nullptr, graph_def_version, lib_def_, default_thread_pool,
         optimizer_options, custom_kernel_creator, this);
     return;
   }
   for (Device* d : device_mgr->ListDevices()) {
-    (*flr_map_)[d] = NewFunctionLibraryRuntime(
+    flr_map_[d] = NewFunctionLibraryRuntime(
         device_mgr, env, d, graph_def_version, lib_def_, default_thread_pool,
         optimizer_options, custom_kernel_creator, this);
   }
@@ -199,8 +196,8 @@ FunctionLibraryRuntime* ProcessFunctionLibraryRuntime::GetFLR(
       return nullptr;
     }
   }
-  const auto& iter = flr_map_->find(device);
-  if (iter == flr_map_->end()) {
+  const auto& iter = flr_map_.find(device);
+  if (iter == flr_map_.end()) {
     LOG(ERROR) << "Could not find device: " << device_name;
     return nullptr;
   }
@@ -312,7 +309,7 @@ const string* AssignedOrRequestedDeviceName(const Node& node) {
 
 Status SetArgShape(
     const std::unordered_map<int, TensorShape>& input_tensor_shapes,
-    const std::unordered_map<int, DtypeAndPartialTensorShape>&
+    const std::unordered_map<int, std::pair<DataType, TensorShape>>&
         input_resource_dtypes_and_shapes,
     const std::vector<Node*>& arg_nodes) {
   for (Node* n : arg_nodes) {
@@ -334,10 +331,10 @@ Status SetArgShape(
       if (dtype_and_shape_iter != input_resource_dtypes_and_shapes.end()) {
         AttrValue dtype_attr_value;
         dtype_attr_value.mutable_list()->add_type(
-            dtype_and_shape_iter->second.dtype);
+            dtype_and_shape_iter->second.first);
         n->AddAttr("_handle_dtypes", dtype_attr_value);
         TensorShapeProto shape_proto;
-        dtype_and_shape_iter->second.shape.AsProto(&shape_proto);
+        dtype_and_shape_iter->second.second.AsProto(&shape_proto);
         AttrValue shape_attr_value;
         *shape_attr_value.mutable_list()->add_shape() = shape_proto;
         n->AddAttr("_handle_shapes", shape_attr_value);
@@ -709,8 +706,7 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
     if (VLOG_IS_ON(1)) {
       DumpGraphDefToFile(
           strings::StrCat("pflr_after_all_optimization_passes_",
-                          reinterpret_cast<uintptr_t>(optimized_subgraph), "_",
-                          pair.first),
+                          reinterpret_cast<uintptr_t>(optimized_subgraph)),
           optimized_subgraph->ToGraphDefDebug());
     }
   }
@@ -741,10 +737,7 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
   };
 
   int i = 0;
-  // Generate a random function_name to avoid one function reuse the partition
-  // function instantiated by another function.
-  FunctionNameGenerator name_generator(
-      &data->lib_def_, absl::StrCat(function_name, "_", random::New64()));
+  FunctionNameGenerator name_generator(&data->lib_def_, function_name);
   for (const auto& pair : subgraphs) {
     i += 1;
     const string& target = pair.first;
@@ -1039,9 +1032,6 @@ Status ProcessFunctionLibraryRuntime::ReleaseMultiDeviceHandle(
 
 Status ProcessFunctionLibraryRuntime::ReleaseHandle(
     FunctionLibraryRuntime::Handle handle) {
-  // Return directly if all function handles has already been released.
-  if (flr_map_ == nullptr) return Status::OK();
-
   if (IsMultiDevice(handle)) {
     return ReleaseMultiDeviceHandle(handle);
   }
@@ -1167,12 +1157,12 @@ void ProcessFunctionLibraryRuntime::RunInternal(
     return;
   }
   if (parent_ != nullptr) {
+    parent_->Run(opts, local_handle, args, rets, std::move(done));
     auto cleanup_item = absl::make_unique<CleanUpItem>();
     cleanup_item->device = target_device;
     cleanup_item->step_id = opts.step_id;
     cleanup_item->local_handle = local_handle;
     cleanup_items->emplace_back(std::move(cleanup_item));
-    parent_->Run(opts, local_handle, args, rets, std::move(done));
     return;
   }
   done(errors::Internal("Could not find device"));

@@ -249,22 +249,21 @@ class TestGeneratorMethods(ForkRobustTestCase):
 
     def invalid_generator():
       while 1:
-        yield (0, 0, 0, 0)
+        yield 0
 
     model = testing_utils.get_small_mlp(
         num_hidden=3, num_classes=4, input_dim=2)
     model.compile(loss='mse', optimizer=rmsprop.RMSprop(1e-3),
                   run_eagerly=testing_utils.should_run_eagerly())
 
-    err_msg = 'Output of generator should be a tuple of 1 or 2 or 3 elements'
-    with self.assertRaisesRegex(ValueError, err_msg):
+    with self.assertRaises(ValueError):
       model.fit_generator(invalid_generator(),
                           steps_per_epoch=5,
                           epochs=1,
                           verbose=1,
                           max_queue_size=10,
                           use_multiprocessing=False)
-    with self.assertRaisesRegex(ValueError, err_msg):
+    with self.assertRaises(ValueError):
       model.fit_generator(custom_generator(),
                           steps_per_epoch=5,
                           epochs=1,
@@ -273,12 +272,12 @@ class TestGeneratorMethods(ForkRobustTestCase):
                           use_multiprocessing=False,
                           validation_data=invalid_generator(),
                           validation_steps=10)
-    with self.assertRaisesRegex(ValueError, err_msg):
+    with self.assertRaises(AttributeError):
       model.predict_generator(invalid_generator(),
                               steps=5,
                               max_queue_size=10,
                               use_multiprocessing=False)
-    with self.assertRaisesRegex(ValueError, err_msg):
+    with self.assertRaises(ValueError):
       model.evaluate_generator(invalid_generator(),
                                steps=5,
                                max_queue_size=10,

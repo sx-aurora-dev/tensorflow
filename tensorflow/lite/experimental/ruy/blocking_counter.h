@@ -17,8 +17,7 @@ limitations under the License.
 #define TENSORFLOW_LITE_EXPERIMENTAL_RUY_BLOCKING_COUNTER_H_
 
 #include <atomic>
-#include <condition_variable>  // NOLINT(build/c++11)
-#include <mutex>               // NOLINT(build/c++11)
+#include <cstdint>
 
 namespace ruy {
 
@@ -36,7 +35,7 @@ class BlockingCounter {
 
   // Sets/resets the counter; initial_count is the number of
   // decrementing events that the Wait() call will be waiting for.
-  void Reset(int initial_count);
+  void Reset(std::size_t initial_count);
 
   // Decrements the counter; if the counter hits zero, signals
   // the threads that were waiting for that, and returns true.
@@ -49,12 +48,7 @@ class BlockingCounter {
   void Wait();
 
  private:
-  std::atomic<int> count_;
-
-  // The condition variable and mutex allowing to passively wait for count_
-  // to reach the value zero, in the case of longer waits.
-  std::condition_variable count_cond_;
-  std::mutex count_mutex_;
+  std::atomic<std::size_t> count_;
 };
 
 }  // namespace ruy

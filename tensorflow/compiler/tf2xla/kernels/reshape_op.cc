@@ -106,13 +106,10 @@ class ReshapeOp : public XlaOpKernel {
                                         " values, but the requested shape has ",
                                         shape.num_elements()));
 
-    VLOG(1) << "Reshape from " << input_shape.DebugString() << " to "
-            << shape.DebugString() << ", unknown_index=" << unknown_index;
+    VLOG(1) << "Reshape " << input_shape.DebugString() << " "
+            << shape.DebugString();
 
-    // Pass unknown_index to Xla::Reshape as a hint for dynamic shape inference
-    // in XLA to know which output dimension is dynamic.
-    ctx->SetOutput(0, xla::ReshapeWithInferredDimension(
-                          ctx->Input(0), shape.dim_sizes(), unknown_index));
+    ctx->SetOutput(0, xla::Reshape(ctx->Input(0), shape.dim_sizes()));
   }
 };
 

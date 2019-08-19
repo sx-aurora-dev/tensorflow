@@ -160,7 +160,12 @@ inline void Tile(const Array& input_array, const Array& multiples_array,
       break;
   }
 
-  DeleteOpAndArrays(model, op);
+  // Erase input arrays if no longer used after we remove the op.
+  DeleteArrayIfUsedOnce(op->inputs[0], model);
+  DeleteArrayIfUsedOnce(op->inputs[1], model);
+
+  // Erase the operator.
+  model->operators.erase(it);
   *modified = true;
   return ::tensorflow::Status::OK();
 }

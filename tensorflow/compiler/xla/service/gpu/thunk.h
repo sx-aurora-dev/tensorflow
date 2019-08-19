@@ -44,7 +44,6 @@ class Thunk {
  public:
   enum Kind {
     kCholesky,
-    kCollectivePermute,
     kConditional,
     kConvolution,
     kCopy,
@@ -60,7 +59,6 @@ class Thunk {
     kMemzero,
     kNcclAllReduce,
     kOutfeed,
-    kReplicaId,
     kSequential,
     kTriangularSolve,
     kTuple,

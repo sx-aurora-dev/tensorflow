@@ -74,8 +74,7 @@ namespace profiling {
 //
 class BufferedProfiler : public tflite::Profiler {
  public:
-  explicit BufferedProfiler(uint32_t max_num_entries)
-      : buffer_(max_num_entries, false) {}
+  BufferedProfiler() : buffer_(1024, false) {}
 
   uint32_t BeginEvent(const char* tag, EventType event_type,
                       uint32_t event_metadata) override {

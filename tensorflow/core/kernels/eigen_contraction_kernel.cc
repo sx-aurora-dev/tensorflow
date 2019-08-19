@@ -36,12 +36,9 @@ namespace internal {
 // TODO(ezhulenev): This is a temporary workaround for disabling custom kernels
 // at runtime in tests. We should always rely on compile time flags for that.
 // Example: ... --test_env=TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL=false //test
-EIGEN_DEVICE_FUNC EIGEN_DONT_INLINE bool UseCustomContractionKernels() {
+bool UseCustomContractionKernels() {
   static bool use_custom_contraction_kernel = true;
 
-// This subroutine should not be used in GPU. In case it is, a custom kernel
-// should always be used
-#if !defined __NVCC__ && !defined __HIP_DEVICE_COMPILE__
   static std::once_flag initialized;
   std::call_once(initialized, [&] {
     char* flag = std::getenv("TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL");
@@ -49,7 +46,6 @@ EIGEN_DEVICE_FUNC EIGEN_DONT_INLINE bool UseCustomContractionKernels() {
       use_custom_contraction_kernel = false;
     }
   });
-#endif
 
   return use_custom_contraction_kernel;
 }

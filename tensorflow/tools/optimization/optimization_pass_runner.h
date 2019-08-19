@@ -30,7 +30,9 @@ namespace tensorflow {
 // to test individual Tensorflow Optimization passes.
 class OptimizationPassRunner {
  public:
-  explicit OptimizationPassRunner() : jit_level_(OptimizerOptions::DEFAULT) {}
+  explicit OptimizationPassRunner()
+      : jit_level_(OptimizerOptions::GlobalJitLevel::
+                       OptimizerOptions_GlobalJitLevel_DEFAULT) {}
 
   // Increasing the Jit level will cause XLA to compile parts of the tensorflow
   // graph that it is able to.

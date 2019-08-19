@@ -514,8 +514,9 @@ def make_vjp(f, params=None, persistent=True):
     try:
       sources = []
       args = [
-          ops.convert_to_tensor(arg) if i in parameter_positions else arg
-          for i, arg in enumerate(args)
+          ops.convert_to_tensor(args[i])
+          if i in parameter_positions else args[i]
+          for i in range(len(args))
       ]
       args = _ensure_unique_tensor_objects(parameter_positions, args)
       for i in parameter_positions:
@@ -1044,12 +1045,9 @@ class GradientTape(object):
         vectorization in such cases.
 
     Returns:
-      A list or nested structure of Tensors (or None), one for each element in
-      `sources`. Returned structure is the same as the structure of `sources`.
-      Note if any gradient is sparse (IndexedSlices), jacobian function
-      currently makes it dense and returns a Tensor instead. This may change in
-      the future.
-
+      a list or nested structure of Tensors (or IndexedSlices, or None),
+      one for each element in `sources`. Returned structure is the same as
+      the structure of `sources`.
 
     Raises:
       RuntimeError: If called on a non-persistent tape with eager execution

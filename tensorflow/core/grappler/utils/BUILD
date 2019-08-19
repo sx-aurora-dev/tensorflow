@@ -1,11 +1,11 @@
+package(
+    licenses = ["notice"],  # Apache 2.0
+)
+
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 load(
     "//tensorflow/core:platform/default/build_config.bzl",
     "tf_protos_grappler",
-)
-
-package(
-    licenses = ["notice"],  # Apache 2.0
 )
 
 cc_library(
@@ -138,7 +138,6 @@ cc_library(
     hdrs = ["grappler_test.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/cc:scope",
         "//tensorflow/core:all_kernels",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:direct_session",
@@ -150,7 +149,6 @@ cc_library(
         "//tensorflow/core/grappler:grappler_item",
         "//tensorflow/core/grappler:utils",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -178,7 +176,7 @@ cc_library(
     hdrs = ["functions.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/core:core_cpu_base_no_ops",
+        "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
         "//tensorflow/core:framework_internal",
         "//tensorflow/core:lib",

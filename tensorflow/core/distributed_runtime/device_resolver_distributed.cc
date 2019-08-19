@@ -23,15 +23,16 @@ DeviceResolverDistributed::DeviceResolverDistributed(
     const string& task_name)
     : dev_mgr_(dev_mgr), worker_cache_(worker_cache), task_name_(task_name) {}
 
-void DeviceResolverDistributed::GetDeviceAttributesAsync(
-    const string& device, const string& task, DeviceAttributes* attributes,
-    const StatusCallback& done) {
+void DeviceResolverDistributed::GetLocalityAsync(const string& device,
+                                                 const string& task,
+                                                 DeviceLocality* locality,
+                                                 const StatusCallback& done) {
   if (task.empty() || task == task_name_) {
     // Device is local to this task.
     Device* dev;
     Status s = dev_mgr_->LookupDevice(device, &dev);
     if (s.ok()) {
-      *attributes = dev->attributes();
+      *locality = dev->attributes().locality();
     }
     done(s);
     return;
@@ -42,7 +43,7 @@ void DeviceResolverDistributed::GetDeviceAttributesAsync(
       mutex_lock l(mu_);
       auto it = attr_table_.find(device);
       if (it != attr_table_.end()) {
-        *attributes = it->second;
+        *locality = it->second.locality();
         found = true;
       }
     }
@@ -54,38 +55,39 @@ void DeviceResolverDistributed::GetDeviceAttributesAsync(
   // Device is remote and no cache entry was found.  Refresh the cache
   // then retry the lookup.
   RefreshRemoteAttributes(
-      device, task, [this, device, task, attributes, done](const Status& s) {
+      device, task, [this, device, task, locality, done](const Status& s) {
         if (!s.ok()) {
           done(s);
         } else {
-          GetDeviceAttributesAsync(device, task, attributes, done);
+          GetLocalityAsync(device, task, locality, done);
         }
       });
 }
 
-void DeviceResolverDistributed::GetAllDeviceAttributesAsync(
-    const std::vector<string>& devices, const std::vector<string>& tasks,
-    std::vector<DeviceAttributes>* attributes, const StatusCallback& done) {
-  attributes->clear();
-  GetAllDeviceAttributesRecursive(devices, tasks, attributes, done);
+void DeviceResolverDistributed::GetDeviceLocalitiesAsync(
+    const CollInstanceParams& inst_params,
+    std::vector<DeviceLocality>* localities, const StatusCallback& done) {
+  localities->clear();
+  GetDeviceLocalitiesRecursive(inst_params, localities, done);
 }
 
-void DeviceResolverDistributed::GetAllDeviceAttributesRecursive(
-    const std::vector<string>& devices, const std::vector<string>& tasks,
-    std::vector<DeviceAttributes>* attributes, const StatusCallback& done) {
-  size_t i = attributes->size();
-  if (i < devices.size()) {
-    attributes->push_back(DeviceAttributes());
-    GetDeviceAttributesAsync(
-        devices[i], tasks[i], &attributes->back(),
-        [this, &devices, &tasks, attributes, done](const Status& s) {
-          if (!s.ok()) {
-            done(s);
-            return;
-          } else {
-            GetAllDeviceAttributesRecursive(devices, tasks, attributes, done);
-          }
-        });
+void DeviceResolverDistributed::GetDeviceLocalitiesRecursive(
+    const CollInstanceParams& inst_params,
+    std::vector<DeviceLocality>* localities, const StatusCallback& done) {
+  size_t i = localities->size();
+  if (i < inst_params.device_names.size()) {
+    localities->push_back(DeviceLocality());
+    GetLocalityAsync(inst_params.device_names[i], inst_params.task_names[i],
+                     &localities->back(),
+                     [this, &inst_params, localities, done](const Status& s) {
+                       if (!s.ok()) {
+                         done(s);
+                         return;
+                       } else {
+                         GetDeviceLocalitiesRecursive(inst_params, localities,
+                                                      done);
+                       }
+                     });
   } else {
     done(Status::OK());
   }
@@ -95,7 +97,7 @@ void DeviceResolverDistributed::RefreshRemoteAttributes(
     const string& device, const string& task, const StatusCallback& done) {
   GetStatusRequest* req = new GetStatusRequest;
   GetStatusResponse* resp = new GetStatusResponse;
-  WorkerInterface* worker = worker_cache_->GetOrCreateWorker(task);
+  WorkerInterface* worker = worker_cache_->CreateWorker(task);
   CHECK(worker) << "Failed to get worker for " << task;
   worker->GetStatusAsync(
       req, resp, [this, device, task, req, resp, worker, done](Status s) {
@@ -126,11 +128,6 @@ void DeviceResolverDistributed::ClearTask(const string& task) {
   for (const string& key : task_keys) {
     attr_table_.erase(key);
   }
-}
-
-void DeviceResolverDistributed::ClearCache() {
-  mutex_lock l(mu_);
-  attr_table_.clear();
 }
 
 }  // namespace tensorflow

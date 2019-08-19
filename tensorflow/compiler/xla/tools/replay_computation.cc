@@ -86,7 +86,8 @@ namespace {
 // Command-line opts to this tool.  See main() for descriptions of these
 // fields.
 struct Options {
-  Options() : intra_op_thread_pool_size(tensorflow::port::MaxParallelism()) {}
+  Options()
+      : intra_op_thread_pool_size(tensorflow::port::NumSchedulableCPUs()) {}
 
   bool NeedsRealData() const { return !use_fake_data && !compile_only; }
 
@@ -391,7 +392,7 @@ StatusOr<HloSnapshot> ParseSingleHloFile(const string& filename,
   HloModuleConfig config;
   config.set_debug_options(GetDebugOptionsFromFlags());
   StatusOr<std::unique_ptr<HloModule>> module =
-      ParseAndReturnUnverifiedModule(contents, config);
+      ParseHloString(contents, config);
   if (module.ok()) {
     *snapshot.mutable_hlo()->mutable_hlo_module() =
         module.ValueOrDie()->ToProto();

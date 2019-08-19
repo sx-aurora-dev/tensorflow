@@ -1,5 +1,3 @@
-load("//tensorflow:tensorflow.bzl", "py_test")
-
 package(
     licenses = ["notice"],  # Apache 2.0
 )
@@ -7,6 +5,8 @@ package(
 exports_files([
     "LICENSE",
 ])
+
+load("//tensorflow:tensorflow.bzl", "py_test")
 
 py_test(
     name = "summary_ops_test",

@@ -312,8 +312,6 @@ class DenseToSparseBatchDatasetOp : public UnaryDatasetOpKernel {
   };
 };
 
-REGISTER_KERNEL_BUILDER(Name("DenseToSparseBatchDataset").Device(DEVICE_CPU),
-                        DenseToSparseBatchDatasetOp);
 REGISTER_KERNEL_BUILDER(
     Name("ExperimentalDenseToSparseBatchDataset").Device(DEVICE_CPU),
     DenseToSparseBatchDatasetOp);

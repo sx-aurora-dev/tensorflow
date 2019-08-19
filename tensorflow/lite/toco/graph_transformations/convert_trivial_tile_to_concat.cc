@@ -86,8 +86,10 @@ namespace toco {
   }
 
   // Replace the operator in the graph.
-  model->operators.emplace(tile_it, concat_op);
-  DeleteOpAndArrays(model, tile_op);
+  const auto concat_it = model->operators.emplace(tile_it, concat_op);
+  tile_it = concat_it + 1;
+  CHECK_EQ(tile_it->get(), tile_op);
+  model->operators.erase(tile_it);
 
   *modified = true;
   return ::tensorflow::Status::OK();

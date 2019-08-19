@@ -31,11 +31,9 @@ void RunResolveSum(const std::vector<float>& input,
                    const std::vector<int>& output_shape,
                    const std::vector<float>& expected_output) {
   Model model;
-  const std::string output_name("output");
-  model.flags.add_output_arrays(output_name);
   Array& input0 = model.GetOrCreateArray("input0");
   Array& input1 = model.GetOrCreateArray("input1");
-  Array& output = model.GetOrCreateArray(output_name);
+  Array& output = model.GetOrCreateArray("output");
 
   *input0.mutable_shape()->mutable_dims() = input_shape;
   input0.data_type = ArrayDataType::kFloat;
@@ -50,7 +48,7 @@ void RunResolveSum(const std::vector<float>& input,
   auto sum_op = absl::make_unique<TensorFlowSumOperator>();
   sum_op->keep_dims = true;
   sum_op->inputs = {"input0", "input1"};
-  sum_op->outputs = {output_name};
+  sum_op->outputs = {"output"};
   model.operators.push_back(std::move(sum_op));
   bool modified;
   ASSERT_TRUE(ResolveConstantUnaryOperator().Run(&model, 0, &modified).ok());

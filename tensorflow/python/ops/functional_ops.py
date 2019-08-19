@@ -56,9 +56,8 @@ def foldl(fn,
   of elements from first to last. The elements are made of the tensors
   unpacked from `elems` on dimension 0. The callable fn takes two tensors as
   arguments. The first argument is the accumulated value computed from the
-  preceding invocation of fn, and the second is the value at the current
-  position of `elems`. If `initializer` is None, `elems` must contain at least
-  one element, and its first element is used as the initializer.
+  preceding invocation of fn. If `initializer` is None, `elems` must contain
+  at least one element, and its first element is used as the initializer.
 
   Suppose that `elems` is unpacked into `values`, a list of tensors. The shape
   of the result tensor is fn(initializer, values[0]).shape`.
@@ -173,9 +172,8 @@ def foldr(fn,
   of elements from last to first. The elements are made of the tensors
   unpacked from `elems`. The callable fn takes two tensors as arguments.
   The first argument is the accumulated value computed from the preceding
-  invocation of fn, and the second is the value at the current position of
-  `elems`. If `initializer` is None, `elems` must contain at least one element,
-  and its first element is used as the initializer.
+  invocation of fn. If `initializer` is None, `elems` must contain at least
+  one element, and its first element is used as the initializer.
 
   Suppose that `elems` is unpacked into `values`, a list of tensors. The shape
   of the result tensor is `fn(initializer, values[0]).shape`.
@@ -293,9 +291,8 @@ def scan(fn,
   sequence of elements from first to last. The elements are made of the tensors
   unpacked from `elems` on dimension 0. The callable fn takes two tensors as
   arguments. The first argument is the accumulated value computed from the
-  preceding invocation of fn, and the second is the value at the current
-  position of `elems`. If `initializer` is None, `elems` must contain at least
-  one element, and its first element is used as the initializer.
+  preceding invocation of fn. If `initializer` is None, `elems` must contain
+  at least one element, and its first element is used as the initializer.
 
   Suppose that `elems` is unpacked into `values`, a list of tensors. The shape
   of the result tensor is `[len(values)] + fn(initializer, values[0]).shape`.

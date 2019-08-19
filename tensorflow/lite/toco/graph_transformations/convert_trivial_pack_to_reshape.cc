@@ -77,8 +77,10 @@ namespace toco {
   }
 
   // Replace the operator in the graph.
-  model->operators.emplace(pack_it, reshape_op);
-  DeleteOpAndArrays(model, pack_op);
+  const auto reshape_it = model->operators.emplace(pack_it, reshape_op);
+  pack_it = reshape_it + 1;
+  CHECK_EQ(pack_it->get(), pack_op);
+  model->operators.erase(pack_it);
 
   *modified = true;
   return ::tensorflow::Status::OK();

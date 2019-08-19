@@ -30,12 +30,6 @@ limitations under the License.
 namespace tensorflow {
 class DeviceMgr;
 
-namespace thread {
-
-struct ThreadPoolOptions;
-
-}
-
 /// \brief A Session instance lets a caller drive a TensorFlow graph
 /// computation.
 ///
@@ -97,9 +91,6 @@ class Session {
   /// graph. To re-use the session with a different graph, the caller
   /// must Close() the session first.
   virtual Status Create(const GraphDef& graph) = 0;
-#ifndef SWIG
-  virtual Status Create(GraphDef&& graph) { return Create(graph); }
-#endif
 
   /// \brief Adds operations to the graph that is already registered with the
   /// Session.
@@ -107,9 +98,6 @@ class Session {
   /// The names of new operations in "graph" must not exist in the
   /// graph that is already registered.
   virtual Status Extend(const GraphDef& graph) = 0;
-#ifndef SWIG
-  virtual Status Extend(GraphDef&& graph) { return Extend(graph); }
-#endif
 
   /// \brief Runs the graph with the provided input tensors and fills
   /// `outputs` for the endpoints specified in `output_tensor_names`.
@@ -148,14 +136,6 @@ class Session {
         "Extend(const RunOptions& run_options, const GraphDef& graph) is not "
         "supported for this session.");
   }
-#ifndef SWIG
-  virtual Status Create(const RunOptions& run_options, GraphDef&& graph) {
-    return Create(run_options, graph);
-  }
-  virtual Status Extend(const RunOptions& run_options, GraphDef&& graph) {
-    return Extend(run_options, graph);
-  }
-#endif
   virtual Status Close(const RunOptions& run_options) {
     return errors::Unimplemented(
         "Close(const RunOptions& run_options) is not supported for this "
@@ -241,21 +221,6 @@ class Session {
                              RunMetadata* run_metadata) {
     return errors::Unimplemented(
         "RunCallable is not supported for this session.");
-  }
-
-  /// \brief Invokes the subgraph named by `handle` with the given options and
-  /// input tensors.
-  ///
-  /// The order of tensors in `feed_tensors` must and `fetch_tensors` will
-  /// match the order of names in `CallableOptions::feed()` and
-  /// `CallableOptions::fetch()` when this subgraph was created.
-  /// NOTE: This API is still experimental and may change.
-  virtual Status RunCallable(
-      CallableHandle handle, const std::vector<Tensor>& feed_tensors,
-      std::vector<Tensor>* fetch_tensors, RunMetadata* run_metadata,
-      const thread::ThreadPoolOptions& threadpool_options) {
-    return errors::Unimplemented(
-        "RunCallable with threadpool is not supported for this session.");
   }
 
   /// \brief Releases resources associated with the given `handle` in this

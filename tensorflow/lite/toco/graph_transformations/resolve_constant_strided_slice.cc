@@ -163,7 +163,8 @@ void StridedSlice(StridedSliceOperator const& op, Array const& input_array,
       break;
   }
 
-  DeleteOpAndArrays(model, op);
+  DeleteOpAndArraysIfUnused(model, it->get());
+
   *modified = true;
   return ::tensorflow::Status::OK();
 }

@@ -18,30 +18,30 @@ limitations under the License.
 
 namespace tensorflow {
 
-void DeviceResolverLocal::GetAllDeviceAttributesAsync(
-    const std::vector<string>& devices, const std::vector<string>& tasks,
-    std::vector<DeviceAttributes>* attributes, const StatusCallback& done) {
-  attributes->clear();
-  for (const string& device_name : devices) {
+void DeviceResolverLocal::GetDeviceLocalitiesAsync(
+    const CollInstanceParams& ci_params,
+    std::vector<DeviceLocality>* localities, const StatusCallback& done) {
+  localities->clear();
+  for (const string& device_name : ci_params.device_names) {
     Device* dev;
     Status s = dev_mgr_->LookupDevice(device_name, &dev);
     if (!s.ok()) {
       done(s);
       return;
     }
-    attributes->push_back(dev->attributes());
+    localities->push_back(dev->attributes().locality());
   }
   done(Status::OK());
 }
 
-void DeviceResolverLocal::GetDeviceAttributesAsync(const string& device,
-                                                   const string& task,
-                                                   DeviceAttributes* attributes,
-                                                   const StatusCallback& done) {
+void DeviceResolverLocal::GetLocalityAsync(const string& device,
+                                           const string& task,
+                                           DeviceLocality* locality,
+                                           const StatusCallback& done) {
   Device* dev;
   Status s = dev_mgr_->LookupDevice(device, &dev);
   if (s.ok()) {
-    *attributes = dev->attributes();
+    *locality = dev->attributes().locality();
   }
   done(s);
 }

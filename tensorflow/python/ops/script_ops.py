@@ -104,11 +104,8 @@ class EagerFunc(object):
     """Passes `args` to `self._func`, which is executed eagerly."""
 
     with context.eager_mode(), backprop.GradientTape() as tape:
-      # Only watch tensors with a floating dtype.
       for tensor in args:
-        for t in nest.flatten(tensor):
-          if t.dtype.is_floating:
-            tape.watch(t)
+        tape.watch(tensor)
       ret = self._func(*args)
       # Use tf.identity to copy the returned tensors to device if neccesary.
       with ops.device(device):

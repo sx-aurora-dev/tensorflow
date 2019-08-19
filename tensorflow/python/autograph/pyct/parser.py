@@ -50,7 +50,7 @@ def parse_entity(entity, future_features):
     generate the AST (including any prefixes that this function may have added).
   """
   try:
-    original_source = inspect_utils.getimmediatesource(entity)
+    source = inspect_utils.getimmediatesource(entity)
   except (IOError, OSError) as e:
     raise ValueError(
         'Unable to locate the source code of {}. Note that functions defined'
@@ -63,12 +63,12 @@ def parse_entity(entity, future_features):
   def raise_parse_failure(comment):
     raise ValueError(
         'Failed to parse source code of {}, which Python reported as:\n{}\n'
-        '{}'.format(entity, original_source, comment))
+        '{}'.format(entity, source, comment))
 
   # Comments and multiline strings can appear at arbitrary indentation levels,
   # causing textwrap.dedent to not correctly dedent source code.
   # TODO(b/115884650): Automatic handling of comments/multiline strings.
-  source = textwrap.dedent(original_source)
+  source = textwrap.dedent(source)
 
   future_statements = tuple(
       'from __future__ import {}'.format(name) for name in future_features)
@@ -119,7 +119,8 @@ def parse_entity(entity, future_features):
     except SyntaxError as e:
       raise_parse_failure(
           'If this is a lambda function, the error may be avoided by creating'
-          ' the lambda in a standalone statement.')
+          ' the lambda in a standalone statement. Tried to strip down the'
+          ' source to:\n{}\nBut that did not work.'.format(source))
 
 
 # TODO(mdan): This should take futures as input instead.

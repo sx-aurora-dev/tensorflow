@@ -308,21 +308,9 @@ class DistributionTestBase(test.TestCase):
 
   def _test_input_fn_iterable(
       self, strategy, input_fn, expected_values, ignore_order=False):
-    if context.executing_eagerly():
-      self._test_input_fn_iterable_in_eager_mode(
-          strategy, input_fn, expected_values, ignore_order=False)
-    else:
-      self._test_input_fn_iterable_in_graph_mode(
-          strategy, input_fn, expected_values, ignore_order=False)
+    if not context.executing_eagerly():
+      self.skipTest("Only supported with eager execution.")
 
-  def _test_input_fn_iterable_in_graph_mode(
-      self, strategy, input_fn, expected_values, ignore_order=False):
-    with self.assertRaisesRegexp(RuntimeError, "only supported when eager "
-                                 "execution is enabled"):
-      strategy.experimental_distribute_datasets_from_function(input_fn)
-
-  def _test_input_fn_iterable_in_eager_mode(
-      self, strategy, input_fn, expected_values, ignore_order=False):
     assert_same = self.assertCountEqual if ignore_order else self.assertEqual
 
     iterable = strategy.experimental_distribute_datasets_from_function(input_fn)
@@ -439,21 +427,21 @@ class DistributionTestBase(test.TestCase):
         run_and_concatenate(strategy, i)
 
   def _test_trainable_variable(self, strategy):
-    for cls in [variables.VariableV1, variables.Variable]:
-      with strategy.scope():
-        v1 = cls(1.0)
-        self.assertEqual(True, v1.trainable)
+    with strategy.scope():
+      v1 = variables.Variable(1.0)
+      self.assertEqual(True, v1.trainable)
 
-        v2 = cls(1.0, synchronization=variables.VariableSynchronization.ON_READ)
-        self.assertEqual(False, v2.trainable)
+      v2 = variables.Variable(
+          1.0, synchronization=variables.VariableSynchronization.ON_READ)
+      self.assertEqual(False, v2.trainable)
 
-        v3 = cls(1.0, synchronization=variables.VariableSynchronization.ON_READ,
-                 trainable=True)
-        self.assertEqual(True, v3.trainable)
-
-        v4 = cls(1.0, synchronization=variables.VariableSynchronization.ON_READ,
-                 trainable=False)
-        self.assertEqual(False, v4.trainable)
+      with self.assertRaisesRegexp(
+          ValueError,
+          "Synchronization value can be set to VariableSynchronization.ON_READ "
+          "only for non-trainable variables"):
+        _ = variables.Variable(
+            1.0, trainable=True,
+            synchronization=variables.VariableSynchronization.ON_READ)
 
 
 class OneDeviceDistributionTestBase(test.TestCase):

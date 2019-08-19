@@ -1,11 +1,6 @@
 # Description:
 #    Libraries for helping construct LLVM IR for XLA backends.
 
-load(
-    "//tensorflow:tensorflow.bzl",
-    "tf_cc_test",
-)
-
 package(
     default_visibility = [":friends"],
     licenses = ["notice"],  # Apache 2.0
@@ -25,6 +20,11 @@ filegroup(
         "**/*.cc",
         "**/*.h",
     ]),
+)
+
+load(
+    "//tensorflow:tensorflow.bzl",
+    "tf_cc_test",
 )
 
 cc_library(

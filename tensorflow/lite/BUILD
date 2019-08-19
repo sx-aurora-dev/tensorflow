@@ -1,11 +1,11 @@
-load("//tensorflow:tensorflow.bzl", "if_not_windows", "tf_cc_test")
-load("//tensorflow/lite:build_def.bzl", "tflite_cc_shared_object", "tflite_copts")
-load("//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite")
-
 package(
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],  # Apache 2.0
 )
+
+load("//tensorflow:tensorflow.bzl", "if_not_windows", "tf_cc_test")
+load("//tensorflow/lite:build_def.bzl", "tflite_cc_shared_object", "tflite_copts")
+load("//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite")
 
 exports_files(glob([
     "testdata/*.bin",
@@ -144,10 +144,18 @@ cc_library(
     copts = TFLITE_DEFAULT_COPTS,
 )
 
+# TODO(ahentz): investigate dependency on gemm_support requiring usage of tf_copts.
 cc_library(
-    name = "allocation",
+    name = "framework",
     srcs = [
         "allocation.cc",
+        "core/subgraph.cc",
+        "graph_info.cc",
+        "interpreter.cc",
+        "model.cc",
+        "mutable_op_resolver.cc",
+        "optional_debug_tools.cc",
+        "stderr_reporter.cc",
     ] + select({
         "//tensorflow:android": [
             "mmap_allocation.cc",
@@ -159,30 +167,6 @@ cc_library(
             "mmap_allocation.cc",
         ],
     }),
-    hdrs = [
-        "allocation.h",
-    ],
-    copts = TFLITE_DEFAULT_COPTS,
-    deps = [
-        ":simple_memory_arena",
-        ":string",
-        "//tensorflow/lite/c:c_api_internal",
-        "//tensorflow/lite/core/api",
-    ],
-)
-
-# TODO(ahentz): investigate dependency on gemm_support requiring usage of tf_copts.
-cc_library(
-    name = "framework",
-    srcs = [
-        "core/subgraph.cc",
-        "graph_info.cc",
-        "interpreter.cc",
-        "model.cc",
-        "mutable_op_resolver.cc",
-        "optional_debug_tools.cc",
-        "stderr_reporter.cc",
-    ],
     hdrs = [
         "allocation.h",
         "context.h",
@@ -199,7 +183,6 @@ cc_library(
     ],
     copts = tflite_copts() + TFLITE_DEFAULT_COPTS,
     deps = [
-        ":allocation",
         ":arena_planner",
         ":graph_info",
         ":memory_planner",
@@ -265,7 +248,6 @@ cc_test(
         "//tensorflow/lite/core/api",
         "//tensorflow/lite/kernels:builtin_ops",
         "//tensorflow/lite/kernels:kernel_util",
-        "//tensorflow/lite/kernels/internal:compatibility",
         "//tensorflow/lite/kernels/internal:tensor_utils",
         "//tensorflow/lite/schema:schema_fbs",
         "//tensorflow/lite/testing:util",

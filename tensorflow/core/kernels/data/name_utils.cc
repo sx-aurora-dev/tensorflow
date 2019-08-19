@@ -14,61 +14,57 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/kernels/data/name_utils.h"
 
-#include "absl/strings/str_join.h"
+#include "tensorflow/core/platform/logging.h"
 
 namespace tensorflow {
 namespace data {
 namespace name_utils {
 
 ABSL_CONST_INIT const char kDelimiter[] = "::";
-ABSL_CONST_INIT const char kDefaultDatasetDebugStringPrefix[] = "";
-
-constexpr char kDataset[] = "Dataset";
-constexpr char kOp[] = "Op";
-constexpr char kVersion[] = "V";
 
 string OpName(const string& dataset_type) {
-  return OpName(dataset_type, OpNameParams());
-}
-
-string OpName(const string& dataset_type, const OpNameParams& params) {
-  if (params.op_version == 1) {
-    return strings::StrCat(dataset_type, kDataset);
+  if (dataset_type == "Concatenate") {
+    return "ConcatenateDataset";
+  } else if (dataset_type == "Filter") {
+    return "FilterDataset";
+  } else if (dataset_type == "FlatMap") {
+    return "FlatMapDataset";
+  } else if (dataset_type == "Generator") {
+    return "GeneratorDataset";
+  } else if (dataset_type == "Interleave") {
+    return "InterleaveDataset";
+  } else if (dataset_type == "Map") {
+    return "MapDataset";
+  } else if (dataset_type == "PaddedBatch") {
+    return "PaddedBatchDataset";
+  } else if (dataset_type == "Prefetch") {
+    return "PrefetchDataset";
+  } else if (dataset_type == "Range") {
+    return "RangeDataset";
   }
-  return strings::StrCat(dataset_type, kDataset, kVersion, params.op_version);
-}
-
-string ArgsToString(const std::vector<string>& args) {
-  if (args.empty()) {
-    return "";
-  }
-  return strings::StrCat("(", absl::StrJoin(args, ", "), ")");
-}
-
-string DatasetDebugString(const string& dataset_type) {
-  return DatasetDebugString(dataset_type, DatasetDebugStringParams());
+  LOG(WARNING) << "Unknown dataset type " << dataset_type << std::endl;
+  return "UnknownDataset";
 }
 
 string DatasetDebugString(const string& dataset_type,
-                          const DatasetDebugStringParams& params) {
-  OpNameParams op_name_params;
-  op_name_params.op_version = params.op_version;
-  string op_name = OpName(dataset_type, op_name_params);
-  return strings::StrCat(op_name, kOp, ArgsToString(params.args), kDelimiter,
-                         params.dataset_prefix, kDataset);
+                          std::initializer_list<StringPiece> args) {
+  if (args.size() == 0) {
+    return strings::StrCat(OpName(dataset_type), "Op", kDelimiter, "Dataset");
+  }
+
+  string debug_str;
+  strings::StrAppend(&debug_str, OpName(dataset_type), "Op(");
+  auto iter = args.begin();
+  while (iter != args.end() - 1) {
+    strings::StrAppend(&debug_str, *iter, ", ");
+    ++iter;
+  }
+  strings::StrAppend(&debug_str, *iter, ")", kDelimiter, "Dataset");
+  return debug_str;
 }
 
 string IteratorPrefix(const string& dataset_type, const string& prefix) {
-  return IteratorPrefix(dataset_type, prefix, IteratorPrefixParams());
-}
-
-string IteratorPrefix(const string& dataset_type, const string& prefix,
-                      const IteratorPrefixParams& params) {
-  if (params.op_version == 1) {
-    return strings::StrCat(prefix, kDelimiter, dataset_type);
-  }
-  return strings::StrCat(prefix, kDelimiter, dataset_type, kVersion,
-                         params.op_version);
+  return strings::StrCat(prefix, kDelimiter, dataset_type);
 }
 
 }  // namespace name_utils

@@ -27,7 +27,6 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/compiler/xla/service/call_graph.h"
 #include "tensorflow/compiler/xla/service/computation_layout.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
@@ -533,9 +532,6 @@ class LayoutAssignment : public HloModulePass {
 
   std::function<bool(const HloInstruction*)>
       instruction_can_change_layout_func_;
-
-  // CallGraph of the module, used to track callsites of each computation.
-  std::unique_ptr<CallGraph> call_graph_;
 };
 
 }  // namespace xla

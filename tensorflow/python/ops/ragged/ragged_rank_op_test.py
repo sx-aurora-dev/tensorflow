@@ -21,11 +21,12 @@ from absl.testing import parameterized
 from tensorflow.python.framework import test_util
 from tensorflow.python.ops.ragged import ragged_array_ops
 from tensorflow.python.ops.ragged import ragged_factory_ops
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import googletest
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class RaggedRankOpTest(test_util.TensorFlowTestCase,
+class RaggedRankOpTest(ragged_test_util.RaggedTensorTestCase,
                        parameterized.TestCase):
 
   @parameterized.parameters([

@@ -98,8 +98,9 @@ namespace toco {
   } else {
     LOG(FATAL) << "Unhandled activation function type";
   }
+  model->EraseArray(ac_op->inputs[0]);
   op->outputs[0] = ac_op->outputs[0];
-  DeleteOpAndArrays(model, ac_op);
+  model->operators.erase(ac_it);
   *modified = true;
   return ::tensorflow::Status::OK();
 }

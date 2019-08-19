@@ -22,7 +22,6 @@ import re
 from tensorflow.python import tf2
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.util import nest
-from tensorflow.python.data.util import structure
 from tensorflow.python.eager import context
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
@@ -30,10 +29,11 @@ from tensorflow.python.framework import sparse_tensor
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import tensor_array_ops
 from tensorflow.python.ops.ragged import ragged_tensor
+from tensorflow.python.ops.ragged import ragged_test_util
 from tensorflow.python.platform import test
 
 
-class DatasetTestBase(test.TestCase):
+class DatasetTestBase(ragged_test_util.RaggedTensorTestCase, test.TestCase):
   """Base class for dataset tests."""
 
   @classmethod
@@ -47,16 +47,13 @@ class DatasetTestBase(test.TestCase):
     with self.assertRaisesRegexp(errors.CancelledError, "was cancelled"):
       self.evaluate(op)
 
-  def assertValuesEqual(self, expected, actual):
-    """Asserts that two values are equal."""
-    if sparse_tensor.is_sparse(expected):
-      self.assertAllEqual(expected.indices, actual.indices)
-      self.assertAllEqual(expected.values, actual.values)
-      self.assertAllEqual(expected.dense_shape, actual.dense_shape)
-    else:
-      self.assertAllEqual(expected, actual)
+  def assertSparseValuesEqual(self, a, b):
+    """Asserts that two SparseTensors/SparseTensorValues are equal."""
+    self.assertAllEqual(a.indices, b.indices)
+    self.assertAllEqual(a.values, b.values)
+    self.assertAllEqual(a.dense_shape, b.dense_shape)
 
-  def getNext(self, dataset, requires_initialization=False, shared_name=None):
+  def getNext(self, dataset, requires_initialization=False):
     """Returns a callable that returns the next element of the dataset.
 
     Example use:
@@ -72,9 +69,6 @@ class DatasetTestBase(test.TestCase):
       requires_initialization: Indicates that when the test is executed in graph
         mode, it should use an initializable iterator to iterate through the
         dataset (e.g. when it contains stateful nodes). Defaults to False.
-      shared_name: (Optional.) If non-empty, the returned iterator will be
-        shared under the given name across multiple sessions that share the same
-        devices (e.g. when using a remote server).
     Returns:
       A callable that returns the next element of `dataset`. Any `TensorArray`
       objects `dataset` outputs are stacked.
@@ -92,7 +86,7 @@ class DatasetTestBase(test.TestCase):
       return ta_wrapper(iterator._next_internal)  # pylint: disable=protected-access
     else:
       if requires_initialization:
-        iterator = dataset_ops.make_initializable_iterator(dataset, shared_name)
+        iterator = dataset_ops.make_initializable_iterator(dataset)
         self.evaluate(iterator.initializer)
       else:
         iterator = dataset_ops.make_one_shot_iterator(dataset)
@@ -110,7 +104,16 @@ class DatasetTestBase(test.TestCase):
       nest.assert_same_structure(result_values[i], expected_values[i])
       for result_value, expected_value in zip(
           nest.flatten(result_values[i]), nest.flatten(expected_values[i])):
-        self.assertValuesEqual(expected_value, result_value)
+        if sparse_tensor.is_sparse(result_value):
+          self.assertSparseValuesEqual(result_value, expected_value)
+        elif ragged_tensor.is_ragged(result_value):
+          self.assertRaggedEqual(result_value, expected_value)
+        else:
+          self.assertAllEqual(
+              result_value,
+              expected_value,
+              msg=("Result value: {}.  Expected value: {}"
+                   .format(result_value, expected_value)))
 
   def assertDatasetProduces(self,
                             dataset,
@@ -178,11 +181,10 @@ class DatasetTestBase(test.TestCase):
 
   def assertDatasetsEqual(self, dataset1, dataset2):
     """Checks that datasets are equal. Supports both graph and eager mode."""
-    self.assertTrue(
-        structure.are_compatible(
-            dataset_ops.get_structure(dataset1),
-            dataset_ops.get_structure(dataset2)))
-
+    self.assertTrue(dataset_ops.get_structure(dataset1).is_compatible_with(
+        dataset_ops.get_structure(dataset2)))
+    self.assertTrue(dataset_ops.get_structure(dataset2).is_compatible_with(
+        dataset_ops.get_structure(dataset1)))
     flattened_types = nest.flatten(
         dataset_ops.get_legacy_output_types(dataset1))
 
@@ -202,8 +204,10 @@ class DatasetTestBase(test.TestCase):
       op2 = nest.flatten(op2)
       assert len(op1) == len(op2)
       for i in range(len(op1)):
-        if sparse_tensor.is_sparse(op1[i]) or ragged_tensor.is_ragged(op1[i]):
-          self.assertValuesEqual(op1[i], op2[i])
+        if sparse_tensor.is_sparse(op1[i]):
+          self.assertSparseValuesEqual(op1[i], op2[i])
+        elif ragged_tensor.is_ragged(op1[i]):
+          self.assertRaggedEqual(op1[i], op2[i])
         elif flattened_types[i] == dtypes.string:
           self.assertAllEqual(op1[i], op2[i])
         else:
@@ -233,30 +237,28 @@ class DatasetTestBase(test.TestCase):
                                    re.escape(expected_message)):
         self.evaluate(next2())
 
-  def structuredDataset(self, dataset_structure, shape=None,
-                        dtype=dtypes.int64):
+  def structuredDataset(self, structure, shape=None, dtype=dtypes.int64):
     """Returns a singleton dataset with the given structure."""
     if shape is None:
       shape = []
-    if dataset_structure is None:
+    if structure is None:
       return dataset_ops.Dataset.from_tensors(
           array_ops.zeros(shape, dtype=dtype))
     else:
       return dataset_ops.Dataset.zip(
           tuple([
               self.structuredDataset(substructure, shape, dtype)
-              for substructure in dataset_structure
+              for substructure in structure
           ]))
 
-  def structuredElement(self, element_structure, shape=None,
-                        dtype=dtypes.int64):
+  def structuredElement(self, structure, shape=None, dtype=dtypes.int64):
     """Returns an element with the given structure."""
     if shape is None:
       shape = []
-    if element_structure is None:
+    if structure is None:
       return array_ops.zeros(shape, dtype=dtype)
     else:
       return tuple([
           self.structuredElement(substructure, shape, dtype)
-          for substructure in element_structure
+          for substructure in structure
       ])

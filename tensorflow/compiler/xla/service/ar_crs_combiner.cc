@@ -319,7 +319,7 @@ void ArCrsCombiner::GroupAllReducesById(HloModule* module) {
       auto maybe_pair = MatchesArCrsPattern(instruction);
       if (maybe_pair) {
         auto pair = *maybe_pair;
-        int64 ar_id = *(instruction->channel_id());
+        int64 ar_id = *(instruction->all_reduce_id());
         if (discarded_ar_ids.find(ar_id) != discarded_ar_ids.end()) {
           continue;
         }
@@ -365,10 +365,9 @@ void ArCrsCombiner::GroupAllReducesById(HloModule* module) {
 
 void ArCrsCombiner::KeepProvablyEqualInstructionGroups() {
   for (auto it : all_reduce_map_) {
-    auto channel_id = it.first;
-    VLOG(2)
-        << "KeepProvablyEqualInstructionGroups. Checking AllReduce channel id: "
-        << channel_id << "\n";
+    auto all_reduce_id = it.first;
+    VLOG(2) << "KeepProvablyEqualInstructionGroups. Checking ar_id: "
+            << all_reduce_id << "\n";
     auto pairs_vec = it.second;
     CHECK_EQ(pairs_vec.size(), num_spatial_partitions_);
     auto instr_0 = pairs_vec[0].ar;
@@ -379,10 +378,9 @@ void ArCrsCombiner::KeepProvablyEqualInstructionGroups() {
       absl::flat_hash_map<int64, int64> visited_pairs;
       while (true) {
         if (!InstructionsComputeSameValue(next_0, next_i, &visited_pairs)) {
-          all_reduce_map_.erase(channel_id);
-          VLOG(2) << "KeepProvablyEqualInstructionGroups. Erased AllReduce "
-                     "channel id: "
-                  << channel_id << "\n";
+          all_reduce_map_.erase(all_reduce_id);
+          VLOG(2) << "KeepProvablyEqualInstructionGroups. Erased ar_id: "
+                  << all_reduce_id << "\n";
           break;
         }
         if (next_0->IsCrossReplicaAllReduce()) {
@@ -404,7 +402,7 @@ StatusOr<bool> ArCrsCombiner::RewriteGraph() {
     for (auto pair : pairs_vec) {
       auto all_reduce = pair.ar;
       auto parent_computation = all_reduce->parent();
-      auto channel_id = all_reduce->channel_id();
+      auto all_reduce_id = all_reduce->all_reduce_id();
       auto prev = all_reduce->mutable_operand(0);
       auto next = all_reduce->users()[0];
       TF_CHECK_OK(all_reduce->ReplaceUseWith(next, prev));
@@ -449,7 +447,7 @@ StatusOr<bool> ArCrsCombiner::RewriteGraph() {
         next = next->users()[0];
       }
       // The AllReduce and the CRS are combined to an all-core AllReduce.
-      next->set_channel_id(channel_id);
+      next->set_all_reduce_id(all_reduce_id);
     }
   }
   return true;

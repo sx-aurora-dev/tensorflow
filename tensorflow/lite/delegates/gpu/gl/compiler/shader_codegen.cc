@@ -32,8 +32,7 @@ ShaderCodegen::ShaderCodegen(const CompilationOptions& options,
 Status ShaderCodegen::Build(CompiledNodeAttributes attr,
                             ShaderCode* shader_code) const {
   ParameterAccessor parameters(options_.inline_parameters);
-  ObjectAccessor objects(gpu_type_ == GpuType::MALI, options_.sampler_textures,
-                         &parameters);
+  ObjectAccessor objects(gpu_type_ == GpuType::MALI, &parameters);
 
   auto add_object = [&](const std::string& name, Object&& object) {
     if (!objects.AddObject(name, std::forward<Object>(object))) {

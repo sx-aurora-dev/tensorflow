@@ -1738,12 +1738,15 @@ class RaggedTensor(composite_tensor.CompositeTensor):
   #=============================================================================
   # String Encoding
   #=============================================================================
-  def __repr__(self):
+  def __str__(self):
     if self._is_eager():
       return "<tf.RaggedTensor %s>" % self.to_list()
     else:
-      return "tf.RaggedTensor(values=%s, row_splits=%s)" % (self._values,
-                                                            self._row_splits)
+      return self.__repr__()
+
+  def __repr__(self):
+    return "tf.RaggedTensor(values=%s, row_splits=%s)" % (self._values,
+                                                          self._row_splits)
 
   #=============================================================================
   # Eager Execution Mode
@@ -1879,15 +1882,13 @@ def match_row_splits_dtypes(*tensors, **kwargs):
 #===============================================================================
 # RaggedTensorSpec
 #===============================================================================
-@tf_export("RaggedTensorSpec")
+# TODO(b/133606651) Export this as tf.RaggedTensorSpec.
 class RaggedTensorSpec(type_spec.BatchableTypeSpec):
   """Type specification for a `tf.RaggedTensor`."""
 
   __slots__ = ["_shape", "_dtype", "_ragged_rank", "_row_splits_dtype"]
 
-  @property
-  def value_type(self):
-    return RaggedTensor if self._ragged_rank > 0 else ops.Tensor
+  value_type = property(lambda self: RaggedTensor)
 
   def __init__(self, shape=None, dtype=dtypes.float32, ragged_rank=None,
                row_splits_dtype=dtypes.int64):
@@ -2214,6 +2215,3 @@ def _nrows(tensor, out_type=dtypes.int32):
     return tensor.nrows(out_type=out_type)
   else:
     return array_ops.shape(tensor, out_type=out_type)[0]
-
-
-ops.no_gradient("RaggedTensorToVariant")

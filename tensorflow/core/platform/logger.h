@@ -38,16 +38,10 @@ class Logger {
     singleton_factory_ = factory;
   }
 
-  // Returns the per-process Logger instance, constructing synchronously it if
-  // necessary.
-  static Logger* GetSingleton();
-
-  // Like GetSingleton, except that this does not wait for the construction of
-  // Logger to finish before returning.
-  //
-  // Returns the constructed instance of Logger if it has been constructed,
-  // otherwise returns nullptr (if the logger is not ready yet).
-  static Logger* GetSingletonAsync();
+  static Logger* Singleton() {
+    static Logger* instance = singleton_factory_();
+    return instance;
+  }
 
   virtual ~Logger() = default;
 
@@ -67,8 +61,6 @@ class Logger {
   virtual void DoFlush() = 0;
 
   static FactoryFunc singleton_factory_;
-
-  friend struct AsyncSingletonImpl;
 };
 
 }  // namespace tensorflow

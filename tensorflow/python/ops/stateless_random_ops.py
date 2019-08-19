@@ -18,10 +18,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from tensorflow.python.ops import gen_stateless_random_ops
+
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import tensor_util
-from tensorflow.python.ops import gen_stateless_random_ops
+from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.util import deprecation
 from tensorflow.python.util.tf_export import tf_export
@@ -88,7 +89,7 @@ def stateless_random_uniform(shape,
     maxval = 1
   with ops.name_scope(name, "stateless_random_uniform",
                       [shape, seed, minval, maxval]) as name:
-    shape = tensor_util.shape_tensor(shape)
+    shape = random_ops._ShapeTensor(shape)  # pylint: disable=protected-access
     minval = ops.convert_to_tensor(minval, dtype=dtype, name="min")
     maxval = ops.convert_to_tensor(maxval, dtype=dtype, name="max")
     if dtype.is_integer:
@@ -130,7 +131,7 @@ def stateless_random_normal(shape,
   """
   with ops.name_scope(name, "stateless_random_normal",
                       [shape, seed, mean, stddev]) as name:
-    shape = tensor_util.shape_tensor(shape)
+    shape = random_ops._ShapeTensor(shape)  # pylint: disable=protected-access
     mean = ops.convert_to_tensor(mean, dtype=dtype, name="mean")
     stddev = ops.convert_to_tensor(stddev, dtype=dtype, name="stddev")
     rnd = gen_stateless_random_ops.stateless_random_normal(shape, seed, dtype)
@@ -172,7 +173,7 @@ def stateless_truncated_normal(shape,
   """
   with ops.name_scope(name, "stateless_truncated_normal",
                       [shape, seed, mean, stddev]) as name:
-    shape = tensor_util.shape_tensor(shape)
+    shape = random_ops._ShapeTensor(shape)  # pylint: disable=protected-access
     mean = ops.convert_to_tensor(mean, dtype=dtype, name="mean")
     stddev = ops.convert_to_tensor(stddev, dtype=dtype, name="stddev")
     rnd = gen_stateless_random_ops.stateless_truncated_normal(

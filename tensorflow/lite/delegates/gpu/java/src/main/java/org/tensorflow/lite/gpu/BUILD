@@ -1,6 +1,4 @@
-package(
-    licenses = ["notice"],  # Apache 2.0
-)
+licenses(["notice"])  # Apache 2.0
 
 filegroup(
     name = "gpu_delegate",

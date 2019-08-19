@@ -17,7 +17,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from tensorflow.python.compat import compat
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.util import nest
 from tensorflow.python.data.util import structure
@@ -47,24 +46,17 @@ class _AutoShardDataset(dataset_ops.UnaryDataset):
   def __init__(self, input_dataset, num_workers, index):
     self._input_dataset = input_dataset
 
-    self._element_spec = input_dataset.element_spec
-    if compat.forward_compatible(2019, 8, 3):
-      variant_tensor = ged_ops.auto_shard_dataset(
-          self._input_dataset._variant_tensor,  # pylint: disable=protected-access
-          num_workers=num_workers,
-          index=index,
-          **self._flat_structure)
-    else:
-      variant_tensor = ged_ops.experimental_auto_shard_dataset(
-          self._input_dataset._variant_tensor,  # pylint: disable=protected-access
-          num_workers=num_workers,
-          index=index,
-          **self._flat_structure)
+    self._structure = input_dataset._element_structure  # pylint: disable=protected-access
+    variant_tensor = ged_ops.experimental_auto_shard_dataset(
+        self._input_dataset._variant_tensor,  # pylint: disable=protected-access
+        num_workers=num_workers,
+        index=index,
+        **dataset_ops.flat_structure(self))
     super(_AutoShardDataset, self).__init__(input_dataset, variant_tensor)
 
   @property
-  def element_spec(self):
-    return self._element_spec
+  def _element_structure(self):
+    return self._structure
 
 
 def _AutoShardDatasetV1(input_dataset, num_workers, index):
@@ -93,23 +85,17 @@ class _RebatchDataset(dataset_ops.UnaryDataset):
     input_classes = dataset_ops.get_legacy_output_classes(self._input_dataset)
     output_shapes = nest.map_structure(recalculate_output_shapes, input_shapes)
 
-    self._element_spec = structure.convert_legacy_structure(
+    self._structure = structure.convert_legacy_structure(
         input_types, output_shapes, input_classes)
-    if compat.forward_compatible(2019, 8, 3):
-      variant_tensor = ged_ops.rebatch_dataset(
-          self._input_dataset._variant_tensor,  # pylint: disable=protected-access
-          num_workers=num_workers,
-          **self._flat_structure)
-    else:
-      variant_tensor = ged_ops.experimental_rebatch_dataset(
-          self._input_dataset._variant_tensor,  # pylint: disable=protected-access
-          num_workers=num_workers,
-          **self._flat_structure)
+    variant_tensor = ged_ops.experimental_rebatch_dataset(
+        self._input_dataset._variant_tensor,  # pylint: disable=protected-access
+        num_workers=num_workers,
+        **dataset_ops.flat_structure(self))
     super(_RebatchDataset, self).__init__(input_dataset, variant_tensor)
 
   @property
-  def element_spec(self):
-    return self._element_spec
+  def _element_structure(self):
+    return self._structure
 
 
 _AutoShardDatasetV1.__doc__ = _AutoShardDataset.__doc__
