@@ -31,8 +31,9 @@ namespace {
 
 const size_t kNotAssigned = std::numeric_limits<size_t>::max();
 
+template <typename ObjectSizeT>
 struct PoolRecord {
-  PoolRecord(size_t size, size_t obj_id)
+  PoolRecord(ObjectSizeT size, size_t obj_id)
       : object_size(size), object_id(obj_id) {}
 
   // Objects in pool are ordered by size.
@@ -41,7 +42,7 @@ struct PoolRecord {
            (object_size == other.object_size && object_id < other.object_id);
   }
 
-  size_t object_size;
+  ObjectSizeT object_size;
   size_t object_id;
 };
 
@@ -59,6 +60,41 @@ struct QueueRecord {
   TaskId last_task;
   size_t object_id;
 };
+
+bool CompareBySize(const TensorUsageWithIndex<size_t>& first,
+                   const TensorUsageWithIndex<size_t>& second) {
+  return first.usage_record->tensor_size > second.usage_record->tensor_size;
+}
+
+// Size of object, that covers both input objects (2-dimensional case).
+bool IsCoveringObject(const uint2& first_object, const uint2& second_object) {
+  return first_object.x >= second_object.x && first_object.y >= second_object.y;
+}
+
+// Size of object, that covers both input objects (3-dimensional case).
+bool IsCoveringObject(const uint3& first_object, const uint3& second_object) {
+  return first_object.x >= second_object.x &&
+         first_object.y >= second_object.y && first_object.z >= second_object.z;
+}
+
+// Difference between two objects in elements count (2-dimensional case).
+size_t AbsDiffInElements(const uint2& first_size, const uint2& second_size) {
+  const size_t first_elements_cnt = first_size.y * first_size.x;
+  const size_t second_elements_cnt = second_size.y * second_size.x;
+  return first_elements_cnt >= second_elements_cnt
+             ? first_elements_cnt - second_elements_cnt
+             : second_elements_cnt - first_elements_cnt;
+}
+
+// Difference between two objects in elements count (3-dimensional case).
+size_t AbsDiffInElements(const uint3& first_size, const uint3& second_size) {
+  const size_t first_elements_cnt = first_size.z * first_size.y * first_size.x;
+  const size_t second_elements_cnt =
+      second_size.z * second_size.y * second_size.x;
+  return first_elements_cnt >= second_elements_cnt
+             ? first_elements_cnt - second_elements_cnt
+             : second_elements_cnt - first_elements_cnt;
+}
 
 // Implements memory management with a naive algorithm.
 //
@@ -111,7 +147,7 @@ Status EqualityAssignment(
       objects_in_use.push(
           {usage_records[i].last_task, assignment->object_ids[i]});
     } else {
-      // Share object with id it->second has size equal to tensor_size. Reuse
+      // Shared object with id it->second has size equal to tensor_size. Reuse
       // this object: erase it from pool and add to the queue of objects in use.
       assignment->object_ids[i] = pool_it->second.back();
       pool_it->second.pop_back();
@@ -138,16 +174,17 @@ Status EqualityAssignment(
 //      available.
 //
 //   3. Shared object size may increase when tensor requests larger size.
+template <typename TensorSizeT>
 Status GreedyAssignment(
-    const std::vector<TensorUsageRecord<size_t>>& usage_records,
-    ObjectsAssignment<size_t>* assignment) {
+    const std::vector<TensorUsageRecord<TensorSizeT>>& usage_records,
+    ObjectsAssignment<TensorSizeT>* assignment) {
   size_t num_records = usage_records.size();
   assignment->object_sizes.clear();
   assignment->object_ids.assign(num_records, kNotAssigned);
 
   // Pool of free shared objects is ordered by object size, because we perform
   // lower_bound search in it.
-  std::set<PoolRecord> pool;
+  std::set<PoolRecord<TensorSizeT>> pool;
   // Queue of shared objects in use, ordered by their last_task.
   std::priority_queue<QueueRecord> objects_in_use;
   for (size_t i = 0; i < num_records; i++) {
@@ -160,7 +197,7 @@ Status GreedyAssignment(
       pool.insert({assignment->object_sizes[object_id], object_id});
       objects_in_use.pop();
     }
-    size_t tensor_size = usage_records[i].tensor_size;
+    TensorSizeT tensor_size = usage_records[i].tensor_size;
     if (pool.empty()) {
       // No free shared object, creating a new one, assign i-th tensor to
       // it and add to the queue of objects in use.
@@ -173,7 +210,7 @@ Status GreedyAssignment(
       // Find shared object from pool, that will waste the least possible
       // amount of memory when reused for current tensor.
       auto pool_it = pool.lower_bound({tensor_size, 0});
-      size_t size_diff = 0;
+      TensorSizeT size_diff = 0;
       if (pool_it != pool.end()) {
         // Try smallest shared object from pool with size >= tensor_size.
         size_diff = pool_it->object_size - tensor_size;
@@ -202,6 +239,151 @@ Status GreedyAssignment(
       objects_in_use.push(
           {usage_records[i].last_task, assignment->object_ids[i]});
     }
+  }
+  return OkStatus();
+}
+
+// The same algorithm as above, but for multidimensional case. The only
+// difference is that shared object dimensions can't be increased to be reused
+// for tensor, that is larger (at least by one dimension).
+template <typename TensorSizeT>
+Status GreedyAssignmentMultidimensional(
+    const std::vector<TensorUsageRecord<TensorSizeT>>& usage_records,
+    ObjectsAssignment<TensorSizeT>* assignment) {
+  size_t num_records = usage_records.size();
+  assignment->object_sizes.clear();
+  assignment->object_ids.assign(num_records, kNotAssigned);
+
+  // Pool of free shared objects is unordered in multidimensional version of the
+  // algorithm.
+  std::list<size_t> pool;
+  // Queue of shared objects in use, ordered by their last_task.
+  std::priority_queue<QueueRecord> objects_in_use;
+  for (size_t i = 0; i < num_records; i++) {
+    // Pop from the queue and add to the pool all objects that are no longer
+    // in use at the time of execution of the first_task of i-th intermediate
+    // tensor.
+    while (!objects_in_use.empty() &&
+           objects_in_use.top().last_task < usage_records[i].first_task) {
+      auto object_id = objects_in_use.top().object_id;
+      pool.push_back(object_id);
+      objects_in_use.pop();
+    }
+    const TensorSizeT& tensor_size = usage_records[i].tensor_size;
+    auto best_it = pool.end();
+    size_t best_size_diff = 0;
+    // Find shared object from pool, that will waste the least possible
+    // amount of memory when reused for current tensor.
+    for (auto pool_it = pool.begin(); pool_it != pool.end(); ++pool_it) {
+      // Needed size of shared object to cover current tensor and all previous
+      // tensors assigned to it.
+      const TensorSizeT& shared_object_size =
+          assignment->object_sizes[*pool_it];
+      if (IsCoveringObject(shared_object_size, tensor_size)) {
+        // Prefer shared object that will waste less memory.
+        size_t size_diff = AbsDiffInElements(shared_object_size, tensor_size);
+        if (best_it == pool.end() || size_diff < best_size_diff) {
+          best_it = pool_it;
+          best_size_diff = size_diff;
+        }
+      }
+    }
+    if (best_it == pool.end()) {
+      // No free suitable shared object, creating a new one, assign i-th tensor
+      // to it and add to the queue of objects in use.
+      assignment->object_ids[i] = assignment->object_sizes.size();
+      assignment->object_sizes.push_back(tensor_size);
+      objects_in_use.push(
+          {usage_records[i].last_task, assignment->object_ids[i]});
+    } else {
+      size_t shared_id = *best_it;
+      pool.erase(best_it);
+      assignment->object_ids[i] = shared_id;
+      objects_in_use.push(
+          {usage_records[i].last_task, assignment->object_ids[i]});
+    }
+  }
+  return OkStatus();
+}
+
+// Assigns given tensors to offsets, using the following greedy algorithm:
+// - We have tensor usage records of all intermideate tensors as an input. Each
+// record consists of tensor size, first and last tasks, that use it. Let's call
+// [first_task..last_task] a tensor usage interval;
+// - Iterate through tensor usage records in non-increasing order of
+// corresponding tensor sizes;
+// - For each of these records consider already assigned tensors, which usage
+// intervals intersect with usage interval of current tensor, and find the
+// smallest gap in memory between them such, that current tensor fits into that
+// gap;
+// - If such a gap has been found, current tensor should be allocated into this
+// gap. Otherwise we can allocate it after the rightmost tensor, which usage
+// interval intersects with usage inteval of current tensor. So we assign
+// corresponding offset to current tensor and the tensor becomes assigned.
+Status GreedyBySizeAssignment(
+    const std::vector<TensorUsageRecord<size_t>>& usage_records,
+    OffsetsAssignment* assignment) {
+  const size_t num_tensors = usage_records.size();
+  assignment->offsets.resize(num_tensors);
+  assignment->total_size = 0;
+
+  // Ordered records are to be sorted by size of corrseponding tensor.
+  std::vector<TensorUsageWithIndex<size_t>> ordered_records;
+  for (size_t i = 0; i < num_tensors; ++i) {
+    ordered_records.emplace_back(&usage_records[i], i);
+  }
+  std::sort(ordered_records.begin(), ordered_records.end(), CompareBySize);
+
+  // Vector of ids of already allocated tensors, ordered by offset.
+  std::vector<size_t> ordered_allocs;
+
+  for (const auto& rec_with_idx : ordered_records) {
+    const TensorUsageRecord<size_t>* rec = rec_with_idx.usage_record;
+    size_t best_diff = kNotAssigned;
+    size_t best_offset = kNotAssigned;
+    size_t prev_offset = 0;
+    for (const auto& allocated_id : ordered_allocs) {
+      if (usage_records[allocated_id].last_task < rec->first_task ||
+          usage_records[allocated_id].first_task > rec->last_task) {
+        // Tensor allocated_id has usage interval, that doesn't intersect with
+        // current tensor's usage interval, so we skip it.
+        continue;
+      }
+      size_t cur_offset = assignment->offsets[allocated_id];
+      if (cur_offset >= prev_offset) {
+        size_t diff = cur_offset - prev_offset;
+        // Check, if current_tensor fits into the gap, located directly to the
+        // left of tensor allocated_id offset, and that this gap is the smallest
+        // of previously considered suitable gaps.
+        if (diff >= rec->tensor_size && diff < best_diff) {
+          best_diff = diff;
+          best_offset = prev_offset;
+        }
+      }
+      prev_offset = std::max(
+          prev_offset, cur_offset + usage_records[allocated_id].tensor_size);
+    }
+    if (assignment->total_size < prev_offset) {
+      return InternalError("Total size is wrong.");
+    }
+
+    // If no suitable gap found, we should allocate current tensor after the
+    // rightmost tensor, which usage interval intersects with the current one.
+    if (best_offset == kNotAssigned) {
+      best_offset = prev_offset;
+    }
+
+    // Assign best_offset to the current tensor and find the correct place to
+    // insert information about it into ordered_allocs to save the order.
+    auto it = ordered_allocs.begin();
+    while (it != ordered_allocs.end() &&
+           assignment->offsets[*it] <= best_offset) {
+      ++it;
+    }
+    ordered_allocs.insert(it, rec_with_idx.idx);
+    assignment->offsets[rec_with_idx.idx] = best_offset;
+    assignment->total_size =
+        std::max(assignment->total_size, best_offset + rec->tensor_size);
   }
   return OkStatus();
 }
@@ -401,34 +583,102 @@ Status MinCostFlowAssignment(
 
 }  // namespace
 
+bool CompareBySize(const TensorUsageWithIndex<size_t>& first,
+                   const TensorUsageWithIndex<size_t>& second) {
+  return first.usage_record->tensor_size > second.usage_record->tensor_size;
+}
+
+OffsetsAssignment ObjectsToOffsets(
+    const ObjectsAssignment<size_t>& obj_assignment) {
+  size_t num_tensors = obj_assignment.object_ids.size();
+  size_t num_objects = obj_assignment.object_sizes.size();
+  OffsetsAssignment result = {/*offsets=*/std::vector<size_t>(num_tensors),
+                              /*total_size=*/0};
+  std::vector<size_t> ids_to_offset(num_objects);
+  for (size_t i = 0; i < num_objects; ++i) {
+    ids_to_offset[i] = result.total_size;
+    result.total_size += obj_assignment.object_sizes[i];
+  }
+  for (size_t i = 0; i < num_tensors; ++i) {
+    result.offsets[i] = ids_to_offset[obj_assignment.object_ids[i]];
+  }
+  return result;
+}
+
 Status AssignObjectsToTensors(
     const std::vector<TensorUsageRecord<size_t>>& usage_records,
-    const MemoryStrategy& strategy, ObjectsAssignment<size_t>* assignment) {
+    MemoryStrategy strategy, ObjectsAssignment<size_t>* assignment) {
   switch (strategy) {
     case MemoryStrategy::NAIVE:
-      return NaiveAssignment<size_t>(usage_records, assignment);
+      return NaiveAssignment(usage_records, assignment);
     case MemoryStrategy::EQUALITY:
-      return EqualityAssignment<size_t>(usage_records, assignment);
+      return EqualityAssignment(usage_records, assignment);
     case MemoryStrategy::GREEDY:
       return GreedyAssignment(usage_records, assignment);
     case MemoryStrategy::MINCOSTFLOW:
       return MinCostFlowAssignment(usage_records, assignment);
+    default:
+      return InternalError(
+          "MemoryStrategy is not supported with current tensor size type.");
   }
   return OkStatus();
 }
 
 Status AssignObjectsToTensors(
     const std::vector<TensorUsageRecord<BHWC>>& usage_records,
-    const MemoryStrategy& strategy, ObjectsAssignment<BHWC>* assignment) {
+    MemoryStrategy strategy, ObjectsAssignment<BHWC>* assignment) {
   switch (strategy) {
     case MemoryStrategy::NAIVE:
-      return NaiveAssignment<BHWC>(usage_records, assignment);
+      return NaiveAssignment(usage_records, assignment);
     case MemoryStrategy::EQUALITY:
-      return EqualityAssignment<BHWC>(usage_records, assignment);
+      return EqualityAssignment(usage_records, assignment);
     default:
       return InternalError(
           "MemoryStrategy is not supported with current tensor size type.");
   }
+  return OkStatus();
+}
+
+Status AssignObjectsToTensors(
+    const std::vector<TensorUsageRecord<uint2>>& usage_records,
+    MemoryStrategy strategy, ObjectsAssignment<uint2>* assignment) {
+  switch (strategy) {
+    case MemoryStrategy::NAIVE:
+      return NaiveAssignment(usage_records, assignment);
+    case MemoryStrategy::GREEDY:
+      return GreedyAssignmentMultidimensional(usage_records, assignment);
+    default:
+      return InternalError(
+          "MemoryStrategy is not supported with current tensor size type.");
+  }
+  return OkStatus();
+}
+
+Status AssignObjectsToTensors(
+    const std::vector<TensorUsageRecord<uint3>>& usage_records,
+    MemoryStrategy strategy, ObjectsAssignment<uint3>* assignment) {
+  switch (strategy) {
+    case MemoryStrategy::NAIVE:
+      return NaiveAssignment(usage_records, assignment);
+    case MemoryStrategy::GREEDY:
+      return GreedyAssignmentMultidimensional(usage_records, assignment);
+    default:
+      return InternalError(
+          "MemoryStrategy is not supported with current tensor size type.");
+  }
+  return OkStatus();
+}
+
+Status AssignOffsetsToTensors(
+    const std::vector<TensorUsageRecord<size_t>>& usage_records,
+    const MemoryStrategy& strategy, OffsetsAssignment* assignment) {
+  if (strategy == MemoryStrategy::GREEDY_BY_SIZE) {
+    return GreedyBySizeAssignment(usage_records, assignment);
+  }
+  ObjectsAssignment<size_t> objects_assignment;
+  RETURN_IF_ERROR(
+      AssignObjectsToTensors(usage_records, strategy, &objects_assignment));
+  *assignment = ObjectsToOffsets(objects_assignment);
   return OkStatus();
 }
 

@@ -211,6 +211,11 @@ REGISTER_OP("ExperimentalDatasetCardinality")
     .Output("cardinality: int64")
     .SetShapeFn(shape_inference::ScalarShape);
 
+REGISTER_OP("DatasetFromGraph")
+    .Input("graph_def: string")
+    .Output("handle: variant")
+    .SetShapeFn(shape_inference::ScalarShape);
+
 // TODO(b/124308596): Instead of conservatively marking this op as stateful,
 // implement a mechanism to determine whether `dataset` has a side-effect
 // and use it to decide whether to use a stateless or stateful version of this
@@ -653,18 +658,20 @@ REGISTER_OP("RandomDataset")
 
 REGISTER_OP("ExperimentalRebatchDataset")
     .Input("input_dataset: variant")
-    .Input("num_workers: int64")
+    .Input("num_replicas: int64")
     .Output("handle: variant")
     .Attr("output_types: list(type) >= 1")
     .Attr("output_shapes: list(shape) >= 1")
+    .Attr("use_fallback: bool = true")
     .SetShapeFn(shape_inference::ScalarShape);
 
 REGISTER_OP("RebatchDataset")
     .Input("input_dataset: variant")
-    .Input("num_workers: int64")
+    .Input("num_replicas: int64")
     .Output("handle: variant")
     .Attr("output_types: list(type) >= 1")
     .Attr("output_shapes: list(shape) >= 1")
+    .Attr("use_fallback: bool = true")
     .SetShapeFn(shape_inference::ScalarShape);
 
 REGISTER_OP("SamplingDataset")
@@ -803,6 +810,10 @@ REGISTER_OP("SnapshotDataset")
     .Attr("writer_path_prefix: string = ''")
     .Attr("shard_size_bytes: int = 10737418240")           // 10 GiB default
     .Attr("pending_snapshot_expiry_seconds: int = 86400")  // 1 day default
+    .Attr("num_reader_threads: int = 1")
+    .Attr("reader_buffer_size: int = 1")
+    .Attr("num_writer_threads: int = 1")
+    .Attr("writer_buffer_size: int = 1")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       shape_inference::ShapeHandle unused;
       // snapshot_path should be a scalar.

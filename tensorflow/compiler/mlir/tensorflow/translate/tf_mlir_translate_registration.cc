@@ -45,7 +45,8 @@ static OwningModuleRef GraphdefToMlirTranslateFunction(
   return tensorflow::GraphdefToMlirTranslateFunction(
       StringRefToView(input_filename), debug_info_file, input_arrays,
       input_dtypes, input_shapes, output_arrays, inference_type, min_values,
-      max_values, prune_unused_nodes, context);
+      max_values, prune_unused_nodes, convert_legacy_fed_inputs,
+      graph_as_function, context);
 }
 
 static TranslateToMLIRRegistration GraphdefToMlirTranslate(
@@ -56,19 +57,20 @@ static OwningModuleRef GraphdefToSplattedMlirTranslateFunction(
   return tensorflow::GraphdefToSplattedMlirTranslateFunction(
       StringRefToView(input_filename), debug_info_file, input_arrays,
       input_dtypes, input_shapes, output_arrays, inference_type, min_values,
-      max_values, prune_unused_nodes, context);
+      max_values, prune_unused_nodes, convert_legacy_fed_inputs,
+      graph_as_function, context);
 }
 
 static TranslateToMLIRRegistration GraphdefToSplattedMlirTranslate(
     "graphdef-to-splatted-mlir", GraphdefToSplattedMlirTranslateFunction);
 
 static LogicalResult MlirToGraphdefTranslateFunction(
-    Module module, llvm::StringRef output_filename) {
+    ModuleOp module, llvm::StringRef output_filename) {
   if (!module) return failure();
 
   std::error_code error;
-  auto result = llvm::make_unique<llvm::ToolOutputFile>(output_filename, error,
-                                                        llvm::sys::fs::F_None);
+  auto result = std::make_unique<llvm::ToolOutputFile>(output_filename, error,
+                                                       llvm::sys::fs::F_None);
   if (error) {
     LOG(ERROR) << error.message();
     return failure();

@@ -567,10 +567,4 @@ REGISTER_KERNEL_BUILDER(Name("Placeholder").Device(DEVICE_DEFAULT),
 REGISTER_KERNEL_BUILDER(Name("PlaceholderV2").Device(DEVICE_DEFAULT),
                         PlaceholderOp);
 
-#ifdef TENSORFLOW_USE_VE
-REGISTER_KERNEL_BUILDER(Name("Placeholder").Device(DEVICE_VE), PlaceholderOp);
-REGISTER_KERNEL_BUILDER(Name("PlaceholderV2").Device(DEVICE_VE),
-                        PlaceholderOp);
-#endif // TENSORFLOW_USE_VE
-
 }  // namespace tensorflow

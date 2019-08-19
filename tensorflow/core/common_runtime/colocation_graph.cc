@@ -130,15 +130,19 @@ bool ArePrioritiesSame(const PrioritizedDeviceTypeVector& a_types,
 }  // namespace
 
 Status Member::SetParentAndSupportedDevices(
-    const Node& node, const std::vector<DeviceType>& types) {
+    const Node& node, const std::vector<DeviceType>& types,
+    const Device* default_local_device) {
   int id = node.id();
   if (id < 0) {
     return errors::Internal("Placer should not be creating a Member for node: ",
                             node.DebugString());
   }
   parent_ = id;
+  const DeviceNameUtils::ParsedName* name =
+      default_local_device == nullptr ? nullptr
+                                      : &default_local_device->parsed_name();
   return SupportedDeviceTypesForNode(types, node.def(),
-                                     &supported_device_types_);
+                                     &supported_device_types_, name);
 }
 
 Status Member::SetAssignedDeviceName(const string& device_name) {
@@ -460,7 +464,7 @@ bool Member::MergeSupportedDevices(
   return true;
 }
 
-Status Member::AssignDevice(const Node& node, bool allow_soft_placement) {
+Status Member::AssignDevice(const Node& node) {
   if (node.assigned_device_name_index() == assigned_device_name_index_) {
     return Status::OK();
   }
@@ -555,18 +559,18 @@ DeviceNameUtils::ParsedName Member::GetPreferredSoftDeviceName() const {
 ColocationGraph::ColocationGraph(const Graph* graph, const FunctionStack& stack,
                                  const FunctionLibraryDefinition* flib_def,
                                  const DeviceSet* device_set,
-                                 const Device* default_device,
+                                 const Device* default_local_device,
                                  bool allow_soft_placement,
                                  bool log_device_placement)
     : graph_(*graph),
       stack_(stack),
       flib_def_(*flib_def),
-      inspecting_placer_(graph, stack, flib_def, device_set, default_device,
+      inspecting_placer_(stack, flib_def, device_set, default_local_device,
                          allow_soft_placement, log_device_placement),
       inspection_required_checker_(graph, flib_def),
       device_set_(*device_set),
       device_types_(device_set->PrioritizedDeviceTypeList()),
-      default_device_(default_device),
+      default_local_device_(default_local_device),
       allow_soft_placement_(allow_soft_placement),
       log_device_placement_(log_device_placement) {
   members_.resize(graph_.num_node_ids());
@@ -950,7 +954,7 @@ Status ColocationGraph::LimitToAssignedDevice(const Node& node) {
   }
   int root = FindAndUpdateRoot(node.id());
   Member& root_member = members_[root];
-  return root_member.AssignDevice(node, allow_soft_placement_);
+  return root_member.AssignDevice(node);
 }
 
 void ColocationGraph::GetSoftDeviceCandidates(
@@ -966,7 +970,7 @@ void ColocationGraph::GetSoftDeviceCandidates(
   if (!possible_devices->empty()) {
     *possible_devices = FilterSupportedDevices(
         *possible_devices, root_member.supported_device_types(),
-        default_device_);
+        default_local_device_);
   }
 
   if (!possible_devices->empty()) {
@@ -989,7 +993,7 @@ void ColocationGraph::GetSoftDeviceCandidates(
   if (!possible_devices->empty()) {
     *possible_devices = FilterSupportedDevices(
         *possible_devices, root_member.supported_device_types(),
-        default_device_);
+        default_local_device_);
   }
 
   if (!possible_devices->empty()) {
@@ -1043,7 +1047,7 @@ Status ColocationGraph::GetDevicesForNode(
       // Filter devices into those that are compatible with the root
       // node (and its children).
       devices = FilterSupportedDevices(
-          devices, root_member.supported_device_types(), default_device_);
+          devices, root_member.supported_device_types(), default_local_device_);
     }
 
     // Perform soft placement if allow_soft_placement_ is set.
@@ -1130,7 +1134,7 @@ Status ColocationGraph::GetDevicesForNode(
     }
     devices = FilterSupportedDevices(device_set_.devices(),
                                      root_member.supported_device_types(),
-                                     default_device_);
+                                     default_local_device_);
 
     if (devices.empty()) {
       return errors::InvalidArgument(
@@ -1199,7 +1203,12 @@ string ColocationGraph::DebugInfo(const int node_root) const {
     colocation_nodes.push_back(node);
 
     PrioritizedDeviceTypeVector supported_types;
-    SupportedDeviceTypesForNode(device_types_, node->def(), &supported_types)
+    const DeviceNameUtils::ParsedName* name =
+        default_local_device_ == nullptr
+            ? nullptr
+            : &default_local_device_->parsed_name();
+    SupportedDeviceTypesForNode(device_types_, node->def(), &supported_types,
+                                name)
         .IgnoreError();
     string devices_registered;
     for (const auto& device_type : supported_types) {
@@ -1275,7 +1284,8 @@ Status ColocationGraph::InitializeMemberWithAssignedDevice(
 }
 
 Status ColocationGraph::InitializeMember(const Node& node, Member* member) {
-  TF_RETURN_IF_ERROR(member->SetParentAndSupportedDevices(node, device_types_));
+  TF_RETURN_IF_ERROR(member->SetParentAndSupportedDevices(
+      node, device_types_, default_local_device_));
 
   if (node.has_assigned_device_name()) {
     TF_RETURN_IF_ERROR(InitializeMemberWithAssignedDevice(
@@ -1339,19 +1349,19 @@ Status ColocationGraph::InitializeMember(const Node& node, Member* member) {
 /*static*/ std::vector<Device*> ColocationGraph::FilterSupportedDevices(
     const std::vector<Device*>& devices,
     const PrioritizedDeviceTypeVector& supported_device_types,
-    const Device* default_device) {
+    const Device* default_local_device) {
   Device* filtered_default_device = nullptr;
   std::vector<std::pair<Device*, int32>> prioritized_filtered_devices;
   for (const auto& supported_device_type : supported_device_types) {
     for (Device* device : devices) {
       if (DeviceType(device->attributes().device_type()) ==
           supported_device_type.first) {
-        if (default_device &&
-            (device == default_device ||
+        if (default_local_device &&
+            (device == default_local_device ||
              // TODO(nareshmodi, fishx): At times the device pointer in the
              // device set is different to the one passed in as the default
              // device. Figure out why this might be.
-             device->name() == default_device->name())) {
+             device->name() == default_local_device->name())) {
           filtered_default_device = device;
         } else {
           prioritized_filtered_devices.emplace_back(

@@ -1189,8 +1189,8 @@ def set_other_mpi_vars(environ_cp):
         os.path.join(mpi_home, 'include/mpi_portable_platform.h'),
         'third_party/mpi/mpi_portable_platform.h')
     # TODO(gunan): avoid editing files in configure
-    sed_in_place('third_party/mpi/mpi.bzl', 'MPI_LIB_IS_OPENMPI=False',
-                 'MPI_LIB_IS_OPENMPI=True')
+    sed_in_place('third_party/mpi/mpi.bzl', 'MPI_LIB_IS_OPENMPI = False',
+                 'MPI_LIB_IS_OPENMPI = True')
   else:
     # MVAPICH / MPICH
     symlink_force(
@@ -1198,8 +1198,8 @@ def set_other_mpi_vars(environ_cp):
     symlink_force(
         os.path.join(mpi_home, 'include/mpicxx.h'), 'third_party/mpi/mpicxx.h')
     # TODO(gunan): avoid editing files in configure
-    sed_in_place('third_party/mpi/mpi.bzl', 'MPI_LIB_IS_OPENMPI=True',
-                 'MPI_LIB_IS_OPENMPI=False')
+    sed_in_place('third_party/mpi/mpi.bzl', 'MPI_LIB_IS_OPENMPI = True',
+                 'MPI_LIB_IS_OPENMPI = False')
 
   if os.path.exists(os.path.join(mpi_home, 'lib/libmpi.so')):
     symlink_force(
@@ -1587,8 +1587,8 @@ def main():
   config_info_line(
       'dynamic_kernels',
       '(Experimental) Build kernels into separate shared objects.')
-  config_info_line('v2', 'Build TensorFlow 2.x instead of 1.x.')
   config_info_line('ve', 'Build with VE support.')
+  config_info_line('v2', 'Build TensorFlow 2.x instead of 1.x.')
 
   print('Preconfigured Bazel build configs to DISABLE default on features:')
   config_info_line('noaws', 'Disable AWS S3 filesystem support.')

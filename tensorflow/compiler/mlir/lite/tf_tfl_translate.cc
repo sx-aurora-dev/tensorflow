@@ -20,10 +20,12 @@ limitations under the License.
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "mlir/IR/Diagnostics.h"  // TF:local_config_mlir
+#include "mlir/IR/Function.h"  // TF:local_config_mlir
 #include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
 #include "mlir/IR/Module.h"  // TF:local_config_mlir
 #include "mlir/Support/FileUtilities.h"  // TF:local_config_mlir
 #include "tensorflow/compiler/mlir/lite/flatbuffer_translate.h"
+#include "tensorflow/compiler/mlir/lite/tf_tfl_passes.h"
 #include "tensorflow/compiler/mlir/lite/tf_tfl_translate_cl.h"
 #include "tensorflow/compiler/mlir/lite/tf_to_tfl_flatbuffer.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/tf_mlir_translate_cl.h"
@@ -32,8 +34,9 @@ limitations under the License.
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/stream_executor/lib/statusor.h"
 
+using mlir::FuncOp;
 using mlir::MLIRContext;
-using mlir::Module;
+using mlir::ModuleOp;
 using stream_executor::port::StatusOr;
 using tensorflow::Status;
 
@@ -47,7 +50,7 @@ static llvm::cl::opt<bool> print_function_result_mapping(
 enum TranslationStatus { kTrSuccess, kTrFailure };
 
 static int PrintFunctionResultMapping(const std::string &result,
-                                      Module module) {
+                                      ModuleOp module) {
   // Build model from the resultant string to extract the return values from
   // their source of truth.
   auto model =
@@ -83,7 +86,7 @@ static int PrintFunctionResultMapping(const std::string &result,
     std::cout << '\'' << subgraph_name << "' outputs:\n";
     mlir::Operation *terminator = nullptr;
     if (subgraph->name()) {
-      if (auto fn = module.getNamedFunction(subgraph->name()->str()))
+      if (auto fn = module.lookupSymbol<FuncOp>(subgraph->name()->str()))
         terminator = fn.back().getTerminator();
     }
     i = 0;
@@ -133,11 +136,18 @@ int main(int argc, char **argv) {
   // message. So we can just return here.
   if (!module.ok()) return kTrFailure;
 
+  mlir::PassManager pm;
+  bool run_quantize =
+      tensorflow::ShouldRunQuantizePasses(module.ValueOrDie().get());
+  tensorflow::AddTFToTFLConversionPasses(emit_builtin_tflite_ops, run_quantize,
+                                         emit_quant_adaptor_ops,
+                                         lower_tensor_list_ops, &pm);
+
   std::string result;
-  auto status = tensorflow::ConvertTFControlFlowToTFLOrFlatbuffer(
+  auto status = tensorflow::ConvertTFExecutorToTFLOrFlatbuffer(
       module.ValueOrDie().get(), output_mlir, emit_builtin_tflite_ops,
       emit_select_tf_ops, emit_custom_ops, emit_quant_adaptor_ops,
-      lower_tensor_list_ops, &result);
+      lower_tensor_list_ops, &result, &pm);
   if (!status.ok()) return kTrFailure;
 
   auto output = mlir::openOutputFile(output_file_name);
