@@ -221,6 +221,8 @@ class NodeTypeAttrMap {
       return errors::InvalidArgument("NodeTypeAttrMap is already initialized.");
     }
     graph_ = &graph;
+    function_library_.reset(
+        new FunctionLibraryDefinition(OpRegistry::Global(), graph.library()));
     for (const NodeDef& node : graph.node()) {
       TF_RETURN_IF_ERROR(AddNode(node));
     }
@@ -272,10 +274,7 @@ class NodeTypeAttrMap {
  private:
   Status AddNode(const NodeDef& node) {
     const OpDef* op_def_ptr = nullptr;
-    // TODO(benbarsdell): This may fail if node.op() is a function. It will
-    // need to be addressed when we add support for functions.
-    TF_RETURN_IF_ERROR(
-        OpRegistry::Global()->LookUpOpDef(node.op(), &op_def_ptr));
+    TF_RETURN_IF_ERROR(function_library_->LookUpOpDef(node.op(), &op_def_ptr));
     const OpDef& op_def = *op_def_ptr;
     auto& type2io_entry = type2io_[&node];
     auto& io2type_entry = io2type_[&node];
@@ -343,6 +342,7 @@ class NodeTypeAttrMap {
 
   // WARN: `graph_` must outlive this object (node pointers must remain valid).
   const GraphDef* graph_ = nullptr;  // do not own
+  std::unique_ptr<FunctionLibraryDefinition> function_library_;
 
   typedef absl::flat_hash_set<int> IntSet;
   // Maps a type attr id -> (input port set, output port set)
@@ -1067,16 +1067,25 @@ std::pair<int, int> GetDeviceGPUArch(
     const DeviceProperties& device_properties) {
   if (device_properties.type() != "GPU") return {0, 0};
   string arch_str = device_properties.environment().at("architecture");
-  std::vector<int32> arch_pieces;
-  if (!str_util::SplitAndParseAsInts(arch_str, '.', &arch_pieces) ||
-      arch_pieces.empty()) {
+  std::vector<string> split_arch_str = str_util::Split(arch_str, '.');
+  if (split_arch_str.empty()) {
     return {0, 0};
   }
-  std::pair<int, int> arch(arch_pieces[0], 0);
-  if (arch_pieces.size() > 1) {
-    arch.second = arch_pieces[1];
+
+  int major, minor;
+  if (!strings::safe_strto32(split_arch_str[0], &major)) {
+    return {0, 0};
   }
-  return arch;
+
+  if (split_arch_str.size() > 1) {
+    if (strings::safe_strto32(split_arch_str[1], &minor)) {
+      return {major, minor};
+    } else {
+      return {0, 0};
+    }
+  } else {
+    return {major, 0};
+  }
 }
 
 bool AutoMixedPrecisionImpl::IsOnSuitableGPUArch(const NodeDef& node) const {

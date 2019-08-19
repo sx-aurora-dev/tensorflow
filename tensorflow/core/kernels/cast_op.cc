@@ -306,13 +306,8 @@ CURRY_TYPES2(REGISTER_CAST_SYCL, double);
 // HostCast differs from Cast in that its input and output are in host memory.
 REGISTER_KERNEL_BUILDER(Name("_HostCast").Device(DEVICE_CPU), CpuCastOp);
 REGISTER_KERNEL_BUILDER(
-    Name("_HostCast").Device(DEVICE_GPU).HostMemory("x").HostMemory("y"),
+    Name("_HostCast").Device(DEVICE_DEFAULT).HostMemory("x").HostMemory("y"),
     CpuCastOp);
-#ifdef TENSORFLOW_USE_SYCL
-REGISTER_KERNEL_BUILDER(
-    Name("_HostCast").Device(DEVICE_SYCL).HostMemory("x").HostMemory("y"),
-    CpuCastOp);
-#endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
 class VECastOp : public CastOpBase, public VEOpKernelHelper {
@@ -347,5 +342,5 @@ REGISTER_CAST_VE(bool, int32);
 REGISTER_CAST_VE(uint16, int32);
 REGISTER_CAST_VE(int8, bool);
 
-#endif
+#endif // TENSORFLOW_USE_VE
 }  // end namespace tensorflow

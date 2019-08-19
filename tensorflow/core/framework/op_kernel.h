@@ -53,6 +53,7 @@ limitations under the License.
 #include "tensorflow/core/platform/profile_utils/cpu_utils.h"
 #include "tensorflow/core/platform/thread_annotations.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/protobuf/config.pb.h"
 
 namespace Eigen {
 struct ThreadPoolDevice;
@@ -164,7 +165,6 @@ class OpKernel {
   const string& name() const;              // Same as def().name()
   const string& type_string() const;       // Same as def().op()
   const string& requested_device() const;  // Same as def().device()
-  bool is_internal() const { return is_internal_; }
 
   int num_inputs() const { return input_types_.size(); }
   DataType input_type(int i) const { return input_types_[i]; }
@@ -220,7 +220,6 @@ class OpKernel {
   NameRangeMap input_name_map_;
   NameRangeMap output_name_map_;
   const int graph_def_version_;
-  const bool is_internal_;  // True if this is an internal operation
   bool expensive_;
   std::atomic_uint_fast64_t cost_estimate_;
 
@@ -623,6 +622,9 @@ class OpKernelContext {
     // The step being executed.
     int64 step_id = 0;
 
+    // True if the op is created by eager runtime.
+    bool is_eager = false;
+
     // The op kernel being computed.
     OpKernel* op_kernel = nullptr;
 
@@ -685,6 +687,9 @@ class OpKernelContext {
     // Unique session identifier. Can be empty.
     string session_handle;
 
+    // Metadata about the session. Can be nullptr.
+    const SessionMetadata* session_metadata = nullptr;
+
     // The tensor store for this op.
     TensorStore* tensor_store = nullptr;
 
@@ -736,6 +741,8 @@ class OpKernelContext {
   Env* env() const { return params_->device->env(); }
 
   int64 step_id() const { return params_->step_id; }
+
+  bool is_eager() const { return params_->is_eager; }
 
   const OpKernel& op_kernel() const { return *params_->op_kernel; }
 
@@ -1124,6 +1131,11 @@ class OpKernelContext {
   // Unique identifier of the session it belongs to. Can be empty.
   string session_handle() const { return params_->session_handle; }
 
+  // Metadata about the session. Can be nullptr.
+  const SessionMetadata* session_metadata() const {
+    return params_->session_metadata;
+  }
+
   // An op kernel can access the tensor store of the run it belongs to.
   TensorStore* tensor_store() const { return params_->tensor_store; }
 
@@ -1276,8 +1288,9 @@ class OpKernelContext {
     return params_->dec_num_deferred_ops_function;
   }
 
- private:
   Allocator* get_allocator(AllocatorAttributes attr);
+
+ private:
   bool record_memory_consumption_ = false;
 
   // Internal method to add a tensor's buffer to the list of buffers
@@ -1338,6 +1351,17 @@ class OpKernelContext {
   TF_DISALLOW_COPY_AND_ASSIGN(OpKernelContext);
 };
 
+template <>
+const Eigen::ThreadPoolDevice& OpKernelContext::eigen_device() const;
+
+template <>
+const Eigen::GpuDevice& OpKernelContext::eigen_device() const;
+
+#ifdef TENSORFLOW_USE_SYCL
+template <>
+const Eigen::SyclDevice& OpKernelContext::eigen_device() const;
+#endif
+
 // Register your OpKernel by specifying the Op's name, the device the
 // kernel runs on, any type attr constraints for this kernel, any
 // host-memory args, and the class to instantiate.  Examples:
@@ -1388,7 +1412,8 @@ Status CreateOpKernel(DeviceType device_type, DeviceBase* device,
 //           * def has all attrs specified (e.g. using AddDefaultsToNodeDef()).
 Status SupportedDeviceTypesForNode(
     const std::vector<DeviceType>& prioritized_types, const NodeDef& def,
-    PrioritizedDeviceTypeVector* device_types);
+    PrioritizedDeviceTypeVector* device_types,
+    const DeviceNameUtils::ParsedName* local_device_name = nullptr);
 
 // Returns a message with a description of the kernels registered for op
 // `op_name`.
