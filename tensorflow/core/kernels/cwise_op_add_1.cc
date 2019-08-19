@@ -69,6 +69,10 @@ REGISTER_KERNEL_BUILDER(Name("AddV2")
 
 #if TENSORFLOW_USE_VE
 REGISTER_VE_BINARY_OP(Add, float, float, float);
+REGISTER_KERNEL_BUILDER(Name("AddV2")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<float>("T"),
+                        VEAddOp<float, float>);
 REGISTER_KERNEL_BUILDER(Name("Add")
                             .Device(DEVICE_VE)
                             .HostMemory("x")

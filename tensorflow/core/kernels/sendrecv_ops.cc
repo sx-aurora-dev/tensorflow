@@ -193,24 +193,7 @@ void RecvOp::ComputeAsync(OpKernelContext* ctx, DoneCallback done) {
 }
 
 REGISTER_KERNEL_BUILDER(Name("_Recv").Device(DEVICE_CPU), RecvOp);
-<<<<<<< HEAD
-REGISTER_KERNEL_BUILDER(Name("_Recv").Device(DEVICE_GPU), RecvOp);
-
-#ifdef TENSORFLOW_USE_VE
-REGISTER_KERNEL_BUILDER(Name("_Recv").Device(DEVICE_VE), RecvOp);
-REGISTER_KERNEL_BUILDER(Name("_HostRecv")
-                        .Device(DEVICE_VE).HostMemory("tensor"), RecvOp);
-#endif
-
-#ifdef TENSORFLOW_USE_SYCL
-REGISTER_KERNEL_BUILDER(Name("_Recv").Device(DEVICE_SYCL), RecvOp);
-#endif  // TENSORFLOW_USE_SYCL
-
-REGISTER_KERNEL_BUILDER(
-    Name("_HostRecv").Device(DEVICE_GPU).HostMemory("tensor"), RecvOp);
-=======
 REGISTER_KERNEL_BUILDER(Name("_Recv").Device(DEVICE_DEFAULT), RecvOp);
->>>>>>> upstream/master
 
 REGISTER_KERNEL_BUILDER(
     Name("_HostRecv").Device(DEVICE_DEFAULT).HostMemory("tensor"), RecvOp);

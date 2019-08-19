@@ -25,7 +25,7 @@ typedef void (*cb_t)(int nodeid, int kind, const void* data, void* self);
 extern Status ve_get_timestamp(int nodeid, uint64_t* ts, double* resolution);
 extern Status ve_set_trace_callback(int nodeid, cb_t cb, void* data);
 
-#if 1 // copy from device_tracer.cc
+#if 0 // copy from device_tracer.cc
 #define TF_STATIC_THREAD_LOCAL_POD(_Type_, _var_)                  \
   static __thread _Type_ s_obj_##_var_;                            \
   namespace {                                                      \
@@ -187,8 +187,12 @@ void VEDeviceTracer::callback(int nodeid, int kind, const void* data)
     };
     const Tmp* tmp = reinterpret_cast<const Tmp*>(data);
     std::string str_type[] = {"MEMCPYHtoD", "MEMCPYDtoH"};
+#if 0
     const char* tls_annotation = tls_current_annotation.get();
     const char* annotation = tls_annotation ? tls_annotation : "unknown";
+#else
+    const char* annotation = "unknown";
+#endif
     std::string name = strings::StrCat(annotation, ":", str_type[tmp->type]);
 
     memcpy_records_.push_back(MemcpyRecords{nodeid, name, tmp->start, tmp->end});
@@ -216,14 +220,12 @@ Status VEDeviceTracer::Start() {
   if (!s.ok())
     return s;
 
-  GlobalDefaultTraceCollector()->Start();
   return Status::OK(); 
 }
 
 Status VEDeviceTracer::Stop() {
   VLOG(2) << "VEDeviceTracer::Stop";
   ve_set_trace_callback(0, nullptr, nullptr);
-  GlobalDefaultTraceCollector()->Stop();
   return Status::OK(); 
 }
 
@@ -292,8 +294,7 @@ Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
 }
 
 
-std::unique_ptr<profiler::ProfilerInterface> CreateDeviceTracer(
-        const ProfilerContext*) {
+std::unique_ptr<profiler::ProfilerInterface> CreateDeviceTracer() {
   if (const char* tmp = getenv("VE_NODE_NUMBER")) {
     if (atoi(tmp) < 0) {
       return nullptr;

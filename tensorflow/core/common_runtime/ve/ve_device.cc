@@ -407,18 +407,13 @@ class VEOAsync : public VEO
 
 #ifdef TF_VE_EXECUTOR
       if (char const* tmp = getenv("TF_VE_EXECUTOR")) {
-        std::vector<int32> vals;
-        if (!str_util::SplitAndParseAsInts(tmp, ',', &vals) || vals.size() != 1) {
-          LOG(WARNING) << "Ignored invalid TF_VE_EXECUTOR: " << tmp;
-        } else {
           ve_executor_enabled_ = true;
-          ve_executor_threshold_ = vals[0];
+          ve_executor_threshold_ = std::atoi(tmp);
           VLOG(2) << "VEOAsync: StartThread: "
             << " threshold=" << ve_executor_threshold_;
           thread_.reset(tensorflow::Env::Default()->StartThread(
             tensorflow::ThreadOptions(), "ve_sync_thread",
             std::bind(&VEOAsync::Run, this)));
-        }
       }
 #endif
       return Status::OK();

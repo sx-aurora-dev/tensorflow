@@ -31,6 +31,4 @@ REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_DEFAULT), IdentityNOp);
 // make the original functional op fetchable.
 REGISTER_INPUT_COLOCATION_EXEMPTION("IdentityN");
 
-REGISTER_KERNEL_BUILDER(Name("IdentityN").Device(DEVICE_VE), IdentityNOp);
-
 }  // namespace tensorflow
