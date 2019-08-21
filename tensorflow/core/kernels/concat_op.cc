@@ -506,7 +506,13 @@ class VEConcatBaseOp : public VEOpKernel {
       Args.addArg<uint64>(offset) ;
       for (int i = 0; i < n_input; ++i) {
 	const auto& input = inputs_flat[i] ;
+#if 1
+	const uint64 addr = (uint64)(DMAHelper::base(&values[i]));
+	OP_REQUIRES(c, addr != 0, errors::InvalidArgument("[BUG!] ConcatOp : DMAHelper::base(&balues[i]) = NULL"));
+	Args.addArg(addr) ;
+#else
 	Args.addArg<uint64>((uint64)(DMAHelper::base(&values[i]))) ;
+#endif
 	offset += inputs_flat[i]->dimension(1) ;
 	Args.addArg<uint64>(offset) ;
       }
