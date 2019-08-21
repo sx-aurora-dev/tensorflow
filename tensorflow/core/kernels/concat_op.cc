@@ -535,8 +535,6 @@ using VEConcatV2Op = VEConcatBaseOp<T, NAME_IS_AXIS>;
 // TODO : add other types
 TF_CALL_float(REGISTER_VE)
 TF_CALL_double(REGISTER_VE)
-TF_CALL_int32(REGISTER_VE)
-
 
 REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
                             .Device(DEVICE_VE)
@@ -546,6 +544,21 @@ REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
                         ConcatOffsetOp);
 
 #undef REGISTER_VE
+
+REGISTER_KERNEL_BUILDER(Name("Concat")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("concat_dim")
+                            .HostMemory("values")
+                            .HostMemory("output"),
+                        ConcatOp<CPUDevice, int32>);
+REGISTER_KERNEL_BUILDER(Name("ConcatV2")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("values")
+                            .HostMemory("axis")
+                            .HostMemory("output"),
+                        ConcatV2Op<CPUDevice, int32>);
 
 #undef MAX_CONCAT_SIZE
 
