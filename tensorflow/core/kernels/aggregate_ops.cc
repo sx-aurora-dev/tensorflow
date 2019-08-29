@@ -275,33 +275,33 @@ class AddNOp<VEDevice, T> : public OpKernel {
       Tensor* output = nullptr;
       OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input0.shape(), &output));
 
-#define MAX_INPUTS 32
-      struct {
+      struct Args {
         int output_type;
         uint64_t out;
         size_t num_elems;
         size_t num_inputs;
-        uint64_t in[MAX_INPUTS];
-      } args;
+        uint64_t in[1];	// variable length
+      } ;
 
-      OP_REQUIRES(ctx, num <= MAX_INPUTS,
-                  errors::InvalidArgument(
-                      "number of inputs must be less than 16 in VE AddN"));
+      size_t argSize = sizeof(struct Args) + sizeof(uint64_t)*(num-1) ;
+      struct Args *args = (struct Args *) malloc(argSize) ;
 
-      args.output_type = DataTypeToEnum<T>::v();
-      args.out = (uint64_t)DMAHelper::base(output);
-      args.num_elems = input0.NumElements();
-      args.num_inputs = num;
+      args->output_type = DataTypeToEnum<T>::v();
+      args->out = (uint64_t)DMAHelper::base(output);
+      args->num_elems = input0.NumElements();
+      args->num_inputs = num;
       for (int i = 0; i < num; ++i) {
-        OP_REQUIRES(ctx, ctx->input(i).dtype() == args.output_type,
+        OP_REQUIRES(ctx, ctx->input(i).dtype() == args->output_type,
                     errors::InvalidArgument("type mismatch"));
-        args.in[i] = (uint64_t)DMAHelper::base(&ctx->input(i));
+        args->in[i] = (uint64_t)DMAHelper::base(&ctx->input(i));
       }
 
       VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute("AddN", (void*)&args, sizeof(args));
+      Status s = vectx->Compute("AddN", (void*)args, argSize);
       if (!s.ok())
         ctx->SetStatus(s);
+
+      free(args) ;
     }
   }
 };
