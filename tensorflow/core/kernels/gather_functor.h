@@ -192,6 +192,7 @@ struct VEGatherFunctor {
                    const Tensor *indices,
                    Tensor *out,
 		   int64 outer_size,
+		   int64 gather_dim_size,
 		   int64 inner_size,
 		   int64 nindex)
   {
@@ -199,6 +200,7 @@ struct VEGatherFunctor {
     struct {
       int dtype, idxtype;
       int64_t outer_size ;
+      int64_t gather_dim_size ;
       int64_t inner_size ;
       int64_t nindex ;
       uint64_t src_ptr, idx_ptr, dst_ptr ;
@@ -207,6 +209,7 @@ struct VEGatherFunctor {
     args.dtype = params->dtype() ;
     args.idxtype = indices->dtype() ;
     args.outer_size = outer_size ;
+    args.gather_dim_size = gather_dim_size ;
     args.inner_size = inner_size ;
     args.nindex = nindex ;
 

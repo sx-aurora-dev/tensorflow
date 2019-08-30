@@ -1153,7 +1153,7 @@ class VEResourceGatherOp : public OpKernel {
 	      "indices", SliceDebugString(indices.shape(), bad_i), " = ",
 	      indices_flat(bad_i), " is not in [0, ", params.dim_size(0), ")"));
 #else
-      functor(c, &params, &indices, out, gather_dim_size, inner_size, N) ;
+      functor(c, &params, &indices, out, 1, gather_dim_size, inner_size, N) ;
 #endif
     }
   }
