@@ -26,8 +26,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/softmax_op_functor.h"
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
 #endif
 
 namespace tensorflow {
@@ -115,42 +114,28 @@ REGISTER_KERNEL_BUILDER(
 #ifdef TENSORFLOW_USE_VE
 
 template <typename T>
-class SoftmaxOp<VEDevice, T> : public OpKernel {
+class SoftmaxOp<VEDevice, T> : public VEOpKernel {
  public:
-  explicit SoftmaxOp(OpKernelConstruction* context) : OpKernel(context) {
+  explicit SoftmaxOp(OpKernelConstruction* context) : VEOpKernel(context) {
     log_ = str_util::StartsWith(type_string(), "Log");
   }
 
   void Compute(OpKernelContext* context) override {
     const Tensor& logits_in = context->input(0);
-    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(logits_in.shape()),
-                errors::InvalidArgument("logits must be 2-dimensional"));
+    OP_REQUIRES(context, TensorShapeUtils::IsVectorOrHigher(logits_in.shape()),
+                errors::InvalidArgument("logits must have >= 1 dimension, got ",
+                                        logits_in.shape().DebugString()));
     Tensor* softmax_out = nullptr;
     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
                                 {0}, 0, logits_in.shape(), &softmax_out));
 
-    if( logits_in.NumElements() > 0) {
-      struct {
-	int dtype;
-	int bool_log ;
-	uint64_t in;
-	uint64_t out;
-	uint64_t batch_size;
-	uint64_t num_classes;
-      } args;
+    ArgsImpl<> Args = ArgsImpl<>() ;
+    Args.addArg<Tensor>(logits_in) ;
+    Args.addArg<Tensor>(*softmax_out) ;
+    Args.addArg<int64_t>(log_?1:0) ;
 
-      args.dtype = DataTypeToEnum<T>::v();
-      args.bool_log = log_ ? 1 : 0 ;
-      args.in = (uint64_t)DMAHelper::base(&logits_in);
-      args.out = (uint64_t)DMAHelper::base(softmax_out);
-      args.batch_size = logits_in.dim_size(0) ;
-      args.num_classes = logits_in.dim_size(1) ;
+    Call(context, "Softmax", Args) ;
 
-      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute("Softmax", (void*)&args, sizeof(args));
-      if (!s.ok())
-	context->SetStatus(s);
-    }
   }
 
  private:
