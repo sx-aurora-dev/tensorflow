@@ -68,7 +68,8 @@ std::string GetFullyConnectedKernelCode(
   c += "  uint c2 = tid.y * 2;\n";  // it should be * 4, so as we have FLT4
   // but we keep half8 in float4 so, we have * 2 y_coord for texture
   c += "  for (int i = 0; i < src_depth_x4; ++i, c += 4, c2 += 8) {\n";
-  c += "    FLT4 v = " + src_tensor.Read3D("0", "0", "c") + ";\n";
+  c += "    FLT4 v = " +
+       src_tensor.Read3D("0", "0", "c", TextureAddressMode::DONT_CARE) + ";\n";
   if (precision != CalculationsPrecision::F32) {
     c += "   half8 m0 = as_half8(read_imagef(filters, smp_none, (int2)(gid, "
          "c2+0)));\n";
@@ -103,9 +104,9 @@ std::string GetFullyConnectedKernelCode(
   c += "    s += temp[tid.x][3];\n";
   c += "    FLT4 r0 = TO_FLT4(s) + READ_IMAGE(biases, smp_none, (int2)(gid, "
        "0));\n";
-  c += "  " + dst_tensor.GetAddress("dst_adr", "0", "0", "gid") + "\n";
-  c += PostProcess(linked_operations, "r0", "gid", "dst_adr");
-  c += "  " + dst_tensor.Write3D("r0", "dst_adr") + "\n";
+  const LinkingContext context{"r0", "0", "0", "gid"};
+  c += PostProcess(linked_operations, context);
+  c += "  " + dst_tensor.Write3D("r0", "0", "0", "gid") + "\n";
   c += "  }\n";
   c += "}\n";
 

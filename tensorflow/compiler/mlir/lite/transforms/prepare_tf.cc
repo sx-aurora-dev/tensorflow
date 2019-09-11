@@ -50,6 +50,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_utils.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
+#include "tensorflow/compiler/mlir/lite/transforms/unroll_batch_matmul.h"
 #include "tensorflow/compiler/mlir/lite/utils/attribute_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/validators.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -64,18 +65,6 @@ namespace TFL {
 // TODO(hinsu): Add and use TensorFlow dialect ops for the ops created in this
 // pass.
 namespace {
-
-// Returns the first result type of the given `op`.
-Type GetFirstResultType(Operation *op) { return *op->result_type_begin(); }
-// TODO(antiagainst): We need overload functions of the above to facilitate
-// changes brought by declarative rewrite rules. Remove this post variadic
-// operand support is improved.
-// NOLINTNEXTLINE
-Type GetFirstResultType(TF::TransposeOp op) { return op.getType(); }
-// NOLINTNEXTLINE
-Type GetFirstResultType(TF::ReshapeOp op) { return op.getType(); }
-// NOLINTNEXTLINE
-Type GetFirstResultType(Value *val) { return val->getType(); }
 
 // Prepare TF operations in functions for subsequent legalization.
 struct PrepareTFPass : public FunctionPass<PrepareTFPass> {
@@ -258,7 +247,8 @@ struct ConvertTFConvOp : public RewritePattern {
         filter_type.getShape());
     auto bias_type = rewriter.getTensorType({bias_dim}, elem_type);
     auto bias_attr = rewriter.getZeroAttr(bias_type);
-    auto bias = rewriter.create<ConstantOp>(op->getLoc(), bias_type, bias_attr);
+    auto bias =
+        rewriter.create<TF::ConstOp>(op->getLoc(), bias_type, bias_attr);
 
     auto *conv_state = static_cast<ConvertTFConvOpMatchState *>(state.get());
     auto conv_op = static_cast<const ConcreteType *>(this)->createTFLOp(
@@ -309,7 +299,7 @@ class ConvertTFConv2D : public ConvertTFConvOp<ConvertTFConv2D, TF::Conv2DOp> {
                                             rewriter.getIntegerType(32));
     auto perm_attr =
         DenseElementsAttr::get(perm_type, llvm::makeArrayRef<int>(perm));
-    auto perm_op = rewriter.create<ConstantOp>(loc, perm_type, perm_attr);
+    auto perm_op = rewriter.create<TF::ConstOp>(loc, perm_type, perm_attr);
 
     // Create tensor type for the transpose result.
     auto filter_type = filter->getType().cast<RankedTensorType>();
@@ -378,7 +368,7 @@ class ConvertTFDepthwiseConv2dNative
     auto shape_type = rewriter.getTensorType({4}, rewriter.getIntegerType(64));
     auto shape_attr =
         DenseElementsAttr::get(shape_type, llvm::makeArrayRef(result_shape));
-    auto shape = rewriter.create<ConstantOp>(loc, shape_type, shape_attr);
+    auto shape = rewriter.create<TF::ConstOp>(loc, shape_type, shape_attr);
 
     return rewriter.create<TF::ReshapeOp>(loc, result_type, filter, shape);
   }
@@ -389,6 +379,11 @@ class ConvertTFDepthwiseConv2dNative
 void PrepareTFPass::runOnFunction() {
   OwningRewritePatternList patterns;
   auto func = getFunction();
+
+  patterns.insert<ConvertTFBatchMatMulOp<TF::BatchMatMulOp>,
+                  ConvertTFBatchMatMulOp<TF::BatchMatMulV2Op>>(&getContext());
+  applyPatternsGreedily(func, patterns);
+
   // This pattern was intented to uses TFL QDQs to preserve the quantization
   // parameters from the TF Quant ops, thus this pattern should run with the
   // first `applyPatternsGreedily` method, which would otherwise removes the

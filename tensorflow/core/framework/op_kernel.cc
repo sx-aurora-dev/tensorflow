@@ -26,8 +26,8 @@ limitations under the License.
 #include "tensorflow/core/framework/allocation_description.pb.h"
 #include "tensorflow/core/framework/attr_value_util.h"
 #include "tensorflow/core/framework/device_attributes.pb.h"
-#include "tensorflow/core/framework/graph.pb_text.h"
-#include "tensorflow/core/framework/kernel_def.pb_text.h"
+#include "tensorflow/core/framework/graph.pb.h"
+#include "tensorflow/core/framework/kernel_def.pb.h"
 #include "tensorflow/core/framework/kernel_def_util.h"
 #include "tensorflow/core/framework/log_memory.h"
 #include "tensorflow/core/framework/memory_types.h"
@@ -1244,12 +1244,18 @@ Status FindKernelRegistration(
     TF_RETURN_IF_ERROR(KernelAttrsMatch(iter->second.def, node_attrs, &match));
     if (match) {
       if (*reg != nullptr) {
-        return errors::InvalidArgument(
-            "Multiple OpKernel registrations match NodeDef '",
-            FormatNodeDefForError(node_name, has_experimental_debug_info,
-                                  experimental_debug_info),
-            "': '", ProtoShortDebugString((*reg)->def), "' and '",
-            ProtoShortDebugString(iter->second.def), "'");
+        if ((*reg)->def.priority() == iter->second.def.priority()) {
+          return errors::InvalidArgument(
+              "Multiple OpKernel registrations match NodeDef at the same "
+              "priority '",
+              FormatNodeDefForError(node_name, has_experimental_debug_info,
+                                    experimental_debug_info),
+              "': '", (*reg)->def.ShortDebugString(), "' and '",
+              iter->second.def.ShortDebugString(), "'");
+        } else if ((*reg)->def.priority() > iter->second.def.priority()) {
+          continue;
+        }
+        // iter->second's priority is higher than *reg.
       }
       *reg = &iter->second;
     } else {
@@ -1274,8 +1280,8 @@ Status FindKernelRegistration(
               "Multiple Default OpKernel registrations match NodeDef '",
               FormatNodeDefForError(node_name, has_experimental_debug_info,
                                     experimental_debug_info),
-              "': '", ProtoShortDebugString((*reg)->def), "' and '",
-              ProtoShortDebugString(iter->second.def), "'");
+              "': '", (*reg)->def.ShortDebugString(), "' and '",
+              iter->second.def.ShortDebugString(), "'");
         }
         *reg = &iter->second;
       } else {
@@ -1360,7 +1366,7 @@ Status FindKernelDef(const DeviceType& device_type, const NodeDef& node_def,
 Status SupportedDeviceTypesForNode(
     const std::vector<DeviceType>& prioritized_types, const NodeDef& def,
     PrioritizedDeviceTypeVector* prioritized_device_types,
-    const DeviceNameUtils::ParsedName* local_device_name) {
+    const DeviceNameUtils::ParsedName* local_address_spec) {
   // TODO(zhifengc): Changes the callers (SimplePlacer and
   // DynamicPlacer) to consider the possibility that 'def' is call to
   // a user-defined function and only calls this
@@ -1391,11 +1397,11 @@ Status SupportedDeviceTypesForNode(
     // The goal is to address the issue where a graph includes op (e.g. PyFunc)
     // whose kernel is known to a remote process but not to the current process.
     if (prioritized_device_types->empty() && !exists_attr_mismatch &&
-        local_device_name != nullptr) {
+        local_address_spec != nullptr) {
       DeviceNameUtils::ParsedName requested_device_name;
       DeviceNameUtils::ParseFullName(def.device(), &requested_device_name);
-      if (!DeviceNameUtils::IsSameAddressSpace(*local_device_name,
-                                               requested_device_name)) {
+      if (DeviceNameUtils::IsDifferentAddressSpace(*local_address_spec,
+                                                   requested_device_name)) {
         if (requested_device_name.has_type) {
           prioritized_device_types->push_back(
               std::make_pair(DeviceType(requested_device_name.type), 0));
@@ -1424,7 +1430,7 @@ Status SupportedDeviceTypesForNode(
 void LogAllRegisteredKernels() {
   KernelList kernel_list = GetAllRegisteredKernels();
   for (const auto& kernel_def : kernel_list.kernel()) {
-    LOG(INFO) << "OpKernel ('" << ProtoShortDebugString(kernel_def) << "')";
+    LOG(INFO) << "OpKernel ('" << kernel_def.ShortDebugString() << "')";
   }
 }
 
@@ -1572,7 +1578,7 @@ Status ValidateKernelRegistrations(const OpRegistryInterface& op_registry) {
     const Status status = op_registry.LookUp(kernel_def.op(), &op_reg_data);
     if (!status.ok()) {
       // TODO(josh11b): Make this a hard error.
-      LOG(ERROR) << "OpKernel ('" << ProtoShortDebugString(kernel_def)
+      LOG(ERROR) << "OpKernel ('" << kernel_def.ShortDebugString()
                  << "') for unknown op: " << kernel_def.op();
       continue;
     }

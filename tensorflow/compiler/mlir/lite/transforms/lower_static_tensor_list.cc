@@ -28,6 +28,7 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Analysis/LoopAnalysis.h"  // TF:local_config_mlir
+#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
 #include "mlir/IR/Attributes.h"  // TF:local_config_mlir
 #include "mlir/IR/Block.h"  // TF:local_config_mlir
 #include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
@@ -40,7 +41,6 @@ limitations under the License.
 #include "mlir/IR/Value.h"  // TF:local_config_mlir
 #include "mlir/Pass/Pass.h"  // TF:local_config_mlir
 #include "mlir/Pass/PassRegistry.h"  // TF:local_config_mlir
-#include "mlir/StandardOps/Ops.h"  // TF:local_config_mlir
 #include "mlir/Support/Functional.h"  // TF:local_config_mlir
 #include "mlir/Support/LLVM.h"  // TF:local_config_mlir
 #include "mlir/Support/LogicalResult.h"  // TF:local_config_mlir
@@ -459,6 +459,10 @@ LogicalResult LowerStaticTensorListPass::RewriteFunction(
         c.matchAndRewrite(op, *rewriter);
       } else if (auto tf_op = llvm::dyn_cast<TF::TensorListPushBackOp>(op)) {
         auto c = ConvertTFTensorListPushBack(context);
+        rewriter->setInsertionPoint(op);
+        c.matchAndRewrite(op, *rewriter);
+      } else if (auto tf_op = llvm::dyn_cast<TF::TensorListLengthOp>(op)) {
+        auto c = TFL::ConvertTFTensorListLength(context);
         rewriter->setInsertionPoint(op);
         c.matchAndRewrite(op, *rewriter);
       } else if (auto tf_op = llvm::dyn_cast<TF::WhileOp>(op)) {

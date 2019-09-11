@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/algebraic_simplifier.h"
 #include "tensorflow/compiler/xla/service/dump.h"
+#include "tensorflow/compiler/xla/service/gpu/cublas_gemm_pad_for_tensor_cores.h"
 #include "tensorflow/compiler/xla/service/gpu/cudnn_conv_algorithm_picker.h"
 #include "tensorflow/compiler/xla/service/gpu/cudnn_conv_pad_for_tensor_cores.h"
 #include "tensorflow/compiler/xla/service/gpu/cudnn_conv_padding_legalization.h"
@@ -49,7 +50,7 @@ limitations under the License.
 #include "tensorflow/core/platform/tracing.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/stream_executor/cuda/cuda_diagnostics.h"
-#include "tensorflow/stream_executor/cuda/ptxas_utils.h"
+#include "tensorflow/stream_executor/gpu/asm_compiler.h"
 
 namespace xla {
 namespace gpu {
@@ -120,6 +121,20 @@ Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
     // tuple/get-tuple-element pairs that TupleSimplifier fixes.
     pipeline.AddPass<TupleSimplifier>();
   }
+
+  // tf2xla bridge, DepthwiseConvolutionConverter and CudnnConvRewriter
+  // introduces reshapes and transposes that can be eliminated using
+  // AlgebraicSimplifier
+  {
+    auto& pass = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
+        "algebraic_simplification_post_conv_rewriter");
+    pass.AddInvariantChecker<HloVerifier>(/*layout_sensitive=*/false,
+                                          /*allow_mixed_precision=*/false);
+
+    AlgebraicSimplifierOptions options;
+    pass.AddPass<AlgebraicSimplifier>(options);
+  }
+
   // CudnnConvRewriter, CudnnConvPaddingLegalization and
   // CudnnConvPadForTensorCores may add instructions which can be simplified
   // by constant folding.
@@ -146,6 +161,10 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   options.set_is_layout_sensitive(true);
   pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(options);
 
+  // Pad the dimensions of matrices in dot operations to multiples of 8.
+  if (IsVoltaOrLater(*stream_exec)) {
+    pipeline.AddPass<CublasGemmPadForTensorCores>();
+  }
   // Rewrite GEMMs into custom calls.
   pipeline.AddPass<GemmRewriter>();
 
@@ -343,18 +362,18 @@ NVPTXCompiler::CompileTargetBinary(const HloModule* module,
     DumpToFileInDirOrStdout(*module, "ptx", ptx);
   }
 
-  std::vector<uint8> cubin =
-      CompilePtxOrGetCachedResult(stream_exec, ptx, compute_capability.first,
-                                  compute_capability.second, module->config());
+  std::vector<uint8> cubin = CompileGpuAsmOrGetCachedResult(
+      stream_exec, ptx, compute_capability.first, compute_capability.second,
+      module->config());
 
   return std::pair<std::string, std::vector<uint8>>(std::move(ptx),
                                                     std::move(cubin));
 }
 
-std::vector<uint8> NVPTXCompiler::CompilePtxOrGetCachedResult(
+std::vector<uint8> NVPTXCompiler::CompileGpuAsmOrGetCachedResult(
     se::StreamExecutor* stream_exec, const string& ptx, int cc_major,
     int cc_minor, const HloModuleConfig& hlo_module_config) {
-  XLA_SCOPED_LOGGING_TIMER("NVPTXCompiler::CompilePtxOrGetCachedResult");
+  XLA_SCOPED_LOGGING_TIMER("NVPTXCompiler::CompileGpuAsmOrGetCachedResult");
   tensorflow::profiler::TraceMe activity(
       "PTX->CUBIN", tensorflow::profiler::TraceMeLevel::kInfo);
   bool inserted;
@@ -382,9 +401,9 @@ std::vector<uint8> NVPTXCompiler::CompilePtxOrGetCachedResult(
     if (inserted) {
       CHECK(!cache_value->compilation_done);
       if (!ptx.empty()) {
-        StatusOr<std::vector<uint8>> maybe_cubin = se::cuda::CompilePtx(
-            stream_exec->device_ordinal(), cache_ptx->c_str(),
-            PtxOptsFromConfig(hlo_module_config));
+        StatusOr<std::vector<uint8>> maybe_cubin =
+            se::CompileGpuAsm(stream_exec->device_ordinal(), cache_ptx->c_str(),
+                              PtxOptsFromConfig(hlo_module_config));
         if (maybe_cubin.ok()) {
           cache_value->cubin_data = std::move(maybe_cubin).ValueOrDie();
           VLOG(2) << "Compiled PTX size:" << ptx.size()

@@ -48,21 +48,29 @@ std::string GetSoftmaxKernelCode(
   code += "  } \n";
   code += "  float sum = 0.0f;\n";
   code += "  for (int d = 0; d < size.w - 1; ++d) {\n";
-  code += "    float4 t = " + src_tensor.ReadAsFloat3D("X", "Y", "d") + ";\n";
+  code +=
+      "    float4 t = " +
+      src_tensor.ReadAsFloat3D("X", "Y", "d", TextureAddressMode::DONT_CARE) +
+      ";\n";
   code += "    sum += dot((float4)(1.0f), exp(t));\n";
   code += "  }\n";
   code += "  {\n";
-  code += "    float4 t = " + src_tensor.ReadAsFloat3D("X", "Y", "size.w - 1") +
+  code += "    float4 t = " +
+          src_tensor.ReadAsFloat3D("X", "Y", "size.w - 1",
+                                   TextureAddressMode::DONT_CARE) +
           ";\n";
   code += "    sum += dot(mask, exp(t));\n";
   code += "  }\n";
   code += "  for (int d = 0; d < size.w; ++d) {\n";
   code += "    " + src_tensor.GetAddress("address", "X", "Y", "d") + "\n";
-  code += "    float4 t = " + src_tensor.ReadAsFloat3D("address") + ";\n";
+  code += "    float4 t = " +
+          src_tensor.ReadAsFloat3D("address", TextureAddressMode::DONT_CARE) +
+          ";\n";
   code += "    t = exp(t) / sum;\n";
   code += "    FLT4 result = TO_FLT4(t);\n";
-  code += PostProcess(linked_operations, "result", "d", "address");
-  code += "    " + dst_tensor.Write3D("result", "address");
+  const LinkingContext context{"result", "X", "Y", "d"};
+  code += PostProcess(linked_operations, context);
+  code += "    " + dst_tensor.Write3D("result", "X", "Y", "d");
   code += "  }\n";
   code += "}\n";
   return code;
