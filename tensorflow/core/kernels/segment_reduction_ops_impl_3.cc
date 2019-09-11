@@ -125,4 +125,36 @@ TF_CALL_complex128(REGISTER_SUM_GPU_UNSORTED_KERNELS_ALL);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+
+#define REGISTER_VE_KERNEL_UNSORTEDSEGMENT(                                  \
+    name, type, index_type, initial_value_functor, reduction_kernel_functor) \
+  REGISTER_KERNEL_BUILDER(                                                   \
+      Name(name)                                                             \
+          .Device(DEVICE_VE)                                                 \
+          .HostMemory("num_segments")                                        \
+          .TypeConstraint<type>("T")                                         \
+          .TypeConstraint<index_type>("Tindices"),                           \
+      VEUnsortedSegmentReductionOp<                                          \
+          type, index_type,                                                  \
+          reduction_kernel_functor, initial_value_functor> )
+
+#define REGISTER_REAL_VE_UNSORTED_KERNELS(type, index_type)                   \
+  REGISTER_VE_KERNEL_UNSORTEDSEGMENT("UnsortedSegmentSum", type, index_type,  \
+                                      functor::Zero<type>,                    \
+                                      functor::VEUnsortedSegmentSumOp<type>);
+
+#define REGISTER_REAL_VE_UNSORTED_KERNELS_ALL(type) \
+  REGISTER_REAL_VE_UNSORTED_KERNELS(type, int32);   \
+  REGISTER_REAL_VE_UNSORTED_KERNELS(type, int64);
+
+TF_CALL_float(REGISTER_REAL_VE_UNSORTED_KERNELS_ALL) ;
+TF_CALL_double(REGISTER_REAL_VE_UNSORTED_KERNELS_ALL) ;
+
+#undef REGISTER_REAL_VE_UNSORTED_KERNELS_ALL
+#undef REGISTER_REAL_VE_UNSORTED_KERNELS
+#undef REGISTER_VE_KERNEL_UNSORTEDSEGMENT
+
+#endif // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

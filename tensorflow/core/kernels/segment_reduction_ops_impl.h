@@ -70,7 +70,6 @@ typedef Eigen::VeDevice VEDevice;
 
 namespace internal {
 extern void SegmentReductionValidationHelper(OpKernelContext* context,
->>>>>>> upstream/master:tensorflow/core/kernels/segment_reduction_ops_impl.h
                                              const Tensor& input,
                                              const Tensor& segment_ids);
 extern bool SegmentReductionDoValidation(OpKernelContext* c,
@@ -487,7 +486,7 @@ class VEUnsortedSegmentReductionOp : public OpKernel {
     const Tensor& data = context->input(0);
     const Tensor& segment_ids = context->input(1);
     const Tensor& num_segments = context->input(2);
-    if (!UnsortedSegmentReductionDoValidation(this, context, data, segment_ids,
+    if (!internal::UnsortedSegmentReductionDoValidation(this, context, data, segment_ids,
                                               num_segments)) {
       return;
     }
@@ -515,34 +514,6 @@ class VEUnsortedSegmentReductionOp : public OpKernel {
 		      initialvalue_functor() ) ;
   }
 };
-
-#define REGISTER_VE_KERNEL_UNSORTEDSEGMENT(                                  \
-    name, type, index_type, initial_value_functor, reduction_kernel_functor) \
-  REGISTER_KERNEL_BUILDER(                                                   \
-      Name(name)                                                             \
-          .Device(DEVICE_VE)                                                 \
-          .HostMemory("num_segments")                                        \
-          .TypeConstraint<type>("T")                                         \
-          .TypeConstraint<index_type>("Tindices"),                           \
-      VEUnsortedSegmentReductionOp<                                          \
-          type, index_type,                                                  \
-          reduction_kernel_functor, initial_value_functor> )
-
-#define REGISTER_REAL_VE_UNSORTED_KERNELS(type, index_type)                   \
-  REGISTER_VE_KERNEL_UNSORTEDSEGMENT("UnsortedSegmentSum", type, index_type,  \
-                                      functor::Zero<type>,                    \
-                                      functor::VEUnsortedSegmentSumOp<type>);
-
-#define REGISTER_REAL_VE_UNSORTED_KERNELS_ALL(type) \
-  REGISTER_REAL_VE_UNSORTED_KERNELS(type, int32);   \
-  REGISTER_REAL_VE_UNSORTED_KERNELS(type, int64);
-
-TF_CALL_float(REGISTER_REAL_VE_UNSORTED_KERNELS_ALL) ;
-TF_CALL_double(REGISTER_REAL_VE_UNSORTED_KERNELS_ALL) ;
-
-#undef REGISTER_REAL_VE_UNSORTED_KERNELS_ALL
-#undef REGISTER_REAL_VE_UNSORTED_KERNELS
-#undef REGISTER_VE_KERNEL_UNSORTEDSEGMENT
 
 #endif // TENSORFLOW_USE_VE
 
