@@ -351,9 +351,12 @@ class VESelectOp : public VEOpKernel {
     }
 };
 
-#define REGISTER_SELECT_VE(type)                                  \
+#define REGISTER_SELECT_VE(type)                                    \
   REGISTER_KERNEL_BUILDER(                                          \
-      Name("Select").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      Name("Select").Device(DEVICE_VE).TypeConstraint<type>("T"),   \
+      VESelectOp);                                                  \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("SelectV2").Device(DEVICE_VE).TypeConstraint<type>("T"), \
       VESelectOp);
 
 REGISTER_SELECT_VE(float);
