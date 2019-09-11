@@ -729,7 +729,7 @@ class VEBinaryOp : public BinaryOpShared {
 
         Args(const Tensor& in0_, const Tensor in1_, Tensor& out_) :
           in0(in0_), in1(in1_), out(out_) {
-            if((in0.dims>in1.dims)&&(in0.dims>2)){
+            if(in0.dims > in1.dims){
                 for(int i = 0; i < in1.dims; i++){
                     in1.dim_size[in0.dims-i-1] = in1.dim_size[in1.dims-i-1] ;
                 }
@@ -738,7 +738,7 @@ class VEBinaryOp : public BinaryOpShared {
                 }
                 in1.dims = in0.dims;
             }
-            if((in1.dims>in0.dims)&&(in1.dims>2)){
+            if(in1.dims > in0.dims){
                 for(int i = 0; i < in0.dims; i++){
                     in0.dim_size[in1.dims-i-1] = in0.dim_size[in0.dims-i-1] ;
                 }
