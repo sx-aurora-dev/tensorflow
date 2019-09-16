@@ -40,10 +40,10 @@ class LinearOperatorToeplitzTest(
   """Most tests done in the base class LinearOperatorDerivedClassTest."""
 
   @contextlib.contextmanager
-  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, force_ve):
+  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, use_ve):
     """We overwrite the FFT operation mapping for testing."""
     with test.TestCase._constrain_devices_and_set_default(
-        self, sess, use_gpu, force_gpu) as sess:
+        self, sess, use_gpu, force_gpu, use_ve) as sess:
       yield sess
 
   def setUp(self):
