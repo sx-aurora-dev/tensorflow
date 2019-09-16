@@ -53,10 +53,10 @@ class LinearOperatorCirculantBaseTest(object):
   }
 
   @contextlib.contextmanager
-  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, force_ve):
+  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, use_ve):
     """We overwrite the FFT operation mapping for testing."""
     with test.TestCase._constrain_devices_and_set_default(
-        self, sess, use_gpu, force_gpu) as sess:
+        self, sess, use_gpu, use_gpu) as sess:
       yield sess
 
   def _shape_to_spectrum_shape(self, shape):
@@ -386,10 +386,10 @@ class LinearOperatorCirculant2DBaseTest(object):
   """Common class for 2D circulant tests."""
 
   @contextlib.contextmanager
-  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, force_ve):
+  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, use_ve):
     """We overwrite the FFT operation mapping for testing."""
     with test.TestCase._constrain_devices_and_set_default(
-        self, sess, use_gpu, force_gpu) as sess:
+        self, sess, use_gpu, use_gpu) as sess:
       yield sess
 
   @staticmethod
@@ -638,17 +638,11 @@ class LinearOperatorCirculant3DTest(test.TestCase):
   """Simple test of the 3D case.  See also the 1D and 2D tests."""
 
   @contextlib.contextmanager
-  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, force_ve):
+  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, use_ve):
     """We overwrite the FFT operation mapping for testing."""
     with test.TestCase._constrain_devices_and_set_default(
-<<<<<<< HEAD
-        self, sess, use_gpu, force_gpu, force_ve) as sess:
-      with spectral_ops_test_util.fft_kernel_label_map():
-        yield sess
-=======
-        self, sess, use_gpu, force_gpu) as sess:
+        self, sess, use_gpu, force_gpu, use_ve) as sess:
       yield sess
->>>>>>> upstream/master
 
   @test_util.run_deprecated_v1
   def test_real_spectrum_gives_self_adjoint_operator(self):
