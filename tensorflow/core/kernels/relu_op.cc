@@ -28,6 +28,7 @@ limitations under the License.
 #ifdef TENSORFLOW_USE_VE
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
 #endif
 
 namespace tensorflow {
@@ -327,6 +328,71 @@ class ReluGradOp<VEDevice, T> : public BinaryElementWiseOp<T, ReluGradOp<VEDevic
       ReluGradOp<VEDevice, type>);
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
 #undef REGISTER_VE_KERNELS
+
+template <typename T>
+class LeakyReluOp<VEDevice, T> : public UnaryElementWiseOp<T, LeakyReluOp<VEDevice, T>> {
+  public:
+    //using UnaryElementWiseOp<T, ReluOp<VEDevice, T>>::UnaryElementWiseOp;
+
+    explicit LeakyReluOp(OpKernelConstruction* context)
+      : UnaryElementWiseOp<T, LeakyReluOp<VEDevice, T>>(context) {
+        float alpha_tmp;
+        OP_REQUIRES_OK(context, context->GetAttr("alpha", &alpha_tmp));
+        alpha_ = T(alpha_tmp);
+      }
+
+    void Operate(OpKernelContext* context, const Tensor& input, Tensor* output) {
+      VEOpKernelHelper::ArgsImpl<> args;
+
+      args.addArg<Tensor>(input);
+      args.addArg<Tensor>(*output);
+      args.addArg<double>((double)alpha_);
+
+      VEOpKernelHelper::Call(context, "LeakyRelu", args);
+    }
+
+  private:
+    T alpha_;
+};
+
+template <typename T>
+class LeakyReluGradOp<VEDevice, T> 
+        : public BinaryElementWiseOp<T, LeakyReluGradOp<VEDevice, T>> {
+  public:
+    //using BinaryElementWiseOp<T, ReluGradOp<VEDevice, T>>::BinaryElementWiseOp;
+    explicit LeakyReluGradOp(OpKernelConstruction* context)
+      : BinaryElementWiseOp<T, LeakyReluGradOp<VEDevice, T>>(context) {
+        float alpha_tmp;
+        OP_REQUIRES_OK(context, context->GetAttr("alpha", &alpha_tmp));
+        alpha_ = T(alpha_tmp);
+      }
+
+    template <int NDIMS>
+      void Operate(OpKernelContext* context, const Tensor& g, const Tensor& a,
+                   Tensor* output) {
+        VEOpKernelHelper::ArgsImpl<> args;
+        args.addArg<Tensor>(g);
+        args.addArg<Tensor>(a);
+        args.addArg<Tensor>(*output);
+        args.addArg<double>((double)alpha_);
+
+        VEOpKernelHelper::Call(context, "LeakyReluGrad", args);
+      }
+
+  private:
+    T alpha_;
+};
+
+#define REGISTER_VE_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("LeakyRelu").Device(DEVICE_VE).TypeConstraint<type>("T"),      \
+      LeakyReluOp<VEDevice, type>);                                       \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("LeakyReluGrad").Device(DEVICE_VE).TypeConstraint<type>("T"),  \
+      LeakyReluGradOp<VEDevice, type>);
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+
 #endif
 
 }  // namespace tensorflow
