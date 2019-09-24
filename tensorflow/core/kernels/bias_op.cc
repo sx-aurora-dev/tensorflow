@@ -768,7 +768,7 @@ class BiasGradOp<VEDevice, T> : public OpKernel {
 
 TF_CALL_INTEGRAL_TYPES(REGISTER_KERNEL);
 REGISTER_KERNEL(float);
-REGISTER_KERNEL(double);
+// REGISTER_KERNEL(double);
 #undef REGISTER_KERNEL
 #endif // TENSORFLOW_USE_VE
 

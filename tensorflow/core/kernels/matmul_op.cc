@@ -722,7 +722,7 @@ class VEMatMulOp : public OpKernel {
                           VEMatMulOp<T>)
 
 TF_CALL_float(REGISTER_VE);
-TF_CALL_double(REGISTER_VE);
+// TF_CALL_double(REGISTER_VE);
 
 #endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

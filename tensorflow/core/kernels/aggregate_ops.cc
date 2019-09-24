@@ -307,7 +307,7 @@ class AddNOp<VEDevice, T> : public OpKernel {
 };
 
 REGISTER_ADDN(float, VE);
-REGISTER_ADDN(double, VE);
+// REGISTER_ADDN(double, VE);
 #endif // TENSORFLOW_USE_VE
 
 #undef REGISTER_ADDN

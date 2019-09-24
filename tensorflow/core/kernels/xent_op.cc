@@ -224,10 +224,10 @@ REGISTER_KERNEL_BUILDER(Name("SoftmaxCrossEntropyWithLogits")
                             .Device(DEVICE_VE)
                             .TypeConstraint<float>("T"),
                         VESoftmaxXentWithLogitsOp<float>);
-REGISTER_KERNEL_BUILDER(Name("SoftmaxCrossEntropyWithLogits")
-                            .Device(DEVICE_VE)
-                            .TypeConstraint<double>("T"),
-                        VESoftmaxXentWithLogitsOp<double>);
+// REGISTER_KERNEL_BUILDER(Name("SoftmaxCrossEntropyWithLogits")
+//                              .Device(DEVICE_VE)
+//                             .TypeConstraint<double>("T"),
+//                         VESoftmaxXentWithLogitsOp<double>);
 #endif // TENSORFLOW_USE_VE
 
 
