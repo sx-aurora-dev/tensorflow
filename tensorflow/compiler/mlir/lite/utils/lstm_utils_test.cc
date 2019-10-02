@@ -87,8 +87,7 @@ class LstmUtilsTest : public ::testing::Test {
 };
 
 TEST_F(LstmUtilsTest, ConvertLSTMCellSimple) {
-  auto convert =
-      mlir::TFL::ConvertLSTMCellSimpleToFusedLSTM(fused_lstm_func_, false);
+  mlir::TFL::ConvertLSTMCellSimpleToFusedLSTM convert(fused_lstm_func_, false);
 
   auto result = convert.Initialize();
   EXPECT_FALSE(failed(result));
@@ -124,22 +123,28 @@ TEST_F(LstmUtilsTest, ConvertLSTMCellSimple) {
           1),
       3);
 
-  auto return_op = fused_lstm_func_.getBody().back().rbegin();
-  EXPECT_EQ(return_op->getName().getStringRef(),
-            mlir::ReturnOp::getOperationName());
-  return_op++;
-  EXPECT_EQ(return_op->getName().getStringRef(),
+  auto it = fused_lstm_func_.getBody().back().rbegin();
+  EXPECT_EQ(it->getName().getStringRef(), mlir::ReturnOp::getOperationName());
+  it++;  // tensor_cast
+  it++;  // lstm
+  EXPECT_EQ(it->getName().getStringRef(),
             mlir::TFL::LSTMOp::getOperationName());
-  EXPECT_EQ(return_op->getNumOperands(), 24);
-  EXPECT_EQ(return_op->getNumResults(), 1);
+  EXPECT_EQ(it->getNumOperands(), 24);
+  EXPECT_EQ(it->getNumResults(), 1);
   // cifg = false, so input2input is not None.
-  EXPECT_FALSE(return_op->getOperand(1)->getType().isa<NoneType>());
+  EXPECT_FALSE(it->getOperand(1)->getType().isa<NoneType>());
   // input layer norm is None
-  EXPECT_TRUE(return_op->getOperand(20)->getType().isa<NoneType>());
+  EXPECT_TRUE(it->getOperand(20)->getType().isa<NoneType>());
+  // proj_bias is F32
+  EXPECT_TRUE(it->getOperand(17)
+                  ->getType()
+                  .cast<RankedTensorType>()
+                  .getElementType()
+                  .isF32());
 
   EXPECT_EQ(fused_lstm_func_.getType().getNumResults(), 1);
   auto output_types = fused_lstm_func_.getType().getResults();
-  SmallVector<int64_t, 2> output_shape{1, 2};
+  SmallVector<int64_t, 2> output_shape{1, -1};
   EXPECT_EQ(output_types[0].cast<RankedTensorType>().getShape().size(),
             output_shape.size());
   for (int i = 0; i < output_shape.size(); i++) {
@@ -149,8 +154,7 @@ TEST_F(LstmUtilsTest, ConvertLSTMCellSimple) {
 }
 
 TEST_F(LstmUtilsTest, ConvertLSTMCellSimpleToFusedLSTMCoupleInputForget) {
-  auto convert =
-      mlir::TFL::ConvertLSTMCellSimpleToFusedLSTM(fused_lstm_func_, true);
+  mlir::TFL::ConvertLSTMCellSimpleToFusedLSTM convert(fused_lstm_func_, true);
 
   auto result = convert.Initialize();
   EXPECT_FALSE(failed(result));
@@ -161,6 +165,7 @@ TEST_F(LstmUtilsTest, ConvertLSTMCellSimpleToFusedLSTMCoupleInputForget) {
   auto it = fused_lstm_func_.getBody().back().rbegin();
   EXPECT_EQ(it->getName().getStringRef(), mlir::ReturnOp::getOperationName());
   it++;
+  it++;
   EXPECT_EQ(it->getName().getStringRef(),
             mlir::TFL::LSTMOp::getOperationName());
   EXPECT_EQ(it->getNumOperands(), 24);
@@ -170,7 +175,7 @@ TEST_F(LstmUtilsTest, ConvertLSTMCellSimpleToFusedLSTMCoupleInputForget) {
 }
 
 TEST_F(LstmUtilsTest, ConvertLayerNormLSTMCellSimpleToFusedLSTM) {
-  auto convert = mlir::TFL::ConvertLayerNormalizedLSTMCellSimpleToFusedLSTM(
+  mlir::TFL::ConvertLayerNormalizedLSTMCellSimpleToFusedLSTM convert(
       fused_lstm_func_, false);
 
   auto result = convert.Initialize();
@@ -187,6 +192,7 @@ TEST_F(LstmUtilsTest, ConvertLayerNormLSTMCellSimpleToFusedLSTM) {
 
   auto it = fused_lstm_func_.getBody().back().rbegin();
   EXPECT_EQ(it->getName().getStringRef(), mlir::ReturnOp::getOperationName());
+  it++;
   it++;
   EXPECT_EQ(it->getName().getStringRef(),
             mlir::TFL::LSTMOp::getOperationName());
@@ -205,7 +211,7 @@ TEST_F(LstmUtilsTest, ConvertLayerNormLSTMCellSimpleToFusedLSTM) {
 
   EXPECT_EQ(fused_lstm_func_.getType().getNumResults(), 1);
   auto output_types = fused_lstm_func_.getType().getResults();
-  SmallVector<int64_t, 2> output_shape{1, 2};
+  SmallVector<int64_t, 2> output_shape{1, -1};
   EXPECT_EQ(output_types[0].cast<RankedTensorType>().getShape().size(),
             output_shape.size());
   for (int i = 0; i < output_shape.size(); i++) {

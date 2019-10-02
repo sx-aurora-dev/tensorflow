@@ -31,7 +31,6 @@ from tensorflow.core.framework import node_def_pb2
 from tensorflow.python.autograph.core import ag_ctx
 from tensorflow.python.autograph.impl import api as autograph
 from tensorflow.python.distribute import distribution_strategy_context as ds_context
-from tensorflow.python.distribute import values as distribute_values
 from tensorflow.python.eager import context
 from tensorflow.python.eager import execute
 from tensorflow.python.eager import function
@@ -302,7 +301,7 @@ class Layer(module.Module):
     self._trainable = trainable
     # A stateful layer is a layer whose updates are run during inference too,
     # for instance stateful RNNs.
-    self.stateful = False
+    self._stateful = False
     # Indicates whether `build` needs to be called upon layer call, to create
     # the layer's weights.
     self.built = False
@@ -394,6 +393,27 @@ class Layer(module.Module):
         A tensor or list/tuple of tensors.
     """
     return inputs
+
+  @doc_controls.for_subclass_implementers
+  def _add_trackable(self, trackable_object, trainable):
+    """Adds a Trackable object to this layer's state.
+
+    Arguments:
+      trackable_object: The tf.tracking.Trackable object to add.
+      trainable: Boolean, whether the variable should be part of the layer's
+        "trainable_variables" (e.g. variables, biases) or
+        "non_trainable_variables" (e.g. BatchNorm mean and variance).
+
+    Returns:
+      The tf.tracking.Trackable object.
+    """
+    if trainable:
+      self._trainable_weights.append(
+          base_layer_utils.TrackableWeightHandler(trackable_object))
+    else:
+      self._non_trainable_weights.append(
+          base_layer_utils.TrackableWeightHandler(trackable_object))
+    return trackable_object
 
   @doc_controls.for_subclass_implementers
   def add_weight(self,
@@ -503,10 +523,7 @@ class Layer(module.Module):
       old_getter = getter
       def getter(*args, **kwargs):  # pylint: disable=function-redefined
         variable = old_getter(*args, **kwargs)
-        if isinstance(variable, distribute_values.DistributedVariable):
-          return autocast_variable.AutoCastDistributedVariable(variable)
-        else:
-          return autocast_variable.AutoCastVariable(variable)
+        return autocast_variable.create_autocast_variable(variable)
 
     variable = self._add_variable_with_custom_getter(
         name=name,
@@ -908,8 +925,22 @@ class Layer(module.Module):
     return self._name
 
   @property
+  @trackable_layer_utils.cache_recursive_attribute('dynamic')
   def dynamic(self):
+    # NOTE(taylorrobie): Currently self._dynamic is read-only. If that changes
+    #                    then this cache logic must be updated.
     return self._dynamic
+
+  @property
+  @doc_controls.do_not_generate_docs
+  @trackable_layer_utils.cache_recursive_attribute('stateful')
+  def stateful(self):
+    return self._stateful
+
+  @stateful.setter
+  @trackable_layer_utils.invalidate_recursive_cache('stateful')
+  def stateful(self, value):
+    self._stateful = value
 
   @property
   def trainable(self):
@@ -1324,22 +1355,39 @@ class Layer(module.Module):
             layer's specifications.
     """
     params = self.weights
-    if len(params) != len(weights):
-      raise ValueError('You called `set_weights(weights)` on layer "' +
-                       self.name + '" with a  weight list of length ' +
-                       str(len(weights)) + ', but the layer was expecting ' +
-                       str(len(params)) + ' weights. Provided weights: ' +
-                       str(weights)[:50] + '...')
-    if not params:
-      return
+
+    expected_num_weights = 0
+    for param in params:
+      if isinstance(param, base_layer_utils.TrackableWeightHandler):
+        expected_num_weights += param.num_tensors
+      else:
+        expected_num_weights += 1
+
+    if expected_num_weights != len(weights):
+      raise ValueError(
+          'You called `set_weights(weights)` on layer "%s" '
+          'with a weight list of length %s, but the layer was '
+          'expecting %s weights. Provided weights: %s...' %
+          (self.name, len(weights), expected_num_weights, str(weights)[:50]))
+
+    weight_index = 0
     weight_value_tuples = []
-    for p, w in zip(params, weights):
-      ref_shape = p.shape
-      if not ref_shape.is_compatible_with(w.shape):
-        raise ValueError('Layer weight shape ' + str(ref_shape) +
-                         ' not compatible with '
-                         'provided weight shape ' + str(w.shape))
-      weight_value_tuples.append((p, w))
+    for param in params:
+      if isinstance(param, base_layer_utils.TrackableWeightHandler):
+        num_tensors = param.num_tensors
+        tensors = weights[weight_index:weight_index + num_tensors]
+        param.set_weights(tensors)
+        weight_index += num_tensors
+      else:
+        weight = weights[weight_index]
+        ref_shape = param.shape
+        if not ref_shape.is_compatible_with(weight.shape):
+          raise ValueError(
+              'Layer weight shape %s not compatible with provided weight '
+              'shape %s' % (ref_shape, weight.shape))
+        weight_value_tuples.append((param, weight))
+        weight_index += 1
+
     backend.batch_set_value(weight_value_tuples)
 
   def get_weights(self):
@@ -1348,8 +1396,14 @@ class Layer(module.Module):
     Returns:
         Weights values as a list of numpy arrays.
     """
-    params = self.weights
-    return backend.batch_get_value(params)
+    weights = self.weights
+    output_weights = []
+    for weight in weights:
+      if isinstance(weight, base_layer_utils.TrackableWeightHandler):
+        output_weights.extend(weight.get_tensors())
+      else:
+        output_weights.append(weight)
+    return backend.batch_get_value(output_weights)
 
   def get_updates_for(self, inputs):
     """Retrieves updates relevant to a specific set of inputs.
@@ -1737,14 +1791,6 @@ class Layer(module.Module):
       self._dtype_policy = policy.Policy(dtypes.as_dtype(dtype).name)
     else:
       self._dtype_policy = policy.global_policy()
-
-    if self._dtype_policy.should_cast_variables and backend.is_tpu_strategy(
-        ds_context.get_strategy()):
-      # TODO(b/137859335): Supoprt this. AutoCastVariables currently do not work
-      # properly when wrapping TPUMirroredVariables.
-      raise ValueError('DType Policies ending in "_with_float32_vars" are '
-                       'not yet supported with TPUStrategy. Got policy: %s' %
-                       self._dtype_policy.name)
 
     # This has no impact on the layer behavior, and is only used for printing
     # warnings.
@@ -2244,6 +2290,7 @@ class Layer(module.Module):
       super(tracking.AutoTrackable, self).__setattr__(
           '_layers',
           [l for l in self._layers if l is not existing_value])
+      self._attribute_sentinel.invalidate_all()
     if isinstance(existing_value, tf_variables.Variable):
       super(tracking.AutoTrackable, self).__setattr__(
           '_trainable_weights',
@@ -2251,6 +2298,13 @@ class Layer(module.Module):
       super(tracking.AutoTrackable, self).__setattr__(
           '_non_trainable_weights',
           [w for w in self._non_trainable_weights if w is not existing_value])
+
+    # Any time we change `_layers` (either by deleting the attribute or by
+    # reassigning it which will call __delattr__ from __setattr__) the topology
+    # of the subgraph of Layers may change. In that case we will need to
+    # recompute any attribute which depends on that subgraph.
+    if name == '_layers':
+      self._attribute_sentinel.invalidate_all()
 
   def __setattr__(self, name, value):
     if (name == '_self_setattr_tracking' or
@@ -2293,6 +2347,8 @@ class Layer(module.Module):
       # container types which compare equal.
       if not any((layer is value for layer in self._layers)):
         self._layers.append(value)
+        if hasattr(value, '_attribute_sentinel'):
+          value._attribute_sentinel.add_parent(self._attribute_sentinel)
         if hasattr(value, '_use_resource_variables'):
           # Legacy layers (V1 tf.layers) must always use
           # resource variables.
@@ -2341,6 +2397,11 @@ class Layer(module.Module):
               getattr(layer, attribute) for layer in nested_layers))
     return []
 
+  @property
+  @tracking.cached_per_instance
+  def _attribute_sentinel(self):
+    return trackable_layer_utils.AttributeSentinel()
+
   # This is a hack so that the is_layer (within
   # training/trackable/layer_utils.py) check doesn't get the weights attr.
   # TODO(b/110718070): Remove when fixed.
@@ -2349,6 +2410,7 @@ class Layer(module.Module):
 
   def _init_call_fn_args(self):
     # Clear cached call function arguments.
+    self.__class__._call_full_argspec.fget.cache.pop(self, None)
     self.__class__._call_fn_args.fget.cache.pop(self, None)
     self.__class__._call_accepts_kwargs.fget.cache.pop(self, None)
 
@@ -2360,8 +2422,15 @@ class Layer(module.Module):
 
   @property
   @tracking.cached_per_instance
+  def _call_full_argspec(self):
+    # Argspec inspection is expensive and the call spec is used often, so it
+    # makes sense to cache the result.
+    return tf_inspect.getfullargspec(self.call)
+
+  @property
+  @tracking.cached_per_instance
   def _call_fn_args(self):
-    all_args = tf_inspect.getfullargspec(self.call).args
+    all_args = self._call_full_argspec.args
     # Scrub `self` that appears if a decorator was applied.
     if all_args and all_args[0] == 'self':
       return all_args[1:]
@@ -2370,7 +2439,7 @@ class Layer(module.Module):
   @property
   @tracking.cached_per_instance
   def _call_accepts_kwargs(self):
-    return tf_inspect.getfullargspec(self.call).varkw is not None
+    return self._call_full_argspec.varkw is not None
 
   @property
   @tracking.cached_per_instance
@@ -2425,6 +2494,20 @@ class Layer(module.Module):
   def _list_functions_for_serialization(self, serialization_cache):
     return (self._trackable_saved_model_saver
             .list_functions_for_serialization(serialization_cache))
+
+  def __getstate__(self):
+    # Override to support `copy.deepcopy` and pickling.
+    # Thread-local objects cannot be copied in Python 3, so pop these.
+    # Thread-local objects are used to cache losses in MirroredStrategy, and
+    # so shouldn't be copied.
+    state = self.__dict__.copy()
+    state.pop('_thread_local', None)
+    return state
+
+  def __setstate__(self, state):
+    state['_thread_local'] = threading.local()
+    # Bypass Trackable logic as `__dict__` already contains this info.
+    object.__setattr__(self, '__dict__', state)
 
 
 class TensorFlowOpLayer(Layer):
@@ -2523,7 +2606,7 @@ class TensorFlowOpLayer(Layer):
         attrs.append(attr_name)
         attrs.append(op.get_attr(attr_name))
       attrs = tuple(attrs)
-      execute.record_gradient(op_type, op.inputs, attrs, op.outputs, op.name)
+      execute.record_gradient(op_type, op.inputs, attrs, op.outputs)
 
       if len(op.outputs) == 1:
         return op.outputs[0]

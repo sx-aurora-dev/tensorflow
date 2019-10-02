@@ -49,6 +49,30 @@ gentbl(
 )
 
 gentbl(
+    name = "tf_saved_model_inc_gen",
+    tbl_outs = [
+        (
+            "-gen-op-decls",
+            "ir/tf_saved_model.h.inc",
+        ),
+        (
+            "-gen-op-defs",
+            "ir/tf_saved_model.cc.inc",
+        ),
+        (
+            "-gen-op-doc",
+            "g3doc/tf_saved_model.md",
+        ),
+    ],
+    tblgen = "@local_config_mlir//:mlir-tblgen",
+    td_file = "ir/tf_saved_model_ops.td",
+    td_srcs = [
+        "@local_config_mlir//:include/mlir/IR/OpBase.td",
+        "@local_config_mlir//:include/mlir/Dialect/StandardOps/Ops.td",
+    ],
+)
+
+gentbl(
     name = "tensorflow_executor_inc_gen",
     tbl_outs = [
         (
@@ -122,6 +146,7 @@ cc_library(
         "ir/tf_ops.cc",
         "ir/tf_ops.cc.inc",
         "ir/tf_ops.h.inc",
+        "ir/tf_saved_model.cc",
         "ir/tf_types.cc",
     ],
     hdrs = [
@@ -129,6 +154,7 @@ cc_library(
         "ir/tf_device.h",
         "ir/tf_executor.h",
         "ir/tf_ops.h",
+        "ir/tf_saved_model.h",
         "ir/tf_traits.h",
         "ir/tf_types.def",
         "ir/tf_types.h",
@@ -143,6 +169,8 @@ cc_library(
         ":tensorflow_device_ops_inc_gen",
         ":tensorflow_executor_inc_gen",
         ":tensorflow_ops_inc_gen",
+        ":tf_saved_model_inc_gen",
+        "//tensorflow/cc/saved_model:loader_lite",
         "//tensorflow/compiler/mlir/lite:validators",
         "//tensorflow/core:lib",
         "@llvm//:support",
@@ -176,6 +204,9 @@ cc_library(
         "transforms/materialize_mlir_passthrough_op.cc",
         "transforms/optimize.cc",
         "transforms/raise_control_flow.cc",
+        "transforms/shape_inference.cc",
+        "transforms/shape_inference_pass.cc",
+        "transforms/sink_constant.cc",
         "transforms/tpu_cluster_formation.cc",
         "transforms/tpu_rewrite_pass.cc",
         "translate/control_to_executor_dialect.cc",
@@ -184,15 +215,25 @@ cc_library(
     hdrs = [
         "transforms/bridge.h",
         "transforms/passes.h",
+        "transforms/shape_inference.h",
     ],
     includes = ["include"],
     deps = [
+        ":convert_tensor",
+        ":convert_type",
         ":error_util",
+        ":export_tf_dialect_op",
         ":tensorflow",
         ":tensorflow_optimize_inc_gen",
         "//tensorflow/compiler/mlir/lite:validators",
+        "//tensorflow/compiler/xla:xla_data_proto",
+        "//tensorflow/compiler/xla:xla_proto",
+        "//tensorflow/core:framework",
         "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_proto_cc",
         "//tensorflow/core/platform:logging",
+        "//tensorflow/core/protobuf/tpu:compile_metadata_proto",
+        "//tensorflow/core/protobuf/tpu:dynamic_padding_proto_cc",
         "@llvm//:support",
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:IR",
@@ -207,13 +248,25 @@ cc_library(
     alwayslink = 1,
 )
 
+cc_library(
+    name = "tensorflow_test_passes",
+    srcs = [
+        "transforms/lower_tf_pass.cc",
+    ],
+    deps = [
+        ":lower_tf_lib",
+        "@local_config_mlir//:IR",
+        "@local_config_mlir//:Pass",
+    ],
+    alwayslink = 1,
+)
+
 # Library with TensorFlow dialect static initialization.
 cc_library(
     name = "tensorflow_dialect_registration",
     srcs = ["ir/dialect_registration.cc"],
     deps = [
         ":tensorflow",
-        ":tensorflow_passes",
         "@local_config_mlir//:IR",
     ],
     alwayslink = 1,
@@ -240,6 +293,7 @@ cc_library(
         ":tensorflow_passes",
         "//tensorflow/cc/saved_model:loader_lite",
         "//tensorflow/compiler/jit:shape_inference_helpers",
+        "//tensorflow/compiler/tf2xla:functionalize_control_flow",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",
@@ -502,10 +556,10 @@ cc_library(
 cc_library(
     name = "tf_graph_optimization_pass",
     srcs = ["transforms/tf_graph_optimization_pass.cc"],
+    hdrs = ["transforms/tf_graph_optimization_pass.h"],
     deps = [
         ":convert_graphdef",
         ":mlir_roundtrip_flags",
-        ":mlir_roundtrip_pass",
         "//tensorflow/compiler/tf2xla:functionalize_control_flow_pass_registration",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",
@@ -568,6 +622,7 @@ cc_library(
         "//tensorflow/core:protos_all_proto_cc",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@llvm//:support",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Parser",
@@ -611,6 +666,7 @@ cc_library(
 tf_cc_test(
     name = "error_util_test",
     srcs = ["utils/error_util_test.cc"],
+    tags = ["no_rocm"],
     deps = [
         ":error_util",
         "//tensorflow/compiler/xla:test",
@@ -715,6 +771,9 @@ tf_cc_test(
 cc_library(
     name = "mlir_passthrough_op",
     srcs = ["ops/mlir_passthrough_op.cc"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//tensorflow/core:framework",
     ],
@@ -725,4 +784,23 @@ tf_gen_op_wrapper_py(
     name = "gen_mlir_passthrough_op_py",
     out = "gen_mlir_passthrough_op.py",
     deps = [":mlir_passthrough_op"],
+)
+
+# Library to get rewrite patterns lowering within TensorFlow.
+#
+# This is a separate library so that external passes can link only this library
+# without linking any of the other tensorflow passes.
+cc_library(
+    name = "lower_tf_lib",
+    srcs = [
+        "transforms/lower_tf.cc",
+    ],
+    hdrs = [
+        "transforms/lower_tf.h",
+    ],
+    deps = [
+        ":tensorflow",
+        "@local_config_mlir//:IR",
+    ],
+    alwayslink = 1,
 )

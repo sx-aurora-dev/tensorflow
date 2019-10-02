@@ -821,12 +821,18 @@ bool BufferAssigner::LiveRangeInterferes(const HloValue* buffer1,
       auto operand_value = buffer1;
       auto user_value = buffer2;
       if (!can_share_as_operand(user_value, operand_value)) {
+        VLOG(4) << "End of live range of " << buffer1->ToShortString()
+                << " is equal to the start of live range of "
+                << buffer2->ToShortString() << ", buffer cannot be shared.";
         return true;
       }
     } else if (live_range_2.end == live_range_1.start) {
       auto operand_value = buffer2;
       auto user_value = buffer1;
       if (!can_share_as_operand(user_value, operand_value)) {
+        VLOG(4) << "End of live range of " << buffer2->ToShortString()
+                << " is equal to the start of live range of "
+                << buffer1->ToShortString() << ", buffer cannot be shared.";
         return true;
       }
     } else {
@@ -911,6 +917,9 @@ bool BufferAssigner::MaybeAssignBuffer(BufferAllocation* allocation,
     for (const HloValue* new_value : hlo_buffer.values()) {
       if (assignment->hlo_live_range().total_order_scheduled()) {
         if (LiveRangeInterferes(new_value, &assigned_buffer, assignment)) {
+          VLOG(4) << "Can't assign: assignee " << assigned_buffer
+                  << " live range interferes with "
+                  << new_value->ToShortString();
           return false;
         }
       } else if (assignment->hlo_ordering().MayInterfere(
@@ -1260,8 +1269,7 @@ Status BufferAssigner::AssignBuffersForComputations(
         };
         const HloValue* a_min = *absl::c_min_element(a->values(), compare);
         const HloValue* b_min = *absl::c_min_element(b->values(), compare);
-        return post_order_position.at(a_min->instruction()) <
-               post_order_position.at(b_min->instruction());
+        return compare(a_min, b_min);
       });
 
   std::vector<BufferAllocation::Index> allocation_indices;

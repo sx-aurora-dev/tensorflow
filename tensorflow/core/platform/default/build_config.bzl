@@ -1,8 +1,6 @@
 # Platform-specific build configurations.
 
 load("@com_google_protobuf//:protobuf.bzl", "proto_gen")
-load("//tensorflow:tensorflow.bzl", "if_not_mobile")
-load("//tensorflow:tensorflow.bzl", "if_windows")
 load("//tensorflow:tensorflow.bzl", "if_not_windows")
 load("//tensorflow/core/platform:default/build_config_root.bzl", "if_static")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
@@ -442,10 +440,10 @@ def tf_proto_library(
         cc_grpc_version = None,
         j2objc_api_version = 1,
         js_codegen = "jspb",
-        provide_cc_alias = False,
-        make_default_target_header_only = False):
+        make_default_target_header_only = False,
+        exports = []):
     """Make a proto library, possibly depending on other proto libraries."""
-    _ignore = (js_codegen, provide_cc_alias)
+    _ignore = (js_codegen, exports)
 
     tf_proto_library_cc(
         name = name,
@@ -490,7 +488,10 @@ def tf_additional_lib_hdrs(exclude = []):
         "default/*.h",
         "windows/*.h",
         "posix/error.h",
-    ], exclude = exclude)
+    ], exclude = exclude + [
+        "default/subprocess.h",
+        "default/posix_file_system.h",
+    ])
     return select({
         "//tensorflow:windows": windows_hdrs,
         "//conditions:default": native.glob([
@@ -504,7 +505,15 @@ def tf_additional_lib_srcs(exclude = []):
         "default/*.cc",
         "windows/*.cc",
         "posix/error.cc",
-    ], exclude = exclude)
+    ], exclude = exclude + [
+        "default/env.cc",
+        "default/env_time.cc",
+        "default/load_library.cc",
+        "default/net.cc",
+        "default/port.cc",
+        "default/posix_file_system.cc",
+        "default/subprocess.cc",
+    ])
     return select({
         "//tensorflow:windows": windows_srcs,
         "//conditions:default": native.glob([
@@ -532,9 +541,7 @@ def tf_additional_proto_hdrs():
     return [
         "default/integral_types.h",
         "default/logging.h",
-    ] + if_windows([
-        "windows/integral_types.h",
-    ])
+    ]
 
 def tf_additional_human_readable_json_deps():
     return []
@@ -740,6 +747,9 @@ def tf_additional_numa_copts():
     })
 
 def tf_additional_rpc_deps():
+    return []
+
+def tf_additional_tensor_coding_deps():
     return []
 
 def tf_logging_absl_deps():

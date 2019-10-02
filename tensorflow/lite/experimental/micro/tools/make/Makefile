@@ -22,12 +22,18 @@ else
 	endif
 endif
 
-HOST_ARCH := $(shell if [[ $(shell uname -m) =~ i[345678]86 ]]; then echo x86_32; else echo $(shell uname -m); fi)
+# Determine the host architecture, with any ix86 architecture being labelled x86_32
+HOST_ARCH := $(shell if uname -m | grep -Eq 'i[345678]86'; then echo x86_32; else echo $(shell uname -m); fi)
 
 # Override these on the make command line to target a specific architecture. For example:
 # make -f tensorflow/lite/Makefile TARGET=rpi TARGET_ARCH=armv7l
 TARGET := $(HOST_OS)
 TARGET_ARCH := $(HOST_ARCH)
+
+# Default compiler and tool names:
+CXX_TOOL := g++
+CC_TOOL := gcc
+AR_TOOL := ar
 
 # Specify TAGS on the command line to add a particular set of specialized
 # implementations, for example TAGS="CMSIS disco_f746ng" to target a Discovery
@@ -119,18 +125,24 @@ tensorflow/lite/kernels/internal/reference/comparisons.h \
 tensorflow/lite/kernels/internal/reference/conv.h \
 tensorflow/lite/kernels/internal/reference/depthwiseconv_float.h \
 tensorflow/lite/kernels/internal/reference/depthwiseconv_uint8.h \
+tensorflow/lite/kernels/internal/reference/dequantize.h \
 tensorflow/lite/kernels/internal/reference/floor.h \
 tensorflow/lite/kernels/internal/reference/fully_connected.h \
 tensorflow/lite/kernels/internal/reference/integer_ops/add.h \
+tensorflow/lite/kernels/internal/reference/integer_ops/conv.h \
+tensorflow/lite/kernels/internal/reference/integer_ops/depthwise_conv.h \
 tensorflow/lite/kernels/internal/reference/integer_ops/fully_connected.h \
 tensorflow/lite/kernels/internal/reference/maximum_minimum.h \
 tensorflow/lite/kernels/internal/reference/neg.h \
 tensorflow/lite/kernels/internal/reference/pooling.h \
 tensorflow/lite/kernels/internal/reference/prelu.h \
 tensorflow/lite/kernels/internal/reference/process_broadcast_shapes.h \
+tensorflow/lite/kernels/internal/reference/quantize.h \
 tensorflow/lite/kernels/internal/reference/round.h \
 tensorflow/lite/kernels/internal/reference/softmax.h \
+tensorflow/lite/kernels/internal/reference/logistic.h \
 tensorflow/lite/kernels/internal/reference/strided_slice.h \
+tensorflow/lite/kernels/internal/reference/integer_ops/pooling.h \
 tensorflow/lite/kernels/internal/round.h \
 tensorflow/lite/kernels/internal/strided_slice_logic.h \
 tensorflow/lite/kernels/internal/tensor.h \
@@ -173,6 +185,9 @@ ARDUINO_PROJECT_FILES := \
 
 ALL_PROJECT_TARGETS :=
 
+ARDUINO_LIBRARY_TARGETS :=
+ARDUINO_LIBRARY_ZIPS :=
+
 include $(MAKEFILE_DIR)/third_party_downloads.inc
 THIRD_PARTY_DOWNLOADS :=
 $(eval $(call add_third_party_download,$(GEMMLOWP_URL),$(GEMMLOWP_MD5),gemmlowp,))
@@ -205,9 +220,9 @@ PRJDIR := $(GENDIR)prj/
 
 MICROLITE_LIB_PATH := $(LIBDIR)$(MICROLITE_LIB_NAME)
 
-CXX := $(CC_PREFIX)${TARGET_TOOLCHAIN_PREFIX}g++
-CC := $(CC_PREFIX)${TARGET_TOOLCHAIN_PREFIX}gcc
-AR := $(CC_PREFIX)${TARGET_TOOLCHAIN_PREFIX}ar
+CXX := $(CC_PREFIX)${TARGET_TOOLCHAIN_PREFIX}${CXX_TOOL}
+CC := $(CC_PREFIX)${TARGET_TOOLCHAIN_PREFIX}${CC_TOOL}
+AR := $(CC_PREFIX)${TARGET_TOOLCHAIN_PREFIX}${AR_TOOL}
 
 # Load the examples.
 include $(wildcard tensorflow/lite/experimental/micro/examples/*/Makefile.inc)
@@ -259,6 +274,7 @@ $(BINDIR)%_test : $(OBJDIR)%_test.o $(MICROLITE_LIB_PATH)
 	$(LIBFLAGS) $(MICROLITE_LIB_PATH) $(LDFLAGS) $(MICROLITE_LIBS)
 
 $(BINDIR)%.test_target: $(BINDIR)%_test
+	@test -f $(TEST_SCRIPT) || (echo 'Unable to find the test script. Is the software emulation available in $(TARGET)?'; exit 1)
 	$(TEST_SCRIPT) $< '~~~ALL TESTS PASSED~~~'
 
 # snease: Add %.bin rule here since BINDIR is now defined
@@ -280,6 +296,11 @@ test: $(MICROLITE_TEST_TARGETS)
 generate_projects: $(ALL_PROJECT_TARGETS)
 
 generate_non_kernel_projects: $(filter-out generate_kernel%,$(ALL_PROJECT_TARGETS))
+
+generate_non_test_projects: $(filter-out %_test%,$(ALL_PROJECT_TARGETS))
+
+generate_arduino_zip: generate_non_kernel_projects $(ARDUINO_LIBRARY_ZIPS)
+	python tensorflow/lite/experimental/micro/tools/make/merge_arduino_zips.py $(PRJDIR)/tensorflow_lite.zip $(ARDUINO_LIBRARY_ZIPS)
 
 # Gets rid of all generated files.
 clean:

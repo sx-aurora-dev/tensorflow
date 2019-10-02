@@ -1443,7 +1443,7 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:framework_lite",
         "//tensorflow/core:lib",
-        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:protos_all_proto_cc",
         "//tensorflow/core:ragged_to_dense_util",
     ],
 )
@@ -1796,6 +1796,24 @@ tf_cc_test(
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
+tf_cc_test(
+    name = "encode_jpeg_op_test",
+    size = "small",
+    srcs = ["encode_jpeg_op_test.cc"],
+    deps = [
+        ":encode_jpeg_op",
+        ":ops_testutil",
+        ":ops_util",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
@@ -3519,6 +3537,7 @@ tf_kernel_library(
     prefix = "einsum_op",
     deps = [
         ":batch_matmul_op",
+        ":fill_functor",
         ":reduction_ops",
         ":transpose_functor",
         "//tensorflow/core:framework",
@@ -3834,7 +3853,11 @@ tf_kernel_library(
 
 tf_mkl_kernel_library(
     name = "mkl_matmul_op",
-    srcs = ["mkl_matmul_op.cc"],
+    srcs = [
+        "mkl_matmul_op.cc",
+        "mkl_matmul_op_fused.cc",
+    ],
+    hdrs = ["mkl_matmul_ops_common.h"],
     deps = MATH_DEPS + mkl_deps(),
 )
 
@@ -4408,6 +4431,7 @@ tf_kernel_library(
     deps = NN_DEPS + [
         ":fill_functor",
         ":redux_functor",
+        ":transpose_functor",
     ] + if_cuda([
         "//tensorflow/core:stream_executor",
     ]),
@@ -6545,7 +6569,7 @@ filegroup(
     name = "android_all_ops",
     srcs = [
         "//tensorflow/c/kernels:android_all_op_kernels",
-        "//tensorflow/core/kernels/data:dataset_ops_srcs",
+        "//tensorflow/core/kernels/data:android_all_op_kernels",
     ] + glob(
         [
             "*.cc",
@@ -7563,6 +7587,7 @@ tf_mkl_kernel_library(
     name = "mkl_qmatmul_op",
     srcs = ["mkl_qmatmul_op.cc"],
     hdrs = [
+        "mkl_matmul_ops_common.h",
         "mkl_quantized_conv_ops.h",
         "no_op.h",
     ],
@@ -7877,6 +7902,7 @@ tf_cc_test_mkl(
         ":conv_ops",
         ":image",
         ":mkl_conv_op",
+        ":mkl_matmul_op",
         ":mkl_tfconv_op",
         ":ops_testutil",
         ":ops_util",

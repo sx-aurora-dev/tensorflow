@@ -189,8 +189,20 @@ bool HloDataflowAnalysis::Phi(
   for (const InstructionValueSet* input : inputs) {
     VLOG(5) << "input value set = " << input->ToString();
   }
-  for (const InstructionValueSet* input : inputs) {
-    DCHECK(ShapeUtil::Compatible(instruction->shape(), input->shape()));
+
+  if (bitcast_defines_value_) {
+    absl::c_for_each(inputs, [&](const InstructionValueSet* input) {
+      DCHECK(ShapeUtil::Compatible(instruction->shape(), input->shape()));
+    });
+  } else {
+    const Shape& shape = instruction->shape();
+    PrimitiveType ty = shape.element_type();
+    bool is_array = shape.IsArray();
+    absl::c_for_each(inputs, [&](const InstructionValueSet* input) {
+      DCHECK(ty == input->shape().element_type() &&
+             (!is_array || ShapeUtil::ElementsIn(shape) ==
+                               ShapeUtil::ElementsIn(input->shape())));
+    });
   }
 
   bool changed = false;
@@ -327,6 +339,20 @@ bool HloDataflowAnalysis::UpdateBitcastValueSet(HloInstruction* bitcast) {
   InstructionValueSet& bitcast_set = GetInstructionValueSet(bitcast);
   if (!bitcast_defines_value_ && operand_set != bitcast_set) {
     bitcast_set = operand_set;
+    return true;
+  }
+  return false;
+}
+
+bool HloDataflowAnalysis::UpdateSetDimensionSizeValueSet(
+    HloInstruction* set_dimension_size) {
+  CHECK_EQ(set_dimension_size->opcode(), HloOpcode::kSetDimensionSize);
+  const InstructionValueSet& operand_set =
+      GetInstructionValueSet(set_dimension_size->operand(0));
+  InstructionValueSet& set_dimension_size_set =
+      GetInstructionValueSet(set_dimension_size);
+  if (operand_set != set_dimension_size_set) {
+    set_dimension_size_set = operand_set;
     return true;
   }
   return false;
@@ -634,6 +660,8 @@ bool HloDataflowAnalysis::UpdateInstructionValueSet(
       return UpdateAddDependencyValueSet(instruction);
     case HloOpcode::kBitcast:
       return UpdateBitcastValueSet(instruction);
+    case HloOpcode::kSetDimensionSize:
+      return UpdateSetDimensionSizeValueSet(instruction);
     case HloOpcode::kDomain:
       return UpdateDomainValueSet(instruction);
     case HloOpcode::kCopy:
@@ -797,6 +825,7 @@ Status HloDataflowAnalysis::InitializeInstructionValueSets() {
             define_all_values();
           }
           break;
+        case HloOpcode::kSetDimensionSize:
         case HloOpcode::kAddDependency:
         case HloOpcode::kWhile:
         case HloOpcode::kCall:
