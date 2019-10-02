@@ -18,6 +18,7 @@ load(
     "tf_additional_proto_hdrs",
     "tf_additional_rocdl_deps",
     "tf_additional_rocdl_srcs",
+    "tf_additional_tensor_coding_deps",
     "tf_additional_test_srcs",
     "tf_logging_absl_deps",
     "tf_platform_hdrs",
@@ -29,11 +30,17 @@ load(
     "//tensorflow/core/platform:default/build_refactor.bzl",
     "tf_instantiate_platform_libraries",
     "tf_platform_helper_deps",
+    "tf_mobile_aware_deps",
 )
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_copts",
 )
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
+)
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
 package(
     default_visibility = [
@@ -50,13 +57,23 @@ package(
 tf_instantiate_platform_libraries(names = [
     "context",
     "cord",
+    "cuda_libdevice_path",
     "dynamic_annotations",
+    "env",
     "env_time",
-    "fingerprint",
     "human_readable_json",
+    "load_library",
     "mutex",
+    "net",
     "notification",
+    "platform_port",
+    "rocm_rocdl_path",
     "strong_hash",
+    "subprocess",
+    "tracing",
+    "types",
+    "unbounded_work_queue",
+    "wide_char",
 ])
 
 cc_library(
@@ -137,6 +154,14 @@ cc_library(
 )
 
 cc_library(
+    name = "cuda_libdevice_path",
+    textual_hdrs = ["cuda_libdevice_path.h"],
+    deps = [
+        ":cuda_libdevice_path_impl",
+    ],
+)
+
+cc_library(
     name = "denormal",
     srcs = ["denormal.cc"],
     hdrs = ["denormal.h"],
@@ -153,9 +178,19 @@ cc_library(
     name = "dynamic_annotations",
     hdrs = ["dynamic_annotations.h"],
     deps = [
-        ":dynamic_annotations_impl",
         ":platform",
+    ] + tf_mobile_aware_deps("dynamic_annotations_impl"),
+)
+
+cc_library(
+    name = "env",
+    textual_hdrs = [
+        "env.h",
+        "file_system.h",
+        "file_system_helper.h",
+        "threadpool.h",
     ],
+    deps = tf_platform_helper_deps("env_impl"),
 )
 
 cc_library(
@@ -183,13 +218,10 @@ cc_library(
 )
 
 cc_library(
-    name = "fingerprint",
-    hdrs = ["fingerprint.h"],
+    name = "gif",
+    hdrs = ["gif.h"],
     deps = [
-        ":fingerprint_impl",
-        ":platform",
-        ":stringpiece",
-        ":types",
+        "@gif",
     ],
 )
 
@@ -214,6 +246,34 @@ cc_library(
     textual_hdrs = ["human_readable_json.h"],
     deps = [
         ":human_readable_json_impl",
+    ],
+)
+
+cc_library(
+    name = "jpeg",
+    hdrs = ["jpeg.h"],
+    deps = [
+        "@libjpeg_turbo//:jpeg",
+    ],
+)
+
+cc_library(
+    name = "load_library",
+    textual_hdrs = ["load_library.h"],
+    deps = tf_platform_helper_deps("load_library_impl"),
+)
+
+cc_library(
+    name = "logger",
+    srcs = ["logger.cc"],
+    hdrs = ["logger.h"],
+    deps = [
+        ":env",
+        ":logging",
+        ":protobuf",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 
@@ -244,11 +304,25 @@ cc_library(
 )
 
 cc_library(
+    name = "net",
+    textual_hdrs = ["net.h"],
+    deps = tf_platform_helper_deps("net_impl"),
+)
+
+cc_library(
     name = "notification",
     hdrs = ["notification.h"],
     deps = [
         ":notification_impl",
         ":platform",
+    ],
+)
+
+cc_library(
+    name = "null_file_system",
+    hdrs = ["null_file_system.h"],
+    deps = [
+        ":env",
     ],
 )
 
@@ -268,18 +342,30 @@ cc_library(
 )
 
 cc_library(
-    name = "rocm_rocdl_path",
-    srcs = ["rocm_rocdl_path.cc"] + tf_additional_rocdl_srcs(),
-    hdrs = ["rocm_rocdl_path.h"],
-    deps = [
-        ":types",
-        "//tensorflow/core:lib",
-    ] + tf_additional_rocdl_deps(),
+    name = "platform",
+    hdrs = ["platform.h"],
 )
 
 cc_library(
-    name = "platform",
-    hdrs = ["platform.h"],
+    name = "platform_port",
+    srcs = [
+        "cpu_info.cc",
+    ],
+    copts = tf_copts(),
+    textual_hdrs = [
+        "cpu_info.h",
+        "demangle.h",
+        "host_info.h",
+        "init_main.h",
+        "mem.h",
+        "numa.h",
+        "snappy.h",
+    ],
+    deps = [
+        ":logging",
+        ":platform",
+        ":types",
+    ] + tf_platform_helper_deps("platform_port_impl"),
 )
 
 cc_library(
@@ -289,6 +375,15 @@ cc_library(
         "platform_strings_computed.h",
     ],
     hdrs = ["platform_strings.h"],
+)
+
+cc_library(
+    name = "png",
+    hdrs = ["png.h"],
+    deps = [
+        ":platform",
+        "@png",
+    ],
 )
 
 cc_library(
@@ -317,6 +412,18 @@ cc_library(
 )
 
 cc_library(
+    name = "protobuf_internal",
+    hdrs = ["protobuf_internal.h"],
+    deps = [
+        ":platform",
+        ":protobuf",
+        ":types",
+        "//tensorflow/core/lib/core:errors",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
+
+cc_library(
     name = "regexp",
     hdrs = ["regexp.h"],
     deps = [
@@ -325,6 +432,23 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_googlesource_code_re2//:re2",
     ],
+)
+
+cc_library(
+    name = "rocm_rocdl_path",
+    textual_hdrs = ["rocm_rocdl_path.h"],
+    deps = [
+        ":rocm_rocdl_path_impl",
+    ],
+)
+
+cc_library(
+    name = "rocm",
+    hdrs = if_rocm_is_configured(["rocm.h"]),
+    deps = if_rocm_is_configured([
+        ":platform",
+        "//tensorflow/stream_executor/rocm:rocm_activation",
+    ]),
 )
 
 cc_library(
@@ -427,8 +551,57 @@ cc_library(
 )
 
 cc_library(
+    name = "subprocess",
+    textual_hdrs = [
+        "subprocess.h",
+    ],
+    deps = tf_platform_helper_deps("subprocess_impl"),
+)
+
+cc_library(
+    name = "tensor_coding",
+    srcs = ["tensor_coding.cc"],
+    hdrs = ["tensor_coding.h"],
+    deps = [
+        ":platform",
+        ":protobuf",
+        ":stringpiece",
+        ":types",
+        "//tensorflow/core/lib/core:coding",
+        "//tensorflow/core/lib/core:refcount",
+        "//tensorflow/core/lib/strings:string_utils",
+    ] + tf_additional_tensor_coding_deps(),
+)
+
+cc_library(
     name = "thread_annotations",
     hdrs = ["thread_annotations.h"],
+)
+
+cc_library(
+    name = "threadpool_interface",
+    hdrs = ["threadpool_interface.h"],
+    deps = [
+        ":mutex",
+        ":types",
+        "//third_party/eigen3",
+    ],
+)
+
+cc_library(
+    name = "threadpool_options",
+    hdrs = ["threadpool_options.h"],
+    deps = [
+        ":threadpool_interface",
+    ],
+)
+
+cc_library(
+    name = "tracing",
+    textual_hdrs = ["tracing.h"],
+    deps = [
+        ":tracing_impl",
+    ],
 )
 
 cc_library(
@@ -438,12 +611,19 @@ cc_library(
 
 cc_library(
     name = "types",
-    srcs = tf_platform_hdrs(["integral_types.h"]),
     hdrs = ["types.h"],
     deps = [
         ":platform",
         ":tstring",
-        "//tensorflow/core/platform/default/build_config:base",
+    ] + tf_mobile_aware_deps("types_impl"),
+)
+
+cc_library(
+    name = "unbounded_work_queue",
+    hdrs = ["unbounded_work_queue.h"],
+    deps = [
+        ":platform",
+        ":unbounded_work_queue_impl",
     ],
 )
 
@@ -689,4 +869,14 @@ exports_files(
             "stacktrace.h",
         ],
     ),
+)
+
+bzl_library(
+    name = "build_config_root_bzl",
+    srcs = ["default/build_config_root.bzl"],
+)
+
+bzl_library(
+    name = "cuda_build_defs_bzl",
+    srcs = ["default/cuda_build_defs.bzl"],
 )

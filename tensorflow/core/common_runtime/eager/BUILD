@@ -149,8 +149,22 @@ tf_cuda_library(
             "//tensorflow/core:session_options",
             "//tensorflow/core/distributed_runtime/eager:eager_client",
             "//tensorflow/core/distributed_runtime/eager:remote_tensor_handle_data",
+            "//tensorflow/core/profiler/lib:traceme",
         ],
     }),
+)
+
+tf_cc_test(
+    name = "tensor_handle_test",
+    srcs = ["tensor_handle_test.cc"],
+    deps = [
+        ":tensor_handle",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "@com_google_absl//absl/memory",
+    ],
 )
 
 tf_cuda_library(
@@ -283,8 +297,7 @@ cc_library(
 cc_library(
     name = "mkl_eager_op_rewrite",
     srcs = ["mkl_eager_op_rewrite.cc"],
-    copts = tf_copts(),
-    nocopts = "-fno-exceptions",
+    copts = tf_copts(allow_exceptions = True),
     deps = [
         ":eager_op_rewrite_registry",
         "//tensorflow/core:framework",

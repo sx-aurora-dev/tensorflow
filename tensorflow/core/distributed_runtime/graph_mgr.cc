@@ -74,7 +74,7 @@ GraphMgr::Item::~Item() {
   for (const auto& unit : this->units) {
     CHECK_NOTNULL(unit.device);
     if (!graph_mgr->skip_cost_models_) {
-      graph_mgr->cost_model_manager_.RemoveCostModelForGraph(unit.graph);
+      graph_mgr->cost_model_manager_.RemoveCostModelForGraph(unit.graph.get());
     }
     delete unit.root;
     unit.device->op_segment()->RemoveHold(this->session);
@@ -135,11 +135,8 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
 
   TF_RETURN_IF_ERROR(ValidateGraphDefForDevices(gdef));
 
-  if (gdef.versions().producer() >= 5) {
-    // Validate the graph: we assume that merging two valid graphs
-    // should maintain graph validity.
-    TF_RETURN_IF_ERROR(graph::ValidateGraphDef(gdef, *item->lib_def));
-  }
+  // We don't explicitly Validate the graph def because ConvertGraphDefToGraph
+  // does that below.
 
   item->proc_flr.reset(new ProcessFunctionLibraryRuntime(
       device_mgr_, worker_env_->env, gdef.versions().producer(),
@@ -151,6 +148,7 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
   GraphConstructorOptions opts;
   opts.allow_internal_ops = true;
   opts.expect_device_spec = true;
+  opts.validate_nodes = true;
   TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(opts, gdef, &graph));
 
   // Splits "graph" into multiple subgraphs by device names.
@@ -279,13 +277,12 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
     TF_RETURN_IF_ERROR(
         EnsureMemoryTypes(DeviceType(unit->device->device_type()),
                           unit->device->name(), subgraph.get()));
-    unit->graph = subgraph.get();
+    unit->graph = std::move(subgraph);
     unit->build_cost_model = graph_options.build_cost_model();
     if (unit->build_cost_model > 0) {
       skip_cost_models_ = false;
     }
-    TF_RETURN_IF_ERROR(
-        NewLocalExecutor(params, std::move(subgraph), &unit->root));
+    TF_RETURN_IF_ERROR(NewLocalExecutor(params, *unit->graph, &unit->root));
   }
   return Status::OK();
 }
@@ -554,14 +551,14 @@ void GraphMgr::BuildCostModel(Item* item, StepStatsCollector* collector,
     std::unordered_map<string, const Graph*> device_to_graph;
     for (const auto& unit : item->units) {
       if (unit.build_cost_model > 0) {
-        device_to_graph[unit.device->name()] = unit.graph;
+        device_to_graph[unit.device->name()] = unit.graph.get();
       }
     }
     collector->BuildCostModel(&cost_model_manager_, device_to_graph);
 
     if (cost_graph != nullptr) {
       for (const auto& unit : item->units) {
-        cost_model_manager_.AddToCostGraphDef(unit.graph, cost_graph)
+        cost_model_manager_.AddToCostGraphDef(unit.graph.get(), cost_graph)
             .IgnoreError();
       }
     }

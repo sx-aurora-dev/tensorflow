@@ -20,7 +20,6 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/cleanup.h"
 #include "tensorflow/core/lib/hash/hash.h"
-#include "tensorflow/core/platform/abi.h"
 #include "tensorflow/core/platform/annotation.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/logging.h"
@@ -30,6 +29,16 @@ namespace tensorflow {
 namespace profiler {
 
 namespace {
+
+static thread_local bool internalCuCall;
+
+// Temporary disable cupti api tracing for this thread during the life scope of
+// this class. Used for the API calls that initiated by us.
+class CuptiApiTracingDisabler {
+ public:
+  CuptiApiTracingDisabler() { internalCuCall = true; }
+  ~CuptiApiTracingDisabler() { internalCuCall = false; }
+};
 
 Status ToStatus(CUptiResult result) {
   if (result == CUPTI_SUCCESS) {
@@ -110,8 +119,8 @@ const char *getActivityUnifiedMemoryKindString(
 // GetCachedTID() caches the thread ID in thread-local storage (which is a
 // userspace construct) to avoid unnecessary system calls. Without this caching,
 // it can take roughly 98ns, while it takes roughly 1ns with this caching.
-pid_t GetCachedTID() {
-  static thread_local pid_t current_thread_id =
+int32 GetCachedTID() {
+  static thread_local int32 current_thread_id =
       Env::Default()->GetCurrentThreadId();
   return current_thread_id;
 }
@@ -627,6 +636,7 @@ struct KernelRecord {
   CUevent start_event;
   CUevent stop_event;
   KernelDetails details;
+  uint64 start_timestamp;
 };
 
 struct MemcpyRecord {
@@ -637,9 +647,11 @@ struct MemcpyRecord {
   uint32 correlation_id;
   CUevent start_event;
   CUevent stop_event;
+  uint64 start_timestamp;
 };
 
 Status CreateAndRecordEvent(CUevent *event, CUstream stream) {
+  CuptiApiTracingDisabler disabler;
   TF_RETURN_IF_ERROR(ToStatus(cuEventCreate(event, CU_EVENT_DEFAULT)));
   return ToStatus(cuEventRecord(*event, stream));
 }
@@ -678,17 +690,19 @@ class CudaEventRecorder {
     record.details.grid_x = params->gridDimX;
     record.details.grid_y = params->gridDimY;
     record.details.grid_z = params->gridDimZ;
+    record.start_timestamp = CuptiTracer::GetTimestamp();
     LogIfError(CreateAndRecordEvent(&record.start_event, stream));
     absl::MutexLock lock(&mutex_);
     if (stopped_) return -1;
     kernel_records_.push_back(record);
     return kernel_records_.size() - 1;
   }
-  void StopKernel(size_t index) {
+  uint64 StopKernel(size_t index) {
     absl::MutexLock lock(&mutex_);
-    if (index >= kernel_records_.size()) return;
+    if (index >= kernel_records_.size()) return 0;
     auto &record = kernel_records_[index];
     LogIfError(CreateAndRecordEvent(&record.stop_event, record.stream));
+    return record.start_timestamp;
   }
 
   // Registers the start of a copy operation. The returned index should be
@@ -697,17 +711,19 @@ class CudaEventRecorder {
                      CUcontext context, CUstream stream,
                      uint32 correlation_id) {
     MemcpyRecord record = {type, size_bytes, context, stream, correlation_id};
+    record.start_timestamp = CuptiTracer::GetTimestamp();
     LogIfError(CreateAndRecordEvent(&record.start_event, stream));
     absl::MutexLock lock(&mutex_);
     if (stopped_) return -1;
     memcpy_records_.push_back(record);
     return memcpy_records_.size() - 1;
   }
-  void StopMemcpy(size_t index) {
+  uint64 StopMemcpy(size_t index) {
     absl::MutexLock lock(&mutex_);
-    if (index >= memcpy_records_.size()) return;
+    if (index >= memcpy_records_.size()) return 0;
     auto &record = memcpy_records_[index];
     LogIfError(CreateAndRecordEvent(&record.stop_event, record.stream));
+    return record.start_timestamp;
   }
 
   Status Stop() {
@@ -781,6 +797,7 @@ class CudaEventRecorder {
 
   // Synchronizes all contexts.
   Status Synchronize() const {
+    CuptiApiTracingDisabler disabler;
     for (const auto &pair : context_infos_) {
       TF_RETURN_IF_ERROR(ToStatus(cuCtxSetCurrent(pair.first)));
       TF_RETURN_IF_ERROR(ToStatus(cuCtxSynchronize()));
@@ -829,6 +846,7 @@ class CudaEventRecorder {
 
   // Returns time in microseconds between events recorded on the GPU.
   static uint64_t GetElapsedTimeUs(CUevent start, CUevent stop) {
+    CuptiApiTracingDisabler disabler;
     float elapsed_ms = 0.0f;
     LogIfError(ToStatus(cuEventElapsedTime(&elapsed_ms, start, stop)));
     return static_cast<uint64>(
@@ -851,7 +869,7 @@ class CudaEventRecorder {
     CuptiTracerEvent event;
     event.type = CuptiTracerEventType::Kernel;
     event.source = CuptiTracerEventSource::Activity;  // on gpu device.
-    event.name = port::MaybeAbiDemangle(record.kernel_name);
+    event.name = record.kernel_name;
     event.start_time_ns = (end_walltime_us_ - start_us) * 1000;
     event.end_time_ns = event.start_time_ns + elapsed_us * 1000;
     event.device_id = ordinal_;
@@ -985,7 +1003,7 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
             CuptiTracerEventType::MemcpyD2D, cbdata, recorder);
         break;
       default:
-        LOG(ERROR) << "Unexpected callback id: " << cbid;
+        VLOG(1) << "Unexpected callback id: " << cbid;
         break;
     }
     return Status::OK();
@@ -996,9 +1014,10 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
     auto *recorder = cuda_event_recorders_[device_id].get();
     if (*cbdata->correlationData == static_cast<size_t>(-1))
       return Status::OK();
+    uint64 start_tsc = 0;
     switch (cbid) {
       case CUPTI_DRIVER_TRACE_CBID_cuLaunchKernel:
-        recorder->StopKernel(*cbdata->correlationData);
+        start_tsc = recorder->StopKernel(*cbdata->correlationData);
         break;
       case CUPTI_DRIVER_TRACE_CBID_cuMemcpy:
       case CUPTI_DRIVER_TRACE_CBID_cuMemcpyAsync:
@@ -1008,11 +1027,12 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
       case CUPTI_DRIVER_TRACE_CBID_cuMemcpyDtoHAsync_v2:
       case CUPTI_DRIVER_TRACE_CBID_cuMemcpyDtoD_v2:
       case CUPTI_DRIVER_TRACE_CBID_cuMemcpyDtoDAsync_v2:
-        recorder->StopMemcpy(*cbdata->correlationData);
+        start_tsc = recorder->StopMemcpy(*cbdata->correlationData);
         break;
       default:
-        LOG(ERROR) << "Unexpected callback id: " << cbid;
-        break;
+        VLOG(1) << "Unexpected callback id: " << cbid;
+        // TODO: figure out how to get start timestamp in this case.
+        return Status::OK();
     }
     // If we are not collecting CPU events from Callback API, we can return now.
     if (!option_.required_callback_api_events) {
@@ -1021,11 +1041,8 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
 
     // Grab timestamp for API exit. API entry timestamp saved in cbdata.
     uint64 end_tsc = CuptiTracer::GetTimestamp();
-    uint64 start_tsc = *cbdata->correlationData;
     return AddDriverApiCallbackEvent(collector_, cupti_interface_, device_id,
                                      start_tsc, end_tsc, domain, cbid, cbdata);
-
-    return Status::OK();
   }
   Status Flush() override {
     for (auto &recorder : cuda_event_recorders_) {
@@ -1058,6 +1075,7 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
   }
 
   static CUmemorytype GetMemoryType(CUdeviceptr ptr) {
+    CuptiApiTracingDisabler disabler;
     CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     auto status =
         cuPointerGetAttribute(&mem_type, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, ptr);
@@ -1199,7 +1217,7 @@ absl::string_view AnnotationMap::LookUp(uint32 device_id,
 }
 
 /* static */ CuptiTracer *CuptiTracer::GetCuptiTracerSingleton() {
-  static auto *singleton = new CuptiTracer();
+  static auto *singleton = new CuptiTracer(GetCuptiInterface());
   return singleton;
 }
 
@@ -1223,20 +1241,18 @@ int CuptiTracer::NumGpus() {
 }
 
 void CuptiTracer::Enable(const CuptiTracerOptions &option,
-                         CuptiInterface *cupti_interface,
                          CuptiTraceCollector *collector) {
   option_ = option;
-  cupti_interface_ = cupti_interface;
   collector_ = collector;
   annotation_map_.emplace(option.max_annotation_strings, NumGpus());
 
   if (option_->enable_event_based_activity) {
     option_->enable_activity_api = false;
     cupti_driver_api_hook_.reset(new CuptiDriverApiHookWithCudaEvent(
-        option, cupti_interface, collector, &*annotation_map_));
+        option, cupti_interface_, collector, &*annotation_map_));
   } else {
     cupti_driver_api_hook_.reset(new CuptiDriverApiHookWithActivityApi(
-        option, cupti_interface, collector, &*annotation_map_));
+        option, cupti_interface_, collector, &*annotation_map_));
   }
 
   EnableApiTracing().IgnoreError();
@@ -1255,7 +1271,6 @@ void CuptiTracer::Disable() {
   cupti_driver_api_hook_->Flush().IgnoreError();
   collector_->Flush();
   collector_ = nullptr;
-  cupti_interface_ = nullptr;
   option_.reset();
   cupti_driver_api_hook_.reset();
   annotation_map_.reset();
@@ -1338,6 +1353,7 @@ Status CuptiTracer::DisableActivityTracing() {
     VLOG(1) << "Flushing CUPTI activity buffer";
     RETURN_IF_CUPTI_ERROR(
         cupti_interface_->ActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED));
+    LOG(INFO) << "CUPTI activity buffer flushed";
   }
   activity_tracing_enabled_ = false;
   return Status::OK();
@@ -1366,6 +1382,7 @@ Status CuptiTracer::HandleCallback(CUpti_CallbackDomain domain,
                                    const CUpti_CallbackData *cbdata) {
   if (!api_tracing_enabled_) return Status::OK();  // already unsubscribed.
   if (domain != CUPTI_CB_DOMAIN_DRIVER_API) return Status::OK();
+  if (internalCuCall) return Status::OK();
 
   if (cbdata->context == nullptr) {
     // API callback is called before any CUDA context is created.
@@ -1433,6 +1450,10 @@ void CuptiTracer::ConfigureActivityUnifiedMemoryCounter(bool enable) {
 
 Status CuptiTracer::ProcessActivityBuffer(CUcontext context, uint32_t stream_id,
                                           uint8_t *buffer, size_t size) {
+  if (!activity_tracing_enabled_) {
+    LOG(WARNING) << "CUPTI activity buffer is freed after flush.";
+    return Status::OK();
+  }
   if (cupti_interface_->Disabled()) return errors::Internal("Disabled.");
 
   CUpti_Activity *record = nullptr;

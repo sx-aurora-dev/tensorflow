@@ -26,6 +26,7 @@ tf_cuda_library(
         "c_api.cc",
         "c_api_debug.cc",
         "c_api_experimental.h",
+        "c_api_internal.cc",
         "c_api_internal.h",
     ],
     hdrs = ["c_api.h"],
@@ -153,7 +154,6 @@ tf_cuda_cc_test(
     tags = [
         "guitar",
         "multi_gpu",
-        "no_gpu",  # flaky, b/136267687
     ],
     deps = [
         ":c_api",
