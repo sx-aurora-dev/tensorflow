@@ -51,16 +51,6 @@ REGISTER_KERNEL_BUILDER(Name("StackV2")
                             .HostMemory("handle"),
                         StackOp);
 
-#ifdef TENSORFLOW_USE_VE
-REGISTER_KERNEL_BUILDER(Name("Stack").Device(DEVICE_VE).HostMemory("handle"),
-                        StackOp);
-REGISTER_KERNEL_BUILDER(Name("StackV2")
-                            .Device(DEVICE_VE)
-                            .HostMemory("max_size")
-                            .HostMemory("handle"),
-                        StackOp);
-#endif  // TENSORFLOW_USE_VE
-
 REGISTER_KERNEL_BUILDER(Name("StackPush").Device(DEVICE_CPU),
                         TemplatedStackPushOp</*allow_swapping=*/false>);
 REGISTER_KERNEL_BUILDER(Name("StackPushV2").Device(DEVICE_CPU),
@@ -111,48 +101,24 @@ TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_DEFAULT_KERNEL);
                               .HostMemory("elem")                         \
                               .HostMemory("output")                       \
                               .TypeConstraint<type>("T"),                 \
+                          TemplatedStackPushOp</*allow_swapping=*/true>); \
+  REGISTER_KERNEL_BUILDER(Name("StackPop")                                \
+                              .Device(DEVICE_DEFAULT)                     \
+                              .HostMemory("handle")                       \
+                              .HostMemory("elem")                         \
+                              .TypeConstraint<type>("elem_type"),         \
+                          StackPopOp);                                    \
+  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                              \
+                              .Device(DEVICE_DEFAULT)                     \
+                              .HostMemory("handle")                       \
+                              .HostMemory("elem")                         \
+                              .TypeConstraint<type>("elem_type"),         \
                           StackPopOp);
 
 REGISTER_DEFAULT_HOST_KERNEL(int32);
 REGISTER_DEFAULT_HOST_KERNEL(bool);
 
 #undef REGISTER_DEFAULT_HOST_KERNEL
-
-#ifdef TENSORFLOW_USE_VE
-#define REGISTER_VE_KERNEL(type)                                  \
-  REGISTER_KERNEL_BUILDER(Name("StackPop")                        \
-                              .Device(DEVICE_VE)                  \
-                              .HostMemory("handle")               \
-                              .TypeConstraint<type>("elem_type"), \
-                          StackPopOp);                            \
-  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                      \
-                              .Device(DEVICE_VE)                  \
-                              .HostMemory("handle")               \
-                              .TypeConstraint<type>("elem_type"), \
-                          StackPopOp);
-
-TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
-#undef REGISTER_VE_KERNEL
-
-#define REGISTER_VE_HOST_KERNEL(type)                             \
-  REGISTER_KERNEL_BUILDER(Name("StackPop")                        \
-                              .Device(DEVICE_VE)                  \
-                              .HostMemory("handle")               \
-                              .HostMemory("elem")                 \
-                              .TypeConstraint<type>("elem_type"), \
-                          StackPopOp);                            \
-  REGISTER_KERNEL_BUILDER(Name("StackPopV2")                      \
-                              .Device(DEVICE_VE)                  \
-                              .HostMemory("handle")               \
-                              .HostMemory("elem")                 \
-                              .TypeConstraint<type>("elem_type"), \
-                          StackPopOp);
-
-REGISTER_VE_HOST_KERNEL(int32);
-REGISTER_VE_HOST_KERNEL(bool);
-
-#undef REGISTER_VE_HOST_KERNEL
-#endif // TENSORFLOW_USE_VE
 
 REGISTER_KERNEL_BUILDER(Name("StackClose").Device(DEVICE_CPU), StackCloseOp);
 REGISTER_KERNEL_BUILDER(
@@ -162,4 +128,5 @@ REGISTER_KERNEL_BUILDER(Name("StackCloseV2").Device(DEVICE_CPU), StackCloseOp);
 REGISTER_KERNEL_BUILDER(
     Name("StackCloseV2").Device(DEVICE_DEFAULT).HostMemory("handle"),
     StackCloseOp);
+
 }  // namespace tensorflow
