@@ -148,7 +148,8 @@ class GpuDriver {
 
   // Given a device handle, returns the name reported by the driver for the
   // device.
-  static bool GetDeviceName(GpuDeviceHandle device, string* device_name);
+  static port::Status GetDeviceName(GpuDeviceHandle device,
+                                    string* device_name);
 
   // Given a device to create a context for, returns a context handle into the
   // context outparam, which must not be null.
@@ -172,9 +173,9 @@ class GpuDriver {
   // in terms of integer-sized values, so there's no potential for overrun (as
   // of CUDA 5.5).
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1g5e92a1b0d8d1b82cb00dcfb2de15961b
-  static bool FuncGetAttribute(GpuFunctionAttribute attribute,
-                               GpuFunctionHandle function,
-                               int* attribute_value);
+  static port::Status FuncGetAttribute(GpuFunctionAttribute attribute,
+                                       GpuFunctionHandle function,
+                                       int* attribute_value);
 
   // Sets the preferred cache configuration for the specified function.
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1g40f8c11e81def95dc0072a375f965681

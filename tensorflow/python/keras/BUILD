@@ -352,6 +352,7 @@ py_library(
         ":engine_utils",
         ":mode_keys",
         "//tensorflow/python/keras/distribute:multi_worker_training_state",
+        "//tensorflow/tools/docs:doc_controls",
     ],
 )
 
@@ -943,7 +944,7 @@ tf_py_test(
     ],
 )
 
-tf_py_test(
+cuda_py_test(
     name = "normalization_test",
     size = "medium",
     srcs = ["layers/normalization_test.py"],

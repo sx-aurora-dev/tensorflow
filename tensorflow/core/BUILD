@@ -112,7 +112,6 @@ load(
     "tf_additional_lib_deps",
     "tf_additional_libdevice_data",
     "tf_additional_libdevice_deps",
-    "tf_additional_minimal_lib_srcs",
     "tf_additional_monitoring_hdrs",
     "tf_additional_numa_copts",
     "tf_additional_numa_deps",
@@ -432,7 +431,9 @@ cc_library(
     copts = tf_copts() + tf_additional_numa_copts(),
     visibility = [":__subpackages__"],
     deps = [
+        "//tensorflow/core/platform:mutex",
         "//tensorflow/core/platform:platform",
+        "//tensorflow/core/platform:thread_annotations",
         ":platform_base",
         "@com_google_absl//absl/base",
         "//tensorflow/core/platform/default/build_config:port",
@@ -668,6 +669,7 @@ cc_library(
         "//tensorflow/core/platform",
         "//tensorflow/core/platform:abi",
         "//tensorflow/core/platform:annotation",
+        "//tensorflow/core/platform:notification",
         "//tensorflow/core/platform:stacktrace",
         "//tensorflow/core/platform/default/build_config:other",
         "//tensorflow/core/platform/default/build_config:platformlib",
@@ -812,7 +814,6 @@ cc_library(
     srcs = [
         "util/reporter.cc",
         "//tensorflow/core/platform:legacy_test_srcs",
-        "//tensorflow/core/platform:test.cc",
     ],
     hdrs = [
         "util/reporter.h",
@@ -834,28 +835,8 @@ cc_library(
         ":protos_all_cc",
         "//tensorflow/core/platform/default/build_config:gtest",
         "//tensorflow/core/kernels:required",
+        "@com_google_googletest//:gtest",
     ] + tf_additional_test_deps(),
-)
-
-# Testing libraries - lite versions that don't depend on all of "lib" or
-# "lib_internal". Instead, they only need a much smaller set of support
-# libraries such as ":platform_base" and ":core_stringpiece".
-cc_library(
-    name = "test_lite",
-    testonly = 1,
-    srcs = [
-        "//tensorflow/core/platform:test.cc",
-    ],
-    hdrs = [
-        "//tensorflow/core/platform:test.h",
-        "//tensorflow/core/platform:test_benchmark.h",
-    ],
-    copts = tf_copts(),
-    deps = [
-        ":platform_base",
-        "//tensorflow/core/platform",
-        "//tensorflow/core/platform/default/build_config:gtest",
-    ],
 )
 
 # This build rule (along with :framework_internal, :lib, and :lib_internal)
@@ -1106,9 +1087,6 @@ cc_library(
 
 cc_library(
     name = "framework_lite",
-    srcs = [
-        "//tensorflow/core/platform:legacy_minimal_lib_srcs",
-    ],
     hdrs = [
         "framework/numeric_types.h",
         "framework/tensor_types.h",
@@ -1118,7 +1096,6 @@ cc_library(
         "//tensorflow/core/platform:cpu_info.h",
         "//tensorflow/core/platform:default/integral_types.h",
         "//tensorflow/core/platform:default/logging.h",
-        "//tensorflow/core/platform:default/mutex.h",
         "//tensorflow/core/platform:dynamic_annotations.h",
         "//tensorflow/core/platform:macros.h",
         "//tensorflow/core/platform:mutex.h",
@@ -1137,6 +1114,8 @@ cc_library(
             "//third_party/eigen3",
             "//tensorflow/core/lib/bfloat16",
             "//tensorflow/core/platform:dynamic_annotations",
+            "//tensorflow/core/platform:thread_annotations",
+            "//tensorflow/core/platform:mutex",
             "//tensorflow/core/platform/default/build_config:minimal",
             "//tensorflow/core/platform:types",
         ],
@@ -2099,7 +2078,6 @@ filegroup(
         ":framework/tensor_testutil.h",
         ":util/reporter.cc",
         ":util/reporter.h",
-        "//tensorflow/core/platform:test.cc",
         "//tensorflow/core/platform:test.h",
     ],
     visibility = ["//visibility:public"],
@@ -2508,6 +2486,8 @@ cc_library(
                "//tensorflow/core/platform:abi",
                "//tensorflow/core/platform:annotation",
                "//tensorflow/core/platform:cpu_info",
+               "//tensorflow/core/platform:mutex",
+               "//tensorflow/core/platform:notification",
                "//tensorflow/core/platform:numbers",
                "//tensorflow/core/platform:platform_strings",
                "//tensorflow/core/platform:scanner",
@@ -2695,6 +2675,9 @@ cc_library(
     deps = [
         "//tensorflow/core/platform:dynamic_annotations",
         "//tensorflow/core/platform:gif",
+        "//tensorflow/core/platform:numbers",
+        "//tensorflow/core/platform:strcat",
+        "//tensorflow/core/platform:stringpiece",
         "//tensorflow/core/platform/default/build_config:logging",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
@@ -2724,6 +2707,7 @@ cc_library(
     copts = tf_copts(),
     linkopts = ["-ldl"],
     deps = [
+        "//tensorflow/core/platform:stringpiece",
         "//tensorflow/core/platform/default/build_config:logging",
         "@com_google_absl//absl/strings",
         "@png",
@@ -3720,26 +3704,6 @@ cc_library(
         ":lib_internal",
         ":test",  # buildcleaner: keep
         "//tensorflow/core/platform/default/build_config:test_main",
-    ],
-    alwayslink = 1,
-)
-
-# This is the lite version of a main() for tests. It does not include any
-# support for reporting benchmark results when running on TPUs.
-cc_library(
-    name = "test_lite_main",
-    testonly = 1,
-    srcs = ["//tensorflow/core/platform:test_main.cc"],
-    copts = tf_copts(),
-    deps = [
-        # TODO(ahentz): we don't want to depend on "lib" here. It used to be
-        # that "core_stringpiece" was enough but that recently changed and
-        # we now need at least "str_util".
-        ":lib",
-        ":test_lite",
-        "//tensorflow/core/platform",
-        "//tensorflow/core/platform:stacktrace_handler",
-        "//tensorflow/core/platform/default/build_config:test_lite_main",
     ],
     alwayslink = 1,
 )

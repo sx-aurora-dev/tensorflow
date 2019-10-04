@@ -1,4 +1,4 @@
-/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,22 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
-namespace {
+#include "tensorflow/core/kernels/cwise_ops_gpu_common.cu.h"
+#include "tensorflow/core/kernels/cwise_ops_gpu_gradients.cu.h"
 
-class TestLogger : public nvinfer1::ILogger {
-  void log(nvinfer1::ILogger::Severity severity, const char* msg) override {}
-};
+namespace tensorflow {
+namespace functor {
+DEFINE_UNARY1(ndtri, double);
+DEFINE_UNARY1(erfinv, double);
+}  // namespace functor
+}  // namespace tensorflow
 
-TestLogger test_logger;
-
-REGISTER_TENSORRT_LOGGER("test_logger", &test_logger);
-
-TEST(LoggerRegistryTest, RegistersCorrectly) {
-  auto registered_logger = GetLoggerRegistry()->LookUp("test_logger");
-  EXPECT_THAT(registered_logger, Eq(&test_logger));
-}
-
-}  // namespace
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
