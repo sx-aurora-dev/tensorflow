@@ -136,3 +136,7 @@ if hasattr(_current_module, 'keras'):
   setattr(_current_module, "optimizers", optimizers)
   setattr(_current_module, "initializers", initializers)
 # pylint: enable=undefined-variable
+
+if 'VEORUN_BIN' not in _os.environ:
+    veorun = _os.path.dirname(_current_file_location) + "/aux-bin/veorun_tf"
+    _os.environ['VEORUN_BIN'] = veorun
