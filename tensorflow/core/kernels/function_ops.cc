@@ -153,6 +153,66 @@ REGISTER_KERNEL_BUILDER(Name(kRetOp)
                         RetvalOp);
 #undef REGISTER
 
+#define REGISTER_VE(type)     \
+  REGISTER_KERNEL_BUILDER( \
+      Name(kArgOp).Device(DEVICE_VE).TypeConstraint<type>("T"), ArgOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE)
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE)
+TF_CALL_bool(REGISTER_VE)
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+						   .Device(DEVICE_VE)
+						   .HostMemory("output")
+						   .TypeConstraint<int32>("T"),
+					   ArgOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kDeviceArgOp).Device(DEVICE_VE).TypeConstraint<int32>("T"), ArgOp);
+#undef REGISTER_VE
+
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<ResourceHandle>("T"),
+                        ArgOp);
+
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<tstring>("T"),
+                        ArgOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kArgOp).Device(DEVICE_VE).TypeConstraint<Variant>("T"), ArgOp);
+
+#define REGISTER_VE(type)     \
+  REGISTER_KERNEL_BUILDER( \
+      Name(kRetOp).Device(DEVICE_VE).TypeConstraint<type>("T"), RetvalOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE)
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE)
+REGISTER_VE(Variant)
+TF_CALL_bool(REGISTER_VE)
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+						   .Device(DEVICE_VE)
+						   .HostMemory("input")
+						   .TypeConstraint<int32>("T"),
+					   RetvalOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kDeviceRetOp).Device(DEVICE_VE).TypeConstraint<int32>("T"), RetvalOp);
+
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<ResourceHandle>("T")
+                            .HostMemory("input"),
+                        RetvalOp);
+
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<tstring>("T")
+                            .HostMemory("input"),
+                        RetvalOp);
+#undef REGISTER_VE
+
 class PassOn : public OpKernel {
  public:
   explicit PassOn(OpKernelConstruction* ctx) : OpKernel(ctx) {
