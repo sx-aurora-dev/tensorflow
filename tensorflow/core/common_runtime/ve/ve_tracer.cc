@@ -276,7 +276,7 @@ Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
 #endif
     const string stream_device =
       strings::StrCat(prefix, "/device:VE:", s.nodeid, "/stream:");
-    collector->Save(strings::StrCat(stream_device, "all"), ns);
+    collector->Save(strings::StrCat(stream_device, "0"), ns);
   }
 
   kernel_records_.clear();
