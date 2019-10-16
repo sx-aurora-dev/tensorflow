@@ -7,6 +7,8 @@
 
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
 
+#include "tensorflow/core/framework/variant_op_registry.h"
+
 #include "ve_offload.h"
 #include <sys/types.h>
 #include <sys/syscall.h>
@@ -890,6 +892,15 @@ class VEDevice : public LocalDevice {
   private:
     GpuDeviceInfo* gpu_device_info_;
     std::vector<VEDeviceContextImpl*> device_contexts_;
+
+    // This method returns an initialization status, in addition to
+    // calling the "done" StatusCallback, if there is a failure to
+    // allocate memory or if the tensor "from" is not DMA-copyable.
+    // If there is no error prior to enqueueing the copy, an OK status
+    // is returned.
+    Status MaybeCopyTensorToVE(const AllocatorAttributes& alloc_attrs,
+                               const Tensor& from, Tensor* to,
+                               StatusCallback done);
 };
 
 VEDevice::~VEDevice() {
@@ -910,37 +921,123 @@ Status VEDevice::Init(const SessionOptions& options, VEO* veo) {
   return Status::OK();
 }
 
+Status VEDevice::MaybeCopyTensorToVE(
+    const AllocatorAttributes& alloc_attrs, const Tensor& from, Tensor* to,
+    StatusCallback done) {
+  if (alloc_attrs.on_host()) {
+    *to = from;
+    done(Status::OK());
+    return Status::OK();
+  } else {
+    if (!DMAHelper::CanUseDMA(&from)) {
+      Status err = errors::Internal("VE copy from non-DMA ",
+                                    DataTypeString(from.dtype()), " tensor");
+      done(err);
+      return err;
+    }
+    AllocationAttributes allocation_attr;
+    uint64 safe_alloc_frontier = 0;
+    std::function<uint64()> freed_by_func = [this, &safe_alloc_frontier]() {
+      safe_alloc_frontier = SafeAllocFrontier(safe_alloc_frontier);
+      return safe_alloc_frontier;
+    };
+#if 0
+    if (timestamped_allocator_) {
+      allocation_attr.freed_by_func = &freed_by_func;
+    }
+#endif
+    auto* copy = new Tensor(GetAllocator(alloc_attrs), from.dtype(),
+                            from.shape(), allocation_attr);
+
+    // If the tensor is not initialized, we likely ran out of memory.
+    if (!copy->IsInitialized()) {
+      delete copy;
+      Status err = errors::ResourceExhausted(
+          "OOM when allocating tensor of shape ", from.shape().DebugString(),
+          " and type ", DataTypeString(from.dtype()));
+      done(err);
+      return err;
+    }
+
+    auto wrapped_done = [to, copy, done = std::move(done)](const Status& s) {
+      if (s.ok()) {
+        *to = std::move(*copy);
+      }
+      delete copy;
+      done(s);
+    };
+
+//    tracing::ScopedAnnotation annotation("MakeTensorFromProto");
+    device_contexts_[0]->CopyCPUTensorToDevice(
+        &from, this, copy, std::move(wrapped_done) );
+    return Status::OK();
+  }
+}
+
 Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
-                                     const AllocatorAttributes alloc_attrs,
-                                     Tensor* tensor) {
-  VLOG(2) << "VEDeviceContextImpl::MakeTensorFromProto";
+                                          const AllocatorAttributes alloc_attrs,
+                                          Tensor* tensor) {
+  MEMDEBUG_CACHE_OP(
+      (pending_op_name != nullptr ? pending_op_name : "MakeTensorFromProto"));
   AllocatorAttributes attr;
   attr.set_on_host(true);
+//  attr.set_gpu_compatible(true);
   Allocator* host_alloc = GetAllocator(attr);
-
   Tensor parsed(tensor_proto.dtype());
   if (!parsed.FromProto(host_alloc, tensor_proto)) {
     return errors::InvalidArgument("Cannot parse tensor from proto: ",
                                    tensor_proto.DebugString());
   }
-  Status status;
-  if (alloc_attrs.on_host()) {
-    *tensor = parsed;
-  } else {
-    Tensor copy(GetAllocator(alloc_attrs), parsed.dtype(), parsed.shape());
 
-    // If the tensor is not initialized, we likely ran out of memory.
-    if (!copy.IsInitialized()) {
-      return errors::ResourceExhausted(
-          "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
-          " and type ", DataTypeString(parsed.dtype()));
+  if (parsed.dtype() == DT_VARIANT) {
+    const Variant* from = parsed.flat<Variant>().data();
+    int numa_node = attributes().locality().numa_node();
+    Tensor copy(cpu_allocator(numa_node), DT_VARIANT, parsed.shape());
+    Variant* copy_variant = copy.flat<Variant>().data();
+
+    std::list<Notification> notifications;
+    Status copy_status;
+    auto copier = [this, &alloc_attrs, &notifications, &copy_status](
+                      const Tensor& from, Tensor* to) {
+      // Copier isn't run in a multithreaded environment, so we don't
+      // have to worry about the notifications list being modified in parallel.
+      notifications.emplace_back();
+      Notification& n = *notifications.rbegin();
+      return MaybeCopyTensorToVE(alloc_attrs, from, to,
+                                  [&n, &copy_status](const Status& s) {
+                                    if (copy_status.ok()) {
+                                      copy_status.Update(s);
+                                    }
+                                    n.Notify();
+                                  });
+    };
+    Status s;
+    for (int64 ix = 0; ix < parsed.NumElements(); ++ix) {
+      s = VariantDeviceCopy(VariantDeviceCopyDirection::HOST_TO_DEVICE,
+                            from[ix], &copy_variant[ix], copier);
+      if (!s.ok()) {
+        break;
+      }
     }
-
-    device_contexts_[0]->CopyCPUTensorToDevice(
-        &parsed, this, &copy, [&status](const Status& s) { status = s; });
-    *tensor = copy;
+    for (auto& n : notifications) {
+      n.WaitForNotification();
+    }
+    if (!s.ok()) {
+      return s;
+    }
+    *tensor = std::move(copy);
+    return copy_status;
+  } else {
+    Notification n;
+    Status status;
+    TF_RETURN_IF_ERROR(MaybeCopyTensorToVE(alloc_attrs, parsed, tensor,
+                                            [&n, &status](const Status& s) {
+                                              status = s;
+                                              n.Notify();
+                                            }));
+    n.WaitForNotification();
+    return status;
   }
-  return status;
 }
 
 class VEOFactory {
