@@ -265,6 +265,33 @@ REGISTER_KERNEL_BUILDER(Name("_ArrayToList")
                             .TypeConstraint<int32>("T"),
                         PassOn);
 
+#define REGISTER_VE_KERNELS(type)                                       \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("_ListToArray").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PassOn);                                                           \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("_ArrayToList").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PassOn);
+
+// REGISTER_VE_KERNELS(Eigen::half);
+REGISTER_VE_KERNELS(float);
+REGISTER_VE_KERNELS(double);
+
+#undef REGISTER_VE_KERNELS
+
+REGISTER_KERNEL_BUILDER(Name("_ListToArray")
+                            .Device(DEVICE_VE)
+                            .HostMemory("input")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PassOn);
+REGISTER_KERNEL_BUILDER(Name("_ArrayToList")
+                            .Device(DEVICE_VE)
+                            .HostMemory("input")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PassOn);
+
 #ifdef TENSORFLOW_USE_SYCL
 #define REGISTER_SYCL_KERNELS(type)                                       \
   REGISTER_KERNEL_BUILDER(                                                \
@@ -353,6 +380,8 @@ class SymbolicGradientOp : public AsyncOpKernel {
 REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_CPU),
                         SymbolicGradientOp);
 REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_GPU),
+                        SymbolicGradientOp);
+REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_VE),
                         SymbolicGradientOp);
 #if TENSORFLOW_USE_SYCL
 REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_SYCL),
@@ -486,6 +515,8 @@ REGISTER_KERNEL_BUILDER(
     Name("RemoteCall").Device(DEVICE_CPU).HostMemory("target"), RemoteCallOp);
 REGISTER_KERNEL_BUILDER(
     Name("RemoteCall").Device(DEVICE_GPU).HostMemory("target"), RemoteCallOp);
+REGISTER_KERNEL_BUILDER(
+    Name("RemoteCall").Device(DEVICE_VE).HostMemory("target"), RemoteCallOp);
 #if TENSORFLOW_USE_SYCL
 REGISTER_KERNEL_BUILDER(
     Name("RemoteCall").Device(DEVICE_SYCL).HostMemory("target"), RemoteCallOp);
