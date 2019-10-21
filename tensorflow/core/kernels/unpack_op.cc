@@ -204,6 +204,13 @@ REGISTER_KERNEL_BUILDER(Name("Unpack")
                             .HostMemory("output")
                             .TypeConstraint<int64>("T"),
                         UnpackOp<CPUDevice, int64>);
+// FIXME: need to implement Unpack for float in VE device.
+REGISTER_KERNEL_BUILDER(Name("Unpack")
+                            .Device(DEVICE_VE)
+                            .HostMemory("value")
+                            .HostMemory("output")
+                            .TypeConstraint<float>("T"),
+                        UnpackOp<CPUDevice, float>);
 #endif  // TENSORFLOW_USE_VE
 
 }  // end namespace tensorflow
