@@ -480,7 +480,15 @@ TF_CALL_double(REGISTER_VE);
 //TF_CALL_bool(REGISTER_VE);
 //TF_CALL_int8(REGISTER_VE);
 //TF_CALL_int64(REGISTER_VE);
-TF_CALL_int32(REGISTER_VE)
+
+REGISTER_KERNEL_BUILDER(Name("Slice")
+                            .Device(DEVICE_GPU)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("input")
+                            .HostMemory("begin")
+                            .HostMemory("size")
+                            .HostMemory("output"),
+                        SliceOp<CPUDevice, int32>);
 
 
 #undef REGISTER_VE
