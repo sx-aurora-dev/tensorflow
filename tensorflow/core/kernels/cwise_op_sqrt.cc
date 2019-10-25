@@ -41,4 +41,8 @@ REGISTER3(SimpleBinaryOp, GPU, "SqrtGrad", functor::sqrt_grad, float,
 #ifdef TENSORFLOW_USE_SYCL
 REGISTER2(SimpleBinaryOp, SYCL, "SqrtGrad", functor::sqrt_grad, float, double);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(SqrtGrad, float, float, float);
+#endif
 }  // namespace tensorflow
