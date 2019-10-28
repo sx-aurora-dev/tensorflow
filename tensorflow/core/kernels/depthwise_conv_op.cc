@@ -47,6 +47,11 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 // In depthwise convolution, one input is convolved into depth_multipler
@@ -58,6 +63,9 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif
 
 // Computes the vectorized product of 'input_buffer' and 'filter' and stores
 // result in 'output' at location specified by 'out_r' and 'out_c'.
@@ -499,5 +507,275 @@ TF_CALL_float(REGISTER_GROUPED_CONV_KERNEL);
 TF_CALL_double(REGISTER_GROUPED_CONV_KERNEL);
 #endif  // CUDNN_VERSION
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VEDepthwiseConv2dNativeOp : public BinaryOp<T> {
+ public:
+  explicit VEDepthwiseConv2dNativeOp(OpKernelConstruction* context)
+      : BinaryOp<T>(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &strides_));
+    string data_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                errors::InvalidArgument("Invalid data format"));
+
+    OP_REQUIRES(context, strides_.size() == 4,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 4 dimensions"));
+    stride_ = GetTensorDim(strides_, data_format_, 'H');
+    const int64 stride_w = GetTensorDim(strides_, data_format_, 'W');
+    const int64 stride_n = GetTensorDim(strides_, data_format_, 'N');
+    const int64 stride_c = GetTensorDim(strides_, data_format_, 'C');
+
+    OP_REQUIRES(context, stride_ == stride_w,
+                errors::InvalidArgument(
+                    "Current implementation only supports equal length "
+                    "strides in the row and column dimensions."));
+    OP_REQUIRES(
+        context, (stride_n == 1 && stride_c == 1),
+        errors::InvalidArgument("Current implementation does not yet support "
+                                "strides in the batch and depth dimensions."));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+
+#if 0 // For GPU
+    // For in_depth == 1 and grouped convolutions.
+    use_cudnn_ = CanUseCudnn() && std::is_same<Device, GPUDevice>::value;
+    cudnn_use_autotune_ = CudnnUseAutotune();
+    use_cudnn_grouped_conv_ = false;
+    dtype_ = DataTypeToEnum<T>::value;
+#endif
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // Input tensor is of the following dimensions:
+    // [ batch, in_rows, in_cols, in_depth ]
+    const Tensor& input = context->input(0);
+
+    // Input filter is of the following dimensions:
+    // [ filter_rows, filter_cols, in_depth, depth_multiplier]
+    const Tensor& filter = context->input(1);
+
+    // For 2D convolution, there should be 4 dimensions.
+    OP_REQUIRES(context, input.dims() == 4,
+                errors::InvalidArgument("input must be 4-dimensional",
+                                        input.shape().DebugString()));
+    OP_REQUIRES(context, filter.dims() == 4,
+                errors::InvalidArgument("filter must be 4-dimensional: ",
+                                        filter.shape().DebugString()));
+
+    // in_depth for input and filter must match.
+    const int64 in_depth = GetTensorDim(input, data_format_, 'C');
+    OP_REQUIRES(context, in_depth == filter.dim_size(2),
+                errors::InvalidArgument(
+                    "input and filter must have the same depth: ", in_depth,
+                    " vs ", filter.dim_size(2)));
+
+    // The last dimension for filter is depth multiplier.
+    const int32 depth_multiplier = filter.dim_size(3);
+
+    // The output depth is input depth x depth multipler
+    const int32 out_depth = in_depth * depth_multiplier;
+
+    const int64 input_rows_raw = GetTensorDim(input, data_format_, 'H');
+    OP_REQUIRES(
+        context,
+        FastBoundsCheck(input_rows_raw, std::numeric_limits<int32>::max()),
+        errors::InvalidArgument("Input rows too large"));
+    const int32 input_rows = static_cast<int32>(input_rows_raw);
+    const int32 filter_rows = filter.dim_size(0);
+
+    const int64 input_cols_raw = GetTensorDim(input, data_format_, 'W');
+    OP_REQUIRES(
+        context,
+        FastBoundsCheck(input_cols_raw, std::numeric_limits<int32>::max()),
+        errors::InvalidArgument("Input cols too large"));
+    const int32 input_cols = static_cast<int32>(input_cols_raw);
+    const int32 filter_cols = filter.dim_size(1);
+
+    // The first dimension for input is batch.
+    const int32 batch = input.dim_size(0);
+
+    int64 out_rows = 0, out_cols = 0, pad_rows = 0, pad_cols = 0;
+    OP_REQUIRES_OK(context,
+                   GetWindowedOutputSize(input_rows, filter_rows, stride_,
+                                         padding_, &out_rows, &pad_rows));
+    OP_REQUIRES_OK(context,
+                   GetWindowedOutputSize(input_cols, filter_cols, stride_,
+                                         padding_, &out_cols, &pad_cols));
+    TensorShape out_shape =
+        ShapeFromFormat(data_format_, batch, out_rows, out_cols, out_depth);
+#if 0 // For GPU
+    OP_REQUIRES(
+        context,
+        (!std::is_same<Device, GPUDevice>::value ||
+         FastBoundsCheck(out_shape.num_elements(),
+                         std::numeric_limits<int32>::max())),
+        errors::InvalidArgument("Output elements too large for GPU kernel"));
+#endif
+
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, out_shape, &output));
+
+    // If there is nothing to compute, return.
+    if (out_shape.num_elements() == 0) {
+      return;
+    }
+
+#if 0 // For GPU
+    // TODO(csigg): Have autotune decide if native is faster than cuDNN.
+    // If in_depth==1, this operation is just a standard convolution.
+    // Depthwise convolution is a special case of cuDNN's grouped convolution.
+    bool use_cudnn = use_cudnn_ && (in_depth == 1 || use_cudnn_grouped_conv_);
+#endif
+
+    VLOG(2) << "VEDepthwiseConv2dNative: "
+            << " Input: [" << batch << ", " << input_rows << ", " << input_cols
+            << ", " << in_depth << "]; Filter: [" << filter_rows << ", "
+            << filter_cols << ", " << in_depth << ", " << depth_multiplier
+            << "]; Output: [" << batch << ", " << out_rows << ", " << out_cols
+            << ", " << out_depth << "], stride = " << stride_
+            << ", pad_rows = " << pad_rows << ", pad_cols = " << pad_cols
+#if 0	// For GPU
+            << ", Use cuDNN: " << use_cudnn;
+#else
+    		;
+#endif
+
+#if 0	// For GPU
+    if (use_cudnn) {
+      // Reshape from TF depthwise filter to cuDNN grouped convolution filter:
+      //
+      //                  | TensorFlow       | cuDNN
+      // --------------------------------------------------------------------
+      // filter_out_depth | depth_multiplier | depth_multiplier * group_count
+      // filter_in_depth  | in_depth         | in_depth / group_count
+      //
+      // For depthwise convolution, we have group_count == in_depth.
+      int32 filter_in_depth = 1;
+      TensorShape shape =
+          TensorShape{filter_rows, filter_cols, filter_in_depth, out_depth};
+      Tensor reshaped_filter(/*type=*/dtype_);
+      OP_REQUIRES(
+          context, reshaped_filter.CopyFrom(filter, shape),
+          errors::Internal(
+              "Failed to reshape filter tensor for grouped convolution."));
+      // TODO(yangzihao): Send in arbitrary dilation rates after the dilated
+      // conv is supported.
+      launcher_(context, use_cudnn_, cudnn_use_autotune_, input,
+                reshaped_filter, /*row_dilation=*/1, /*col_dilation=*/1,
+                stride_, stride_, padding_, /*explicit_paddings=*/{}, output,
+                data_format_);
+      return;
+    }
+#endif
+
+    struct Args {
+      // Tensor Pointers
+      uint64_t input_ptr ;
+      uint64_t filter_ptr ;
+      uint64_t output_ptr ;
+
+      // Tensor Format
+      int data_format ;
+      int data_type ;
+
+      // Input layer dimensions
+      int batch;
+      int in_rows;
+      int in_cols;
+      int in_depth;
+      int filter_rows;
+      int filter_cols;
+      int depth_multiplier;
+      int stride;
+      int pad_rows;
+      int pad_cols;
+
+      // Output layer dimensions
+      int out_rows;
+      int out_cols;
+      int out_depth;
+
+      Args()
+          : input_ptr(0),
+			filter_ptr(0),
+			output_ptr(0),
+        	batch(0),
+            in_rows(0),
+            in_cols(0),
+            in_depth(0),
+            filter_rows(0),
+            filter_cols(0),
+            depth_multiplier(0),
+            stride(0),
+            pad_rows(0),
+            pad_cols(0),
+            out_rows(0),
+            out_cols(0),
+            out_depth(0) {}
+    };
+
+    Args args;
+    args.batch = batch;
+    args.in_rows = input_rows;
+    args.in_cols = input_cols;
+    args.in_depth = in_depth;
+    args.filter_rows = filter_rows;
+    args.filter_cols = filter_cols;
+    args.depth_multiplier = depth_multiplier;
+    args.stride = stride_;
+    args.pad_rows = pad_rows;
+    args.pad_cols = pad_cols;
+    args.out_rows = out_rows;
+    args.out_cols = out_cols;
+    args.out_depth = out_depth;
+
+    args.input_ptr  = (uint64_t)DMAHelper::base(&input);
+    args.filter_ptr = (uint64_t)DMAHelper::base(&filter);
+    args.output_ptr = (uint64_t)DMAHelper::base(output);
+
+    args.data_format = data_format_ ;
+    args.data_type   = DataTypeToEnum<T>::value ;
+
+    VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("DepthwiseConv2D", (void*)&args, sizeof(args));
+    if (!s.ok())
+      context->SetStatus(s);
+  }
+
+#if 0 // For GPU
+ protected:
+  bool use_cudnn_grouped_conv_;
+#endif
+
+ private:
+  std::vector<int32> strides_;
+  Padding padding_;
+  TensorFormat data_format_;
+
+  int64 stride_;  // in height/width dimension.
+
+#if 0 // For GPU
+  // For in_depth == 1 and grouped convolutions.
+  LaunchConv2DOp<Device, T> launcher_;
+  bool use_cudnn_;
+  bool cudnn_use_autotune_;
+  DataType dtype_;
+#endif
+
+  TF_DISALLOW_COPY_AND_ASSIGN(VEDepthwiseConv2dNativeOp);
+};
+
+#define REGISTER_VE_KERNEL(T)                                                 \
+  REGISTER_KERNEL_BUILDER(                                                    \
+      Name("DepthwiseConv2dNative").Device(DEVICE_VE).TypeConstraint<T>("T"), \
+      VEDepthwiseConv2dNativeOp<T>)
+
+//TF_CALL_half(REGISTER_VE_KERNEL);
+TF_CALL_float(REGISTER_VE_KERNEL);
+//TF_CALL_double(REGISTER_VE_KERNEL);
+
+#endif
 
 }  // namespace tensorflow
