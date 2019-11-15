@@ -26,4 +26,7 @@ REGISTER3(UnaryOp, GPU, "Cos", functor::cos, float, Eigen::half, double);
 #ifdef TENSORFLOW_USE_SYCL
 REGISTER2(UnaryOp, SYCL, "Cos", functor::cos, float, double);
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Cos, float);
+#endif
 }  // namespace tensorflow

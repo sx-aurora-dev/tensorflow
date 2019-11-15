@@ -340,6 +340,7 @@ REGISTER_CAST_VE(int32, float);
 REGISTER_CAST_VE(int64, float);
 REGISTER_CAST_VE(bool, int32);
 REGISTER_CAST_VE(uint16, int32);
+REGISTER_CAST_VE(float, int32);
 REGISTER_CAST_VE(int8, bool);
 REGISTER_CAST_VE(int32, bool);
 
