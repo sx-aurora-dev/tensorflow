@@ -27,4 +27,7 @@ REGISTER2(UnaryOp, SYCL, "Asinh", functor::asinh, float, double);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER2(UnaryOp, GPU, "Asinh", functor::asinh, float, double);
 #endif
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Asinh, float);
+#endif
 }  // namespace tensorflow
