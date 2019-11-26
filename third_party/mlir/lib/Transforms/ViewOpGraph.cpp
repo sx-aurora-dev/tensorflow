@@ -20,6 +20,7 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/StandardTypes.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/STLExtras.h"
 #include "llvm/Support/CommandLine.h"
 
 static llvm::cl::opt<int> elideIfLarger(
@@ -69,6 +70,15 @@ std::string DOTGraphTraits<mlir::Block *>::getNodeLabel(mlir::Operation *op,
   std::string ostr;
   raw_string_ostream os(ostr);
   os << op->getName() << "\n";
+
+  if (!op->getLoc().isa<mlir::UnknownLoc>()) {
+    os << op->getLoc() << "\n";
+  }
+
+  // Print resultant types
+  mlir::interleaveComma(op->getResultTypes(), os);
+  os << "\n";
+
   for (auto attr : op->getAttrs()) {
     os << '\n' << attr.first << ": ";
     // Always emit splat attributes.
@@ -83,6 +93,12 @@ std::string DOTGraphTraits<mlir::Block *>::getNodeLabel(mlir::Operation *op,
       os << std::string(elements.getType().getRank(), '[') << "..."
          << std::string(elements.getType().getRank(), ']') << " : "
          << elements.getType();
+      continue;
+    }
+
+    auto array = attr.second.dyn_cast<mlir::ArrayAttr>();
+    if (array && static_cast<int64_t>(array.size()) > elideIfLarger) {
+      os << "[...]";
       continue;
     }
 

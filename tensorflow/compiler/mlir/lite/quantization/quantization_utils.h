@@ -22,12 +22,18 @@ limitations under the License.
 #include <unordered_map>
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/QuantOps/FakeQuantSupport.h"  // TF:local_config_mlir
+#include "mlir/Dialect/QuantOps/QuantOps.h"  // TF:local_config_mlir
 #include "mlir/Dialect/QuantOps/QuantTypes.h"  // TF:local_config_mlir
 #include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
+#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
 #include "mlir/IR/BlockAndValueMapping.h"  // TF:local_config_mlir
+#include "mlir/IR/Function.h"  // TF:local_config_mlir
 #include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
 #include "mlir/IR/PatternMatch.h"  // TF:local_config_mlir
 #include "mlir/IR/StandardTypes.h"  // TF:local_config_mlir
+#include "mlir/Support/LLVM.h"  // TF:local_config_mlir
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_traits.h"
 
 namespace mlir {
@@ -44,20 +50,83 @@ struct OpQuantSpec {
   // Maps the operand index of a bias input to its quantization specifications,
   // including the non-bias operand indexes and the method retrieving
   // quantization parameters from list of parameters of the non-bias operands.
-  // This map is empty if the op doesn't havea bias operand.
+  // This map is empty if the op doesn't have a bias operand.
   std::unordered_map<int, std::pair<std::vector<int>, AccumulatorScaleFunc>>
       biases_params;
 
   // Quantization parameters for value restricted outputs. This is the
   // "hard-coded" parameters and should be used unconditionally for the
-  // quantized op. This vector is empty if the op doesn't have value resctricted
+  // quantized op. This vector is empty if the op doesn't have value restricted
   // outputs.
   llvm::DenseMap<SignedInteger, QuantParamsForResults> restricted_output_params;
+
+  // Coefficient operand index and whether supporting per-channel quantization.
+  // For QAT, this information is carried by the FakeQuant*/QDQ ops, but
+  // post-training quantization, the quantization parameters need to be inferred
+  // from the tensor content and op property. A "-1" value indicates the
+  // operand doesn't support per-channel quantization.
+  llvm::DenseMap<int, int> coeff_op_quant_dim;
 };
 
 // A function signature for getting the particular OpQuantSpec for the provided
 // op.
 typedef std::unique_ptr<OpQuantSpec> (*OpQuantSpecGetter)(Operation* op);
+
+template <typename Q, typename DQ>
+struct ConvertStatsToQDQs : public OpRewritePattern<quant::StatisticsOp> {
+  ConvertStatsToQDQs(int num_bits, bool narrow_range, bool is_signed,
+                     MLIRContext* context)
+      : OpRewritePattern<quant::StatisticsOp>(context),
+        num_bits(num_bits),
+        narrow_range(narrow_range),
+        is_signed(is_signed) {}
+
+  PatternMatchResult matchAndRewrite(quant::StatisticsOp op,
+                                     PatternRewriter& rewriter) const override {
+    Type expressed = op.getType().cast<ShapedType>().getElementType();
+    quant::QuantizedType quant_type;
+    SmallVector<double, 4> mins, maxs;
+
+    if (op.axisStats().hasValue()) {
+      int stats_num = op.axisStats()->getNumElements();
+      if (stats_num == 0 || stats_num % 2 != 0) return this->matchFailure();
+      auto stats = op.axisStats()->dyn_cast<DenseFPElementsAttr>();
+      if (!stats) return this->matchFailure();
+
+      for (auto it = stats.begin(), e = stats.end(); it != e; ++it) {
+        mins.push_back(FloatAttr::getValueAsDouble(*it++));
+        maxs.push_back(FloatAttr::getValueAsDouble(*it));
+      }
+      quant_type = quant::fakeQuantAttrsToType(
+          op.getLoc(), num_bits, op.axis()->getSExtValue(), mins, maxs,
+          narrow_range, expressed, is_signed);
+    } else if (auto stats = op.layerStats().dyn_cast<DenseFPElementsAttr>()) {
+      double rmin = FloatAttr::getValueAsDouble(stats.getValue<APFloat>({0}));
+      double rmax = FloatAttr::getValueAsDouble(stats.getValue<APFloat>({1}));
+      quant_type =
+          quant::fakeQuantAttrsToType(op.getLoc(), num_bits, rmin, rmax,
+                                      narrow_range, expressed, is_signed);
+    } else {
+      return this->matchFailure();
+    }
+
+    rewriter.setInsertionPointAfter(op);
+    Type result_type = quant_type.castFromExpressedType(op.getType());
+    auto q = rewriter.create<Q>(op.getLoc(), result_type, op.arg(),
+                                TypeAttr::get(result_type));
+    auto dq = rewriter.create<DQ>(op.getLoc(), op.getType(), q);
+    op.getResult()->replaceAllUsesWith(dq);
+    q.getOperation()->replaceUsesOfWith(dq, op.arg());
+    op.erase();
+
+    return this->matchSuccess();
+  }
+
+ private:
+  int num_bits;
+  bool narrow_range;
+  bool is_signed;
+};
 
 // A base rewrite pattern which matches any N-in-M-out operations with
 // quantization parameters propagated to at least one of its operands. The
@@ -195,8 +264,8 @@ struct ConvertUnsignedToSigned : public OpRewritePattern<Q> {
     // This is a positive value, and will be applied on zero points and fixed
     // point ranges.
     int64_t offset =
-        QType::getDefaultMininumForInteger(/*isSigned=*/false, num_bits) -
-        QType::getDefaultMininumForInteger(/*isSigned=*/true, num_bits);
+        QType::getDefaultMinimumForInteger(/*isSigned=*/false, num_bits) -
+        QType::getDefaultMinimumForInteger(/*isSigned=*/true, num_bits);
 
     auto flags = quant::QuantizationFlags::Signed;
     QType new_qtype;
@@ -226,7 +295,7 @@ struct ConvertUnsignedToSigned : public OpRewritePattern<Q> {
     Type new_output_type = new_qtype.castFromExpressedType(
         QType::castToExpressedType(output_type));
     rewriter.replaceOpWithNewOp<Q>(op, new_output_type, op.input(),
-                                   rewriter.getTypeAttr(new_output_type));
+                                   TypeAttr::get(new_output_type));
     return this->matchSuccess();
   }
 };
@@ -237,9 +306,16 @@ struct ConvertUnsignedToSigned : public OpRewritePattern<Q> {
 // returns UniformQuantizedType or UniformQuantizedPerAxisType respectively.
 // `narrow_range` is set to true for weights and `is_signed` is set to true
 // if it is using signed int symmetric quantization.
+//
+// Note that this method may broadcast min and max to match the dimension length
+// of `input_type`, if the the `quant_dim` is valid. On the other hand, the
+// symmetry of min and max is not adjusted by this method. The QAT workflow
+// should set min/max correctly (and use `narrow_range`=true, `is_signed`=true)
+// if symmetric quantization is required.
 TypeAttr GetQuantizedTypeAttr(Builder builder, Type input_type, Attribute min,
-                              Attribute max, IntegerAttr num_bits,
-                              BoolAttr narrow_range, bool is_signed);
+                              Attribute max, int quant_dim,
+                              IntegerAttr num_bits, BoolAttr narrow_range,
+                              bool is_signed);
 
 // Casts the `target` type to a quantized type by using the quantization
 // parameters from the type in the `source` type attribute.
@@ -265,10 +341,20 @@ ElementsAttr Quantize(Attribute real_value, Type tensor_type);
 // Returns the quantized type for an element attribute. The quantization
 // parameters in this type is based on the min and max element of the
 // attribute. When the elements in the `attr` are not in floating-point, or
-// the value range isn't straddling zero, an empty type is returned.
-Type GetUniformQuantizedTypeForElementsAttr(ElementsAttr attr,
-                                            unsigned storage_type_width,
-                                            bool is_sign, bool narrow_range);
+// the value range isn't straddling zero, an empty type is returned. The min/max
+// are ajusted to be symmetric if `symmetric` flag is set to True. And
+// `symmetric` can only be set to true when it is signed and narrow_range.
+Type GetUniformQuantizedTypeForWeight(ElementsAttr attr, bool symmetric,
+                                      unsigned num_bits, bool is_sign,
+                                      bool narrow_range);
+
+// Returns the per channel quantized type for an element attribute.
+// `quant_dim` defines the quantization axis. The channel min/max are ajusted
+// to be symmetric if `symmetric` flag is set to True. And `symmetric` can only
+// be set to true when it is signed and narrow_range.
+Type GetUniformQuantizedPerAxisTypeForWeight(ElementsAttr attr, int quant_dim,
+                                             bool symmetric, unsigned num_bits,
+                                             bool is_sign, bool narrow_range);
 
 // Returns the quantized type of a bias input, given the quantized types of
 // other operands which are multiply-accumulated (the bias is added to the
@@ -280,9 +366,17 @@ quant::QuantizedType GetUniformQuantizedTypeForBias(
 // the quantization specification of the ops. This methods assumes the initial
 // quantization parameters are stored as adjacent quantize and dequantize ops
 // and the propagation results are materialized by inserting pairs of quantize
-// and dequantize ops to this function.
+// and dequantize ops to this function. Set `disable_per_channel` to true to not
+// use per channel quantization even the op supports it.
 void ApplyQuantizationParamsPropagation(mlir::FuncOp func, bool is_signed,
+                                        bool disable_per_channel,
                                         OpQuantSpecGetter op_quant_spec_getter);
+
+// The function might contain more stats ops than required, and it will
+// introduce requantize if the calibration stats have conflicts. This method
+// tries to remove all the redundant stats ops.
+bool RemoveRedundantStatsOps(mlir::FuncOp func,
+                             OpQuantSpecGetter op_quant_spec_getter);
 
 }  // namespace TFL
 }  // namespace mlir

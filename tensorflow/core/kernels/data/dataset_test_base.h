@@ -146,17 +146,10 @@ class DatasetParams {
   // Returns the functions that will be used when running the dataset op.
   virtual std::vector<FunctionDef> func_lib() const { return {}; }
 
-  // Returns a function definition for the transformation performed by
-  // this type of dataset.
-  virtual Status CreateFactory(FunctionDef* fdef) const {
-    return errors::Unimplemented(
-        "CreateFactory is not implemented for params '", op_name(), "'");
-  }
-
-  // Returns the op name for the op represented by these parameters. This name
-  // needs to match the registered name of the dataset op (usually a constant
-  // called `kDatasetType`).
-  virtual string op_name() const = 0;
+  // Returns the dataset type for the op represented by these parameters. This
+  // type usually needs to match the constant called `kDatasetType` defined in
+  // the dataset kernel.
+  virtual string dataset_type() const = 0;
 
   virtual int op_version() const { return op_version_; }
 
@@ -186,9 +179,7 @@ class RangeDatasetParams : public DatasetParams {
 
   Status GetAttributes(AttributeVector* attr_vector) const override;
 
-  Status CreateFactory(FunctionDef* fdef) const override;
-
-  string op_name() const override;
+  string dataset_type() const override;
 
  private:
   int64 start_;
@@ -213,8 +204,9 @@ class BatchDatasetParams : public DatasetParams {
         parallel_copy_(parallel_copy) {
     input_dataset_params_.push_back(std::make_unique<T>(input_dataset_params));
     op_version_ = 2;
-    iterator_prefix_ = name_utils::IteratorPrefix(
-        input_dataset_params.op_name(), input_dataset_params.iterator_prefix());
+    iterator_prefix_ =
+        name_utils::IteratorPrefix(input_dataset_params.dataset_type(),
+                                   input_dataset_params.iterator_prefix());
   }
 
   std::vector<Tensor> GetInputTensors() const override;
@@ -223,9 +215,7 @@ class BatchDatasetParams : public DatasetParams {
 
   Status GetAttributes(AttributeVector* attr_vector) const override;
 
-  Status CreateFactory(FunctionDef* fdef) const override;
-
-  string op_name() const override;
+  string dataset_type() const override;
 
  private:
   int64 batch_size_;
@@ -254,8 +244,9 @@ class MapDatasetParams : public DatasetParams {
         use_inter_op_parallelism_(use_inter_op_parallelism),
         preserve_cardinality_(preserve_cardinality) {
     input_dataset_params_.push_back(absl::make_unique<T>(input_dataset_params));
-    iterator_prefix_ = name_utils::IteratorPrefix(
-        input_dataset_params.op_name(), input_dataset_params.iterator_prefix());
+    iterator_prefix_ =
+        name_utils::IteratorPrefix(input_dataset_params.dataset_type(),
+                                   input_dataset_params.iterator_prefix());
   }
 
   std::vector<Tensor> GetInputTensors() const override;
@@ -264,9 +255,7 @@ class MapDatasetParams : public DatasetParams {
 
   Status GetAttributes(AttributeVector* attr_vector) const override;
 
-  Status CreateFactory(FunctionDef* fdef) const override;
-
-  string op_name() const override;
+  string dataset_type() const override;
 
   std::vector<FunctionDef> func_lib() const override;
 
@@ -291,9 +280,7 @@ class TensorSliceDatasetParams : public DatasetParams {
 
   Status GetAttributes(AttributeVector* attr_vector) const override;
 
-  Status CreateFactory(FunctionDef* fdef) const override;
-
-  string op_name() const override;
+  string dataset_type() const override;
 
   int64 num_slices() const { return components_[0].dim_size(0); }
 
@@ -322,8 +309,9 @@ class TakeDatasetParams : public DatasetParams {
                       std::move(node_name)),
         count_(count) {
     input_dataset_params_.push_back(absl::make_unique<T>(input_dataset_params));
-    iterator_prefix_ = name_utils::IteratorPrefix(
-        input_dataset_params.op_name(), input_dataset_params.iterator_prefix());
+    iterator_prefix_ =
+        name_utils::IteratorPrefix(input_dataset_params.dataset_type(),
+                                   input_dataset_params.iterator_prefix());
   }
 
   std::vector<Tensor> GetInputTensors() const override;
@@ -332,18 +320,52 @@ class TakeDatasetParams : public DatasetParams {
 
   Status GetAttributes(AttributeVector* attr_vector) const override;
 
-  Status CreateFactory(FunctionDef* fdef) const override;
-
-  string op_name() const override;
+  string dataset_type() const override;
 
  private:
   int64 count_;
 };
 
+// `ConcatenateDatasetParams` is a common dataset parameter type that are used
+// in testing.
+class ConcatenateDatasetParams : public DatasetParams {
+ public:
+  template <typename T, typename P>
+  ConcatenateDatasetParams(T input_dataset_params_0, P input_dataset_params_1,
+                           DataTypeVector output_dtypes,
+                           std::vector<PartialTensorShape> output_shapes,
+                           string node_name)
+      : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
+                      std::move(node_name)) {
+    input_dataset_params_.push_back(
+        absl::make_unique<T>(input_dataset_params_0));
+    input_dataset_params_.push_back(
+        absl::make_unique<T>(input_dataset_params_1));
+    iterator_prefix_ =
+        name_utils::IteratorPrefix(input_dataset_params_0.dataset_type(),
+                                   input_dataset_params_0.iterator_prefix());
+  }
+
+  std::vector<Tensor> GetInputTensors() const override;
+
+  Status GetInputNames(std::vector<string>* input_names) const override;
+
+  Status GetAttributes(AttributeVector* attr_vector) const override;
+
+  string dataset_type() const override;
+};
+
 template <typename T>
 struct GetNextTestCase {
+  GetNextTestCase(T dataset_params, std::vector<Tensor> expected_outputs,
+                  bool compare_order = true)
+      : dataset_params(std::move(dataset_params)),
+        expected_outputs(std::move(expected_outputs)),
+        compare_order(compare_order) {}
+
   T dataset_params;
   std::vector<Tensor> expected_outputs;
+  bool compare_order;
 };
 
 template <typename T>
@@ -407,9 +429,18 @@ struct IteratorPrefixTestCase {
 
 template <typename T>
 struct IteratorSaveAndRestoreTestCase {
+  IteratorSaveAndRestoreTestCase(T dataset_params, std::vector<int> breakpoints,
+                                 std::vector<Tensor> expected_outputs,
+                                 bool compare_order = true)
+      : dataset_params(std::move(dataset_params)),
+        breakpoints(std::move(breakpoints)),
+        expected_outputs(std::move(expected_outputs)),
+        compare_order(compare_order) {}
+
   T dataset_params;
   std::vector<int> breakpoints;
   std::vector<Tensor> expected_outputs;
+  bool compare_order;
 };
 
 // Class composing a dataset with its dependencies.
@@ -636,7 +667,7 @@ class DatasetOpsTestBase : public ::testing::Test {
   Status CheckIteratorSaveAndRestore(
       const string& iterator_prefix,
       const std::vector<Tensor>& expected_outputs,
-      const std::vector<int>& breakpoints);
+      const std::vector<int>& breakpoints, bool compare_order);
 
  protected:
   // Creates a thread pool for parallel tasks.
@@ -728,6 +759,8 @@ class DatasetOpsTestBase : public ::testing::Test {
   mutex lock_for_refs_;  // Used as the Mutex for inputs added as refs.
   std::unique_ptr<CancellationManager> cancellation_manager_;
 
+  // Indicates if the below fields have been initialized.
+  bool initialized_ = false;
   std::unique_ptr<OpKernel> dataset_kernel_;
   std::unique_ptr<OpKernelContext::Params> params_;
   std::unique_ptr<OpKernelContext> dataset_ctx_;
@@ -755,12 +788,30 @@ class DatasetOpsTestBaseV2 : public DatasetOpsTestBase {
                       const TestDataset& dataset,
                       std::unique_ptr<TestIterator>* iterator);
 
+  // Runs the dataset operation according to the predefined dataset params and
+  // produces outputs. Different from `MakeDataset()` which returns a Dataset
+  // object, `RunDatasetOp()` executes the dataset kernel based on the input
+  // DatasetParams and returns the produced outputs as a tensor vector. It can
+  // be used to run some dataset operations that do not have an internal
+  // customized `Dataset` class (e.g. `ReduceDatasetOp`).
+  Status RunDatasetOp(const DatasetParams& dataset_params,
+                      std::vector<Tensor>* outputs);
+
  protected:
   // Make destructor protected so that DatasetOpsTestBaseV2 objects cannot
   // be instantiated directly. Only subclasses can be instantiated.
   virtual ~DatasetOpsTestBaseV2(){};
 
  private:
+  // Runs the dataset operation according to the predefined dataset params and
+  // the produced outputs will be stored in `dataset_ctx`.
+  Status RunDatasetOp(
+      const DatasetParams& dataset_params,
+      std::unique_ptr<OpKernel>* dataset_kernel,
+      std::unique_ptr<OpKernelContext::Params>* dataset_ctx_params,
+      std::vector<std::unique_ptr<Tensor>>* created_tensors,
+      std::unique_ptr<OpKernelContext>* dataset_ctx);
+
   Status MakeDataset(
       const DatasetParams& dataset_params,
       std::unique_ptr<OpKernel>* dataset_kernel,
@@ -778,9 +829,6 @@ class DatasetOpsTestBaseV2 : public DatasetOpsTestBase {
       const DatasetParams& dataset_params,
       std::vector<std::unique_ptr<Tensor>>* created_tensors,
       std::unique_ptr<Tensor>* dataset);
-
-  Status CreateFactory(const DatasetParams& dataset_params,
-                       FunctionDef* fdef) const;
 };
 
 #define ITERATOR_GET_NEXT_TEST_P(dataset_op_test_class, dataset_params_class, \
@@ -793,8 +841,9 @@ class DatasetOpsTestBaseV2 : public DatasetOpsTestBase {
   TEST_P(ParameterizedGetNextTest, GetNext) {                                 \
     auto test_case = GetParam();                                              \
     TF_ASSERT_OK(Initialize(test_case.dataset_params));                       \
-    TF_ASSERT_OK(CheckIteratorGetNext(test_case.expected_outputs,             \
-                                      /*compare_order=*/true));               \
+    TF_ASSERT_OK(                                                             \
+        CheckIteratorGetNext(test_case.expected_outputs,                      \
+                             /*compare_order=*/test_case.compare_order));     \
   }                                                                           \
                                                                               \
   INSTANTIATE_TEST_SUITE_P(                                                   \
@@ -969,7 +1018,8 @@ class DatasetOpsTestBaseV2 : public DatasetOpsTestBase {
     TF_ASSERT_OK(Initialize(test_case.dataset_params));                      \
     TF_ASSERT_OK(CheckIteratorSaveAndRestore(                                \
         test_case.dataset_params.iterator_prefix(),                          \
-        test_case.expected_outputs, test_case.breakpoints));                 \
+        test_case.expected_outputs, test_case.breakpoints,                   \
+        test_case.compare_order));                                           \
   }                                                                          \
   INSTANTIATE_TEST_SUITE_P(                                                  \
       dataset_op_test_class, ParameterizedIteratorSaveAndRestoreTest,        \
