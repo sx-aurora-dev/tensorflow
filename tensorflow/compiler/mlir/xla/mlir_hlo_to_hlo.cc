@@ -49,6 +49,34 @@ using ::tensorflow::uint32;
 using ::tensorflow::uint64;
 using ::tensorflow::uint8;
 
+// Passes through everything except for unique_ptr, on which it calls get().
+// This exists to allow the generated code to call XLA functions that take a raw
+// pointer. In particular, PrecisionConfig is passed to xla::Dot and xla::Conv
+// as a pointer and there is otherwise no way to avoid a memory leak.
+template <typename T>
+T Unwrap(T t) {
+  return t;
+}
+
+template <typename T>
+T* Unwrap(const std::unique_ptr<T>& t) {
+  return t.get();
+}
+
+// Convert APInt into an int.
+// TODO(hpucha): This should be consolidated into a general place.
+static int ConvertAPInt(llvm::APInt i) { return i.getSExtValue(); }
+
+// Convert APFloat to double.
+static double ConvertAPFloat(llvm::APFloat value) {
+  const auto& semantics = value.getSemantics();
+  bool losesInfo = false;
+  if (&semantics != &llvm::APFloat::IEEEdouble())
+    value.convert(llvm::APFloat::IEEEdouble(),
+                  llvm::APFloat::rmNearestTiesToEven, &losesInfo);
+  return value.convertToDouble();
+}
+
 static std::vector<int64> ConvertDenseIntAttr(mlir::DenseIntElementsAttr attr) {
   auto values = attr.getValues<int64>();
   return {values.begin(), values.end()};
@@ -217,6 +245,14 @@ static xla::ConvolutionDimensionNumbers Convert_convolution_dimension_numbers(
   return output;
 }
 
+xla::ChannelHandle Convert_channel_handle(mlir::xla_hlo::ChannelHandle attr) {
+  xla::ChannelHandle channel_handle;
+  channel_handle.set_handle(ConvertAPInt(attr.handle().getValue()));
+  channel_handle.set_type(static_cast<xla::ChannelHandle::ChannelType>(
+      ConvertAPInt(attr.type().getValue())));
+  return channel_handle;
+}
+
 // Converts the comparison_direction string attribute into the XLA enum. The
 // string is assumed to correspond to exactly one of the allowed strings
 // representing the enum. This should have been checked in the op verify method.
@@ -226,32 +262,30 @@ static xla::ComparisonDirection Convert_comparison_direction(
       .ValueOrDie();
 }
 
-// Passes through everything except for unique_ptr, on which it calls get().
-// This exists to allow the generated code to call XLA functions that take a raw
-// pointer. In particular, PrecisionConfig is passed to xla::Dot and xla::Conv
-// as a pointer and there is otherwise no way to avoid a memory leak.
-template <typename T>
-T Unwrap(T t) {
-  return t;
-}
+static xla::ScatterDimensionNumbers Convert_scatter_dimension_numbers(
+    mlir::xla_hlo::ScatterDimensionNumbers input) {
+  xla::ScatterDimensionNumbers output;
 
-template <typename T>
-T* Unwrap(const std::unique_ptr<T>& t) {
-  return t.get();
-}
+  auto update_window_dims = ConvertDenseIntAttr(input.update_window_dims());
+  std::copy(update_window_dims.begin(), update_window_dims.end(),
+            tensorflow::protobuf::RepeatedFieldBackInserter(
+                output.mutable_update_window_dims()));
 
-// Convert APInt into an int.
-// TODO(hpucha): This should be consolidated into a general place.
-static int ConvertAPInt(llvm::APInt i) { return i.getSExtValue(); }
+  auto inserted_window_dims = ConvertDenseIntAttr(input.inserted_window_dims());
+  std::copy(inserted_window_dims.begin(), inserted_window_dims.end(),
+            tensorflow::protobuf::RepeatedFieldBackInserter(
+                output.mutable_inserted_window_dims()));
 
-// Convert APFloat to double.
-static double ConvertAPFloat(llvm::APFloat value) {
-  const auto& semantics = value.getSemantics();
-  bool losesInfo = false;
-  if (&semantics != &llvm::APFloat::IEEEdouble())
-    value.convert(llvm::APFloat::IEEEdouble(),
-                  llvm::APFloat::rmNearestTiesToEven, &losesInfo);
-  return value.convertToDouble();
+  auto scatter_dims_to_operand_dims =
+      ConvertDenseIntAttr(input.scatter_dims_to_operand_dims());
+  std::copy(scatter_dims_to_operand_dims.begin(),
+            scatter_dims_to_operand_dims.end(),
+            tensorflow::protobuf::RepeatedFieldBackInserter(
+                output.mutable_scatter_dims_to_operand_dims()));
+
+  output.set_index_vector_dim(
+      ConvertAPInt(input.index_vector_dim().getValue()));
+  return output;
 }
 
 namespace mlir {
@@ -359,6 +393,26 @@ llvm::SmallVector<xla::XlaOp, 4> GetTuple(mlir::Operation::operand_range values,
 namespace mlir {
 namespace xla_hlo {
 namespace {
+
+LogicalResult ExportXlaOp(AllReduceOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaComputation computation;
+  if (failed(ctx.converter->LowerRegionAsComputation(&op.computation(),
+                                                     &computation))) {
+    return failure();
+  }
+  auto replica_groups = Convert_replica_groups(op.replica_groups());
+  if (!op.channel_id().hasValue()) {
+    value_map[op] =
+        xla::AllReduce(value_map[op.operand()], computation, replica_groups,
+                       /*channel_id=*/absl::nullopt);
+    return success();
+  }
+  auto channel_id = Convert_channel_handle(op.channel_id().getValue());
+  value_map[op] = xla::AllReduce(value_map[op.operand()], computation,
+                                 replica_groups, channel_id);
+  return success();
+}
 
 LogicalResult ExportXlaOp(BroadcastInDimOp op, OpLoweringContext ctx) {
   auto type = op.getType().dyn_cast<RankedTensorType>();
@@ -532,6 +586,22 @@ LogicalResult ExportXlaOp(RngUniformOp op, OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
   value_map[op] = xla::RngUniform(value_map[op.a()], value_map[op.b()],
                                   xla::TypeToShape(op.getType()));
+  return success();
+}
+
+LogicalResult ExportXlaOp(ScatterOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaComputation update_computation;
+  if (failed(ctx.converter->LowerRegionAsComputation(&op.update_computation(),
+                                                     &update_computation))) {
+    return failure();
+  }
+  xla::ScatterDimensionNumbers dimension_numbers =
+      Convert_scatter_dimension_numbers(op.scatter_dimension_numbers());
+  value_map[op] = xla::Scatter(
+      value_map[op.operand()], value_map[op.scatter_indices()],
+      value_map[op.updates()], update_computation, dimension_numbers,
+      op.indices_are_sorted(), op.unique_indices());
   return success();
 }
 
