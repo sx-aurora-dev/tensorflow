@@ -47,7 +47,7 @@ REGISTER_KERNEL_BUILDER(Name("Square")
 #ifdef TENSORFLOW_USE_VE
 REGISTER_VE_UNARY_OP(Square, float);
 REGISTER_KERNEL_BUILDER(Name("Square")
-                            .Device(DEVICE_SYCL)
+                            .Device(DEVICE_VE)
                             .HostMemory("x")
                             .HostMemory("y")
                             .TypeConstraint<int32>("T"),
