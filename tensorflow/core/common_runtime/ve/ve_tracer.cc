@@ -25,6 +25,8 @@ typedef void (*cb_t)(int nodeid, int kind, const void* data, void* self);
 extern Status ve_get_timestamp(int nodeid, uint64_t* ts, double* resolution);
 extern Status ve_set_trace_callback(int nodeid, cb_t cb, void* data);
 
+namespace profiler {
+
 #if 0 // copy from device_tracer.cc
 #define TF_STATIC_THREAD_LOCAL_POD(_Type_, _var_)                  \
   static __thread _Type_ s_obj_##_var_;                            \
@@ -119,6 +121,7 @@ class VEDeviceTracer : public profiler::ProfilerInterface {
     Status Stop() override;
     Status Collect(StepStatsCollector* collector);
     Status CollectData(RunMetadata* run_metadata) override;
+    Status CollectData(XSpace* space) override;
 
     profiler::DeviceType GetDeviceType() override {
       return profiler::DeviceType::kVe;
@@ -240,6 +243,10 @@ Status VEDeviceTracer::CollectData(RunMetadata* run_metadata) {
   return Status::OK();
 }
 
+Status VEDeviceTracer::CollectData(XSpace* space) {
+    return errors::Unimplemented("Collect data into XSpace not yet implemented");
+}
+
 Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
   VLOG(2) << "VEDeviceTracer::Collect: kernel_records_.size=" << kernel_records_.size();
 
@@ -297,6 +304,7 @@ Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
   return Status::OK();
 }
 
+} // namespace profiler
 
 std::unique_ptr<profiler::ProfilerInterface>
 CreateDeviceTracer(const profiler::ProfilerOptions&) {
@@ -307,7 +315,7 @@ CreateDeviceTracer(const profiler::ProfilerOptions&) {
   }
   
   VLOG(2) << "CreateDeviceTracer(VE)";
-  std::unique_ptr<profiler::ProfilerInterface> tracer(new VEDeviceTracer());
+  std::unique_ptr<profiler::ProfilerInterface> tracer(new profiler::VEDeviceTracer());
   return tracer;
 }
 
