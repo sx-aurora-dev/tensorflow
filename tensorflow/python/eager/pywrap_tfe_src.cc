@@ -34,6 +34,7 @@ limitations under the License.
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/python/eager/pywrap_tensor.h"
 #include "tensorflow/python/eager/pywrap_tfe.h"
 #include "tensorflow/python/lib/core/safe_ptr.h"
@@ -143,6 +144,40 @@ AttrToInputsMap* GetAttrToInputsMap(const tensorflow::OpDef& op_def) {
   return retval;
 }
 
+tensorflow::mutex all_attr_to_defaults_maps_lock(
+    tensorflow::LINKER_INITIALIZED);
+tensorflow::gtl::FlatMap<
+    string, tensorflow::gtl::FlatMap<string, tensorflow::DataType>*>*
+GetAllAttrToDefaultsMaps() {
+  static auto* all_attr_to_defaults_maps = new tensorflow::gtl::FlatMap<
+      string, tensorflow::gtl::FlatMap<string, tensorflow::DataType>*>;
+  return all_attr_to_defaults_maps;
+}
+
+tensorflow::gtl::FlatMap<string, tensorflow::DataType>* GetAttrToDefaultsMap(
+    const tensorflow::OpDef& op_def) {
+  tensorflow::mutex_lock l(all_attr_to_defaults_maps_lock);
+  auto* all_attr_to_defaults_maps = GetAllAttrToDefaultsMaps();
+
+  auto* output =
+      tensorflow::gtl::FindPtrOrNull(*all_attr_to_defaults_maps, op_def.name());
+  if (output != nullptr) {
+    return output;
+  }
+
+  auto* new_map = new tensorflow::gtl::FlatMap<string, tensorflow::DataType>;
+
+  for (const auto& attr : op_def.attr()) {
+    if (attr.type() == "type" && attr.has_default_value()) {
+      new_map->insert({attr.name(), attr.default_value().type()});
+    }
+  }
+
+  (*all_attr_to_defaults_maps)[op_def.name()] = new_map;
+
+  return new_map;
+}
+
 struct FastPathOpExecInfo {
   TFE_Context* ctx;
   const char* device_name;
@@ -163,6 +198,7 @@ struct FastPathOpExecInfo {
   // DTypes can come from another input that has the same attr. So build that
   // map.
   const AttrToInputsMap* attr_to_inputs_map;
+  const tensorflow::gtl::FlatMap<string, tensorflow::DataType>* default_dtypes;
   tensorflow::gtl::FlatMap<string, tensorflow::DataType> cached_dtypes;
 };
 
@@ -225,7 +261,7 @@ bool IsInteger(PyObject* py_value) {
 #if PY_MAJOR_VERSION >= 3
   return PyLong_Check(py_value);
 #else
-  return PyInt_Check(py_value);
+  return PyInt_Check(py_value) || PyLong_Check(py_value);
 #endif
 }
 
@@ -240,6 +276,7 @@ bool ParseDimensionValue(const string& key, PyObject* py_value,
   tensorflow::Safe_PyObjectPtr dimension_value(
       PyObject_GetAttrString(py_value, "_value"));
   if (dimension_value == nullptr) {
+    PyErr_Clear();
     TF_SetStatus(
         status, TF_INVALID_ARGUMENT,
         tensorflow::strings::StrCat("Expecting a Dimension for attr ", key,
@@ -763,8 +800,7 @@ PyObject* gradient_function = nullptr;
 // Python function that returns output gradients given input gradients.
 PyObject* forward_gradient_function = nullptr;
 
-tensorflow::mutex _uid_mutex(tensorflow::LINKER_INITIALIZED);
-tensorflow::int64 _uid GUARDED_BY(_uid_mutex) = 0;
+static std::atomic<int64_t> _uid;
 
 }  // namespace
 
@@ -968,10 +1004,7 @@ const char* TFE_GetPythonString(PyObject* o) {
 #endif
 }
 
-int64_t get_uid() {
-  tensorflow::mutex_lock l(_uid_mutex);
-  return _uid++;
-}
+int64_t get_uid() { return _uid++; }
 
 PyObject* TFE_Py_UID() { return PyLong_FromLongLong(get_uid()); }
 
@@ -1432,7 +1465,7 @@ static PyTypeObject TFE_Py_Tape_Type = {
     sizeof(TFE_Py_Tape),                          /* tp_basicsize */
     0,                                            /* tp_itemsize */
     &TFE_Py_Tape_Delete,                          /* tp_dealloc */
-    nullptr,                                      /* tp_print */
+    0,                                            /* tp_print */
     nullptr,                                      /* tp_getattr */
     nullptr,                                      /* tp_setattr */
     nullptr,                                      /* tp_reserved */
@@ -1470,7 +1503,7 @@ static PyTypeObject TFE_Py_ForwardAccumulator_Type = {
     sizeof(TFE_Py_ForwardAccumulator),                      /* tp_basicsize */
     0,                                                      /* tp_itemsize */
     &TFE_Py_ForwardAccumulatorDelete,                       /* tp_dealloc */
-    nullptr,                                                /* tp_print */
+    0,                                                      /* tp_print */
     nullptr,                                                /* tp_getattr */
     nullptr,                                                /* tp_setattr */
     nullptr,                                                /* tp_reserved */
@@ -2714,11 +2747,11 @@ PyObject* TFE_Py_PackJVPs(PyObject* tensors) {
 namespace {
 static const int kFastPathExecuteInputStartIndex = 5;
 
-PyObject* GetPythonObjectFromString(const char* s) {
+PyObject* GetPythonObjectFromString(tensorflow::StringPiece s) {
 #if PY_MAJOR_VERSION >= 3
-  return PyUnicode_FromString(s);
+  return PyUnicode_FromStringAndSize(s.data(), s.size());
 #else
-  return PyBytes_FromString(s);
+  return PyBytes_FromStringAndSize(s.data(), s.size());
 #endif
 }
 
@@ -2838,6 +2871,11 @@ tensorflow::DataType MaybeGetDTypeForAttr(const string& attr,
     }
   }
 
+  auto default_it = op_exec_info->default_dtypes->find(attr);
+  if (default_it != op_exec_info->default_dtypes->end()) {
+    return default_it->second;
+  }
+
   return tensorflow::DT_INVALID;
 }
 
@@ -2890,7 +2928,6 @@ bool OpGradientDoesntRequireOutputIndices(
           {"SparseSegmentMean", {true, {}}},
           {"SparseSegmentSqrtN", {true, {}}},
           {"UnsortedSegmentSum", {true, {}}},
-          {"UnsortedSegmentMax", {true, {}}},
           {"Abs", {true, {}}},
           {"Neg", {true, {}}},
           {"ReciprocalGrad", {true, {}}},
@@ -3301,7 +3338,7 @@ bool AddInputToOp(FastPathOpExecInfo* op_exec_info, PyObject* input,
     TFE_OpSetAttrType(op, input_arg.type_attr().data(), dtype);
     if (flattened_attrs != nullptr) {
       flattened_attrs->emplace_back(
-          GetPythonObjectFromString(input_arg.type_attr().data()));
+          GetPythonObjectFromString(input_arg.type_attr()));
       flattened_attrs->emplace_back(PyLong_FromLong(dtype));
     }
   }
@@ -3416,6 +3453,8 @@ bool RunCallbacks(
 }  // namespace
 
 PyObject* TFE_Py_FastPathExecute_C(PyObject*, PyObject* args) {
+  tensorflow::profiler::TraceMe activity(
+      "TFE_Py_FastPathExecute_C", tensorflow::profiler::TraceMeLevel::kInfo);
   Py_ssize_t args_size = PyTuple_GET_SIZE(args);
   if (args_size < kFastPathExecuteInputStartIndex) {
     PyErr_SetString(
@@ -3498,6 +3537,7 @@ PyObject* TFE_Py_FastPathExecute_C(PyObject*, PyObject* args) {
   }
 
   op_exec_info.attr_to_inputs_map = GetAttrToInputsMap(*op_def);
+  op_exec_info.default_dtypes = GetAttrToDefaultsMap(*op_def);
 
   // Mapping of attr name to size - used to calculate the number of values
   // to be expected by the TFE_Execute run.
@@ -3582,7 +3622,7 @@ PyObject* TFE_Py_FastPathExecute_C(PyObject*, PyObject* args) {
       TFE_OpSetAttrInt(op, input_arg.number_attr().data(), len);
       if (op_exec_info.run_callbacks) {
         flattened_attrs->emplace_back(
-            GetPythonObjectFromString(input_arg.number_attr().data()));
+            GetPythonObjectFromString(input_arg.number_attr()));
         flattened_attrs->emplace_back(PyLong_FromLong(len));
       }
       attr_list_sizes[input_arg.number_attr()] = len;
@@ -3649,8 +3689,7 @@ PyObject* TFE_Py_FastPathExecute_C(PyObject*, PyObject* args) {
         }
       }
       if (op_exec_info.run_callbacks) {
-        flattened_attrs->emplace_back(
-            GetPythonObjectFromString(attr_name.data()));
+        flattened_attrs->emplace_back(GetPythonObjectFromString(attr_name));
         flattened_attrs->emplace_back(py_attr_value);
       }
       TFE_OpSetAttrTypeList(op, attr_name.data(), attr_value.data(),
@@ -3795,7 +3834,7 @@ struct EncodeResult {
   PyObject* ToPyTuple() {
     PyObject* result = PyTuple_New(2);
 
-    PyTuple_SET_ITEM(result, 0, GetPythonObjectFromString(str.c_str()));
+    PyTuple_SET_ITEM(result, 0, GetPythonObjectFromString(str));
 
     if (objects.empty()) {
       Py_INCREF(Py_None);
@@ -3932,7 +3971,7 @@ tensorflow::Status TFE_Py_EncodeArgHelper(PyObject* arg,
   } else if (PyList_Check(arg)) {
     TF_RETURN_IF_ERROR(TFE_Py_EncodeSequence(
         arg, kList, kListEnd, include_tensor_ranks_only, result));
-  } else if (PyTuple_Check(arg)) {
+  } else if (tensorflow::swig::IsTuple(arg)) {
     TF_RETURN_IF_ERROR(TFE_Py_EncodeSequence(
         arg, kTuple, kTupleEnd, include_tensor_ranks_only, result));
   } else if (tensorflow::swig::IsMapping(arg)) {

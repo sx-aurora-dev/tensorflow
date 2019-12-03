@@ -21,21 +21,12 @@ limitations under the License.
 #include "tensorflow/lite/experimental/micro/examples/micro_speech/micro_features/micro_model_settings.h"
 #include "tensorflow/lite/experimental/micro/examples/micro_speech/micro_features/tiny_conv_micro_features_model_data.h"
 #include "tensorflow/lite/experimental/micro/examples/micro_speech/recognize_commands.h"
+#include "tensorflow/lite/experimental/micro/kernels/micro_ops.h"
 #include "tensorflow/lite/experimental/micro/micro_error_reporter.h"
 #include "tensorflow/lite/experimental/micro/micro_interpreter.h"
 #include "tensorflow/lite/experimental/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
-
-namespace tflite {
-namespace ops {
-namespace micro {
-TfLiteRegistration* Register_DEPTHWISE_CONV_2D();
-TfLiteRegistration* Register_FULLY_CONNECTED();
-TfLiteRegistration* Register_SOFTMAX();
-}  // namespace micro
-}  // namespace ops
-}  // namespace tflite
 
 // Globals, used for compatibility with Arduino-style sketches.
 namespace {
@@ -152,18 +143,9 @@ void loop() {
     return;
   }
 
-  // The output from the model is a vector containing the scores for each
-  // kind of prediction, so figure out what the highest scoring category was.
+  // Obtain a pointer to the output tensor
   TfLiteTensor* output = interpreter->output(0);
-  uint8_t top_category_score = 0;
-  for (int category_index = 0; category_index < kCategoryCount;
-       ++category_index) {
-    const uint8_t category_score = output->data.uint8[category_index];
-    if (category_score > top_category_score) {
-      top_category_score = category_score;
-    }
-  }
-
+  // Determine whether a command was recognized based on the output of inference
   const char* found_command = nullptr;
   uint8_t score = 0;
   bool is_new_command = false;

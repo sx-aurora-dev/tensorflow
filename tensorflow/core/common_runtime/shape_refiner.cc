@@ -30,7 +30,6 @@ limitations under the License.
 #include "tensorflow/core/graph/algorithm.h"
 #include "tensorflow/core/graph/graph_constructor.h"
 #include "tensorflow/core/lib/core/errors.h"
-#include "tensorflow/core/lib/gtl/stl_util.h"
 #include "tensorflow/core/public/session.h"
 
 namespace tensorflow {
@@ -140,7 +139,7 @@ Status InferShapesForFunctionSubNode(const Node* node, ShapeRefiner* refiner,
 // other maintainability issues.
 Status ShapeRefiner::InferShapesForFunction(
     const FunctionDef* function_def, AttrSlice attributes,
-    bool keep_nested_shapes, ExtendedInferenceContext* outer_context) {
+    ExtendedInferenceContext* outer_context) {
   const Graph* graph;
   auto it = functions_.find(function_def);
   if (it != functions_.end()) {
@@ -180,38 +179,9 @@ Status ShapeRefiner::InferShapesForFunction(
     ReverseDFS(*graph, {}, node_shape_inference_lambda);
   }
 
-  if (keep_nested_shapes && inference_status.ok()) {
-    // Fill the nested inferences map.
-    //
-    // The materialized function graph has extra nodes for arguments and
-    // return values, which are not explicitly listed in the FunctionDef,
-    // we filter out these special nodes here to not expose the implementation
-    // details and keep only inferences for the nodes listed in the FunctionDef.
-    std::unordered_map<string, const NodeDef*> user_defined_nodes;
-    for (const auto& node_def : function_def->node_def()) {
-      user_defined_nodes[node_def.name()] = &node_def;
-    }
-
-    std::unordered_map<string, std::unique_ptr<ExtendedInferenceContext>>
-        nested_inferences;
-    for (const Node* node : function_nodes) {
-      const string& node_name = node->name();
-      if (user_defined_nodes.find(node_name) != user_defined_nodes.end()) {
-        nested_inferences[node_name] = std::move(node_to_context_[node]);
-        node_to_context_.erase(node);
-        // By default InferenceContext refers to a NodeDef from Graph.
-        // Change it to the publicly accessible NodeDef of the function
-        // definition.
-        nested_inferences[node_name]->get_context()->node_def_ =
-            user_defined_nodes[node_name];
-      }
-    }
-    outer_context->set_nested_inferences(std::move(nested_inferences));
-  } else {
-    // Delete the contexts created for the functions nodes to save memory.
-    for (const Node* node : function_nodes) {
-      node_to_context_.erase(node);
-    }
+  // Delete the contexts created for the functions nodes to save memory.
+  for (const Node* node : function_nodes) {
+    node_to_context_.erase(node);
   }
 
   return inference_status;
@@ -220,7 +190,7 @@ Status ShapeRefiner::InferShapesForFunction(
 Status ShapeRefiner::AddNode(const Node* node) {
   // Create the inference context for this node with the existing input shapes.
   std::unique_ptr<InferenceContext> ic(new InferenceContext(
-      graph_def_version_, &node->def(), node->op_def(),
+      graph_def_version_, node->def(), node->op_def(),
       std::vector<ShapeHandle>(node->num_inputs()), {}, {}, {}));
   TF_RETURN_IF_ERROR(ic->construction_status());
 
@@ -436,15 +406,19 @@ Status ShapeRefiner::EvaluateConstantIntScalarEdge(const Node* node,
   TF_RETURN_IF_ERROR(
       EvaluateConstantTensorForEdge(node, dst_idx, evaluated, &scalar));
   if (*evaluated) {
-    DCHECK_EQ(scalar.NumElements(), 1)
-        << "EvaluateConstantIntScalarEdge called on non-scalar edge: "
-        << scalar.NumElements();
+    if (scalar.NumElements() != 1) {
+      return errors::InvalidArgument(
+          "EvaluateConstantIntScalarEdge called on non-scalar edge: ",
+          scalar.NumElements());
+    }
     if (scalar.dtype() == DT_INT32) {
       *result = scalar.scalar<int32>()();
     } else {
-      DCHECK_EQ(scalar.dtype(), DT_INT64)
-          << "EvaluateConstantIntScalarEdge called on non-integer edge: "
-          << scalar.dtype();
+      if (scalar.dtype() != DT_INT64) {
+        return errors::InvalidArgument(
+            "EvaluateConstantIntScalarEdge called on non-integer edge: ",
+            scalar.dtype());
+      }
       *result = scalar.scalar<int64>()();
     }
   }
@@ -493,6 +467,40 @@ Status ShapeRefiner::ConstantPartialShape(InferenceContext* target_context,
     // Source tensor is a vector of length 0, so the shape it
     // represents is as scalar.
     *result = target_context->Scalar();
+  } else if (src_op == "Cast") {
+    // First try to evaluate the current tensor, as it might be a valid cast of
+    // a float.
+    Tensor t;
+    bool evaluated = false;
+    if (EvaluateConstantTensorForEdge(node, dst_idx, &evaluated, &t).ok()) {
+      if (evaluated &&
+          target_context->MakeShapeFromTensor(&t, src_shape, result).ok()) {
+        return Status::OK();
+      }
+    }
+
+    // Then try to infer partial shape from the input to the cast tensor.
+    ShapeHandle pre_cast_shape;
+    if (!ConstantPartialShape(target_context, input_edge->src(), 0,
+                              &pre_cast_shape)
+             .ok()) {
+      TF_RETURN_IF_ERROR(
+          target_context->MakeShapeFromTensor(nullptr, src_shape, result));
+    }
+    if (!target_context->RankKnown(pre_cast_shape)) {
+      // Failed to evaluate. Treat the output as completely unknown.
+      *result = target_context->UnknownShape();
+      return Status::OK();
+    }
+    auto* dest_type = input_edge->src()->attrs().Find("DstT");
+    if (dest_type == nullptr || dest_type->value_case() != AttrValue::kType ||
+        (dest_type->type() != DT_INT32 && dest_type->type() != DT_INT64)) {
+      // Casting to a weird type. Do not attempt to infer across it.
+      *result = target_context->MakeShape(std::vector<DimensionHandle>(
+          target_context->Rank(pre_cast_shape), target_context->UnknownDim()));
+      return Status::OK();
+    }
+    *result = pre_cast_shape;
   } else if (src_op == "Shape") {
     *result = src_context->input(0);
   } else if (src_op == "ShapeN") {
@@ -664,9 +672,8 @@ Status ShapeRefiner::RunShapeFn(const Node* node,
           // performing inference on the function body.
           auto const_tensor_map_copy = const_tensor_map_;
           const_tensor_map_.clear();
-          Status function_inference_status =
-              InferShapesForFunction(function_def, AttrSlice(&function.attr()),
-                                     keep_nested_shape_inferences_, ec);
+          Status function_inference_status = InferShapesForFunction(
+              function_def, AttrSlice(&function.attr()), ec);
           const_tensor_map_ = const_tensor_map_copy;
           return function_inference_status;
         }

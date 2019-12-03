@@ -30,7 +30,6 @@ import numpy as np
 import six
 from six.moves import zip  # pylint: disable=redefined-builtin
 
-from tensorflow.python import pywrap_tensorflow
 from tensorflow.python.eager import context
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import errors
@@ -39,19 +38,22 @@ from tensorflow.python.framework import func_graph
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.keras import backend
-from tensorflow.python.keras import saving
 from tensorflow.python.keras.engine import base_layer
 from tensorflow.python.keras.engine import base_layer_utils
 from tensorflow.python.keras.engine import input_layer as input_layer_module
 from tensorflow.python.keras.engine import node as node_module
 from tensorflow.python.keras.engine import training_utils
+from tensorflow.python.keras.saving import hdf5_format
+from tensorflow.python.keras.saving import save
 from tensorflow.python.keras.saving.saved_model import network_serialization
 from tensorflow.python.keras.utils import generic_utils
 from tensorflow.python.keras.utils import layer_utils
 from tensorflow.python.keras.utils import tf_utils
 from tensorflow.python.keras.utils.io_utils import ask_to_proceed_with_overwrite
+from tensorflow.python.ops.ragged import ragged_tensor
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training import checkpoint_management
+from tensorflow.python.training import py_checkpoint_reader
 from tensorflow.python.training.tracking import base as trackable
 from tensorflow.python.training.tracking import data_structures
 from tensorflow.python.training.tracking import layer_utils as trackable_layer_utils
@@ -290,6 +292,8 @@ class Network(base_layer.Layer):
     self._input_coordinates = []
     self._output_coordinates = []
 
+    self._supports_ragged_inputs = None
+
     # This is for performance optimization when calling the Network on new
     # inputs. Every time the Network is called on a set on input tensors,
     # we compute the output tensors, output masks and output shapes in one pass,
@@ -381,6 +385,7 @@ class Network(base_layer.Layer):
     self._init_call_fn_args()
     self._autocast = kwargs.get('autocast',
                                 base_layer_utils.v2_dtype_behavior_enabled())
+    self._supports_ragged_inputs = None
     self.outputs = []
     self.inputs = []
     self.built = False
@@ -808,7 +813,17 @@ class Network(base_layer.Layer):
     # the future and 2) Keras is a major user of Network.  If you don't
     # use masking, it does not interfere with regular behavior at all and you
     # can ignore it.
-    inputs = nest.flatten(inputs)
+
+    if isinstance(inputs, dict) and isinstance(self._nested_inputs,
+                                               (list, tuple)):
+      # Backwards compat: Allows passing a dict to a Model constructed with a
+      # list. Matches dict keys to input names.
+      inputs = [
+          inputs[inp._keras_history.layer.name] for inp in self._nested_inputs
+      ]
+    else:
+      inputs = nest.flatten(inputs)
+
     if mask is None:
       masks = [None for _ in range(len(inputs))]
     else:
@@ -822,6 +837,14 @@ class Network(base_layer.Layer):
 
     for x, y in zip(self.inputs, inputs):
       tensor_dict[str(id(x))] = y
+      if isinstance(x, ops.Tensor) and isinstance(y, ops.Tensor):
+        try:
+          y.set_shape(y.shape.merge_with(x.shape))
+        except ValueError:
+          logging.warning(
+              'Model was constructed with shape {} for input {}, but it was '
+              're-called on a Tensor with incompatible shape {}.'
+              .format(x, x.shape, y.shape))
 
     depth_keys = list(self._nodes_by_depth.keys())
     depth_keys.sort(reverse=True)
@@ -960,9 +983,8 @@ class Network(base_layer.Layer):
             target location, or provide the user with a manual prompt.
         include_optimizer: If True, save optimizer's state together.
         save_format: Either 'tf' or 'h5', indicating whether to save the model
-            to Tensorflow SavedModel or HDF5. The default is currently 'h5', but
-            will switch to 'tf' in TensorFlow 2.0. The 'tf' option is currently
-            disabled (use `tf.keras.experimental.export_saved_model` instead).
+            to Tensorflow SavedModel or HDF5. Defaults to 'tf' in TF 2.X, and
+            'h5' in TF 1.X.
         signatures: Signatures to save with the SavedModel. Applicable to the
             'tf' format only. Please see the `signatures` argument in
             `tf.saved_model.save` for details.
@@ -982,8 +1004,8 @@ class Network(base_layer.Layer):
     model = load_model('my_model.h5')
     ```
     """
-    saving.save_model(self, filepath, overwrite, include_optimizer, save_format,
-                      signatures, options)
+    save.save_model(self, filepath, overwrite, include_optimizer, save_format,
+                    signatures, options)
 
   def save_weights(self, filepath, overwrite=True, save_format=None):
     """Saves all layer weights.
@@ -1082,7 +1104,7 @@ class Network(base_layer.Layer):
         return
     if save_format == 'h5':
       with h5py.File(filepath, 'w') as f:
-        saving.save_weights_to_hdf5_group(f, self.layers)
+        hdf5_format.save_weights_to_hdf5_group(f, self.layers)
     else:
       if context.executing_eagerly():
         session = None
@@ -1162,7 +1184,7 @@ class Network(base_layer.Layer):
       save_format = 'h5'
     else:
       try:
-        pywrap_tensorflow.NewCheckpointReader(filepath)
+        py_checkpoint_reader.NewCheckpointReader(filepath)
         save_format = 'tf'
       except errors_impl.DataLossError:
         # The checkpoint is not readable in TensorFlow format. Try HDF5.
@@ -1194,10 +1216,10 @@ class Network(base_layer.Layer):
       if 'layer_names' not in f.attrs and 'model_weights' in f:
         f = f['model_weights']
       if by_name:
-        saving.load_weights_from_hdf5_group_by_name(
+        hdf5_format.load_weights_from_hdf5_group_by_name(
             f, self.layers, skip_mismatch=skip_mismatch)
       else:
-        saving.load_weights_from_hdf5_group(f, self.layers)
+        hdf5_format.load_weights_from_hdf5_group(f, self.layers)
 
   def _updated_config(self):
     """Util shared between different serialization methods.
@@ -1320,6 +1342,8 @@ class Network(base_layer.Layer):
                         'Note that input tensors are '
                         'instantiated via `tensor = tf.keras.Input(shape)`.\n'
                         'The tensor that caused the issue was: ' + str(x.name))
+      if isinstance(x, ragged_tensor.RaggedTensor):
+        self._supports_ragged_inputs = True
 
     # Check compatibility of batch sizes of Input Layers.
     input_batch_sizes = [
@@ -2005,4 +2029,3 @@ def get_network_config(network, serialize_layer_fn=None):
   model_outputs = tf_utils.convert_inner_node_data(model_outputs)
   config['output_layers'] = model_outputs
   return config
-

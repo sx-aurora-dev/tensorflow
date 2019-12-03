@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/dynamic_dimension_inference.h"
 
+#include "absl/strings/match.h"
 #include "tensorflow/compiler/xla/literal_util.h"
 #include "tensorflow/compiler/xla/service/dfs_hlo_visitor_with_default.h"
 #include "tensorflow/compiler/xla/service/hlo_casting_utils.h"
@@ -59,6 +60,8 @@ class DynamicDimensionInferenceVisitor : public DfsHloVisitorWithDefault {
 
   Status HandlePad(HloInstruction* hlo) override;
 
+  Status HandleCustomCall(HloInstruction* hlo) override;
+
   Status HandleBroadcast(HloInstruction* hlo) override;
 
   Status HandleGetDimensionSize(HloInstruction* hlo) override;
@@ -82,6 +85,8 @@ class DynamicDimensionInferenceVisitor : public DfsHloVisitorWithDefault {
   Status HandleElementwiseUnary(HloInstruction* hlo) override;
 
   Status HandleElementwiseBinary(HloInstruction* hlo) override;
+
+  Status HandleClamp(HloInstruction* hlo) override;
 
   Status HandleWhile(HloInstruction* hlo) override;
 
@@ -126,9 +131,9 @@ Status DynamicDimensionInferenceVisitor::DefaultAction(HloInstruction* hlo) {
                int64 operand_index, HloInstruction* dynamic_size,
                DimensionConstraint constraint) {
         return UnimplementedStrCat(
-            "Asked to propagate a dynamic dimension from hlo ",
-            operand->ToString(), "@", index.ToString(), "@", dimension,
-            " to hlo ", hlo->ToString(), ", which is not implemented.");
+            "Asked to propagate a dynamic dimension from hlo ", operand->name(),
+            "@", index.ToString(), "@", dimension, " to hlo ", hlo->ToString(),
+            ", which is not implemented.");
       });
 }
 
@@ -168,6 +173,21 @@ Status DynamicDimensionInferenceVisitor::HandleBroadcast(HloInstruction* hlo) {
         int64 broadcast_dim = hlo->dimensions(dimension);
         parent_->SetDynamicSize(hlo, {}, broadcast_dim, dynamic_size,
                                 constraint);
+        return Status::OK();
+      });
+}
+
+Status DynamicDimensionInferenceVisitor::HandleCustomCall(HloInstruction* hlo) {
+  return ForEachOperandDynamicDimension(
+      hlo, [&](HloInstruction* operand, ShapeIndex index, int64 dimension,
+               int64 operand_index, HloInstruction* dynamic_size,
+               DimensionConstraint constraint) {
+        if (hlo->custom_call_target() != "Unpad" ||
+            absl::StartsWith(hlo->custom_call_target(), "Resize")) {
+          return Unimplemented(
+              "CustomCall is not supported to have a dynamic dimension");
+        }
+        parent_->SetDynamicSize(hlo, {}, dimension, dynamic_size, constraint);
         return Status::OK();
       });
 }
@@ -492,6 +512,10 @@ Status DynamicDimensionInferenceVisitor::HandleSelect(HloInstruction* hlo) {
 
 Status DynamicDimensionInferenceVisitor::HandleElementwiseBinary(
     HloInstruction* hlo) {
+  return PassThroughDynamicDimension(hlo);
+}
+
+Status DynamicDimensionInferenceVisitor::HandleClamp(HloInstruction* hlo) {
   return PassThroughDynamicDimension(hlo);
 }
 
@@ -895,6 +919,10 @@ Status DynamicDimensionInferenceVisitor::HandleSlice(HloInstruction* hlo) {
             hlo->slice_strides(dimension) != 1 ||
             hlo->slice_limits(dimension) !=
                 operand->shape().dimensions(dimension)) {
+          // Slicing a single element out eliminates the dynamic dimension.
+          if (hlo->shape().dimensions(dimension) == 1) {
+            return Status::OK();
+          }
           return Unimplemented(
               "Dynamic dimension propagation on Slice where it doesn't slice "
               "out an entire dimension is not supported %s",
@@ -1173,6 +1201,8 @@ Status DynamicDimensionInferenceVisitor::HandleWhile(HloInstruction* hlo) {
   TF_RETURN_IF_ERROR(DynamicDimensionInferenceVisitor::Run(
       hlo->while_condition(), binding_for_while, parent_));
 
+  // Set the replacement while loop as visited to avoid visiting it again.
+  SetVisited(*hlo);
   return Status::OK();
 }
 

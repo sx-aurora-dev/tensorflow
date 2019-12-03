@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tensorflow/core/platform/default/logging.h"
 
+// TODO(b/142492876): Avoid depending on absl internal.
+#include "absl/base/internal/cycleclock.h"
 #include "absl/base/internal/sysinfo.h"
 #include "tensorflow/core/platform/env_time.h"
 #include "tensorflow/core/platform/macros.h"
@@ -181,6 +183,12 @@ int64 MinVLogLevelFromEnv() {
 LogMessage::LogMessage(const char* fname, int line, int severity)
     : fname_(fname), line_(line), severity_(severity) {}
 
+LogMessage& LogMessage::AtLocation(const char* fname, int line) {
+  fname_ = fname;
+  line_ = line;
+  return *this;
+}
+
 LogMessage::~LogMessage() {
   // Read the min log level once during the first call to logging.
   static int64 min_log_level = MinLogLevelFromEnv();
@@ -234,8 +242,7 @@ void LogMessage::GenerateLogMessage() {
 
 void LogMessage::GenerateLogMessage() {
   static bool log_thread_id = EmitThreadIdFromEnv();
-  static EnvTime* env_time = tensorflow::EnvTime::Default();
-  uint64 now_micros = env_time->NowMicros();
+  uint64 now_micros = EnvTime::NowMicros();
   time_t now_seconds = static_cast<time_t>(now_micros / 1000000);
   int32 micros_remainder = static_cast<int32>(now_micros % 1000000);
   const size_t time_buffer_size = 30;
@@ -340,6 +347,48 @@ std::ostream* CheckOpMessageBuilder::ForVar2() {
 string* CheckOpMessageBuilder::NewString() {
   *stream_ << ")";
   return new string(stream_->str());
+}
+
+namespace {
+// The following code behaves like AtomicStatsCounter::LossyAdd() for
+// speed since it is fine to lose occasional updates.
+// Returns old value of *counter.
+uint32 LossyIncrement(std::atomic<uint32>* counter) {
+  const uint32 value = counter->load(std::memory_order_relaxed);
+  counter->store(value + 1, std::memory_order_relaxed);
+  return value;
+}
+}  // namespace
+
+bool LogEveryNState::ShouldLog(int n) {
+  return n != 0 && (LossyIncrement(&counter_) % n) == 0;
+}
+
+bool LogFirstNState::ShouldLog(int n) {
+  const uint32 counter_value = counter_.load(std::memory_order_relaxed);
+  if (counter_value < n) {
+    counter_.store(counter_value + 1, std::memory_order_relaxed);
+    return true;
+  }
+  return false;
+}
+
+bool LogEveryPow2State::ShouldLog(int ignored) {
+  const uint32 new_value = LossyIncrement(&counter_) + 1;
+  return (new_value & (new_value - 1)) == 0;
+}
+
+bool LogEveryNSecState::ShouldLog(double seconds) {
+  LossyIncrement(&counter_);
+  const int64 now_cycles = absl::base_internal::CycleClock::Now();
+  int64 next_cycles = next_log_time_cycles_.load(std::memory_order_relaxed);
+  do {
+    if (now_cycles <= next_cycles) return false;
+  } while (!next_log_time_cycles_.compare_exchange_weak(
+      next_cycles,
+      now_cycles + seconds * absl::base_internal::CycleClock::Frequency(),
+      std::memory_order_relaxed, std::memory_order_relaxed));
+  return true;
 }
 
 }  // namespace internal

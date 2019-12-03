@@ -668,7 +668,11 @@ Status Conditional::ExtractBodies(Graph* graph) {
           // * constant nodes copy them;
           // * non-constant nodes, insert a switch along the edge;
           if (IsConstant(src)) {
-            node_map.at(src->id()) = output->CopyNode(src);
+            // Check if constant node was added already. It is possible to have
+            // multiple uses of a constant node.
+            if (node_map.at(src->id()) == nullptr) {
+              node_map.at(src->id()) = output->CopyNode(src);
+            }
           } else {
             StateMap::CondState state = *dst_id;
             state.erase(predicate_);
@@ -788,10 +792,11 @@ Status Conditional::BuildIfNode(Graph* graph,
   output_shapes.reserve(merges_.size());
   for (const Node* merge : merges_) {
     DataType dtype = merge->output_type(0);
-    auto* shape_ctx = refiner_.GetContext(merge);
-    shape_inference::ShapeHandle handle;
     TensorShapeProto shape;
-    shape_ctx->ShapeHandleToProto(shape_ctx->output(0), &shape);
+    if (auto* shape_ctx = refiner_.GetContext(merge)) {
+      shape_inference::ShapeHandle handle;
+      shape_ctx->ShapeHandleToProto(shape_ctx->output(0), &shape);
+    }
     out_type.push_back(dtype);
     output_shapes.push_back(shape);
   }
@@ -1486,7 +1491,9 @@ Status FunctionalizeCond::FunctionalizeInternal() {
   std::vector<Node*> nodes;
   GetReversePostOrder(*graph_, &nodes);
   for (auto node : nodes) {
-    TF_RETURN_IF_ERROR(shape_refiner.AddNode(node));
+    if (!shape_refiner.AddNode(node).ok()) {
+      LOG(WARNING) << "Couldn't deduce shape for " << node->name();
+    }
   }
 
   // Sort the merge nodes from innermost outwards.

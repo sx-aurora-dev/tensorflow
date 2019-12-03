@@ -71,16 +71,16 @@ using ::tflite::gpu::metal::SingleOpModel;
   output.shape = output_shape;
 
   PadAttributes attr;
-  attr.prepended = prepend;
-  attr.appended = append;
+  attr.prepended = BHWC(0, prepend.h, prepend.w, prepend.c);
+  attr.appended = BHWC(0, append.h, append.w, append.c);
   attr.type = PaddingContentType::ZEROS;
 
   SingleOpModel model({ToString(OperationType::PAD), attr}, {input}, {output});
   XCTAssertTrue(model.PopulateTensor(0, {1.0}));
   auto status = model.Invoke();
-  XCTAssertTrue(status.ok(), @"%s", status.ToString().c_str());
+  XCTAssertTrue(status.ok(), @"%s", status.error_message().c_str());
   status = CompareVectors(expected, model.GetOutput(0), 1e-6f);
-  XCTAssertTrue(status.ok(), @"%s", status.ToString().c_str());
+  XCTAssertTrue(status.ok(), @"%s", status.error_message().c_str());
 }
 
 - (void)runPrepending:(const HWC&)prepend
