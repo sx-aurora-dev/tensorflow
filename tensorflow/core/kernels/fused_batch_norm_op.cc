@@ -1525,13 +1525,12 @@ struct FusedBatchNorm<VEDevice, T, U> {
                   const Tensor& scale_input, const Tensor& offset_input,
                   const Tensor& estimated_mean_input,
                   const Tensor& estimated_variance_input,
-                  const Tensor& side_input, U epsilon,
+                  const Tensor* side_input, U epsilon,
                   FusedBatchNormActivationMode activation_mode,
                   Tensor* y_output, Tensor* batch_mean_output,
                   Tensor* batch_var_output, Tensor* saved_mean_output,
                   Tensor* saved_var_output, TensorFormat tensor_format,
-                  ScratchAllocator* reserve_space_allocator,
-                  ScratchAllocator* workspace_allocator, bool is_training) {
+                  bool use_reserved_space, bool is_training) {
 
     OP_REQUIRES(context, tensor_format == FORMAT_NCHW,
                 errors::Internal("The VE implementation of FusedBatchNorm "

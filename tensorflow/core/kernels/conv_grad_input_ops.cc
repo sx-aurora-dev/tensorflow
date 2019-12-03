@@ -72,6 +72,9 @@ namespace {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif
 
 // Returns in 'im_data' (assumes to be zero-initialized) image patch in storage
 // order (height, width, depth), constructed from patches in 'col_data', which
@@ -113,7 +116,6 @@ void Col2im(const T* col_data, const int depth, const int height,
 // and GPU (for int32 only).
 template <typename Device, typename T>
 struct LaunchConv2DBackpropInputOpImpl {
->>>>>>> upstream/master
   void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
                   const Tensor& out_backprop, const Tensor& filter,
                   int row_dilation, int col_dilation, int row_stride,
@@ -206,14 +208,17 @@ struct LaunchConv2DBackpropInputOpImpl {
   }
 };
 
+}  // namespace
+
 #ifdef TENSORFLOW_USE_VE
 template <typename T>
 struct LaunchConv2DBackpropInputOp<VEDevice, T> {
   void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
                   const Tensor& out_backprop, const Tensor& filter,
                   int row_dilation, int col_dilation, int row_stride,
-                  int col_stride, const Padding& padding, Tensor* in_backprop,
-                  TensorFormat data_format) {
+                  int col_stride, const Padding& padding,
+                  const std::vector<int64>& explicit_paddings,
+                  Tensor* in_backprop, TensorFormat data_format) {
     VLOG(2) << "LaunchConv2DBackpropInputOp<VEDevice, T>";
     VLOG(2) << "LaunchConv2DBackpropInputOp<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
 
@@ -293,10 +298,7 @@ struct LaunchConv2DBackpropInputOp<VEDevice, T> {
 
   }
 };
-#endif
-
-=======
-}  // namespace
+#endif // TENSORFLOW_USE_VE
 
 // Computes backprop input using Eigen::SpatialConvolutionBackwardInput on CPU.
 template <typename T>
@@ -332,7 +334,6 @@ struct LaunchConv2DBackpropInputOp<GPUDevice, int32> {
   }
 };
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
->>>>>>> upstream/master
 
 #ifdef TENSORFLOW_USE_LIBXSMM_CONVOLUTIONS
 template <typename Device, class T>
@@ -1491,6 +1492,10 @@ class Conv2DVEBackpropInputOp : public OpKernel {
                 errors::InvalidArgument(
                     "Current implementation does not yet support "
                     "dilations in the batch and depth dimensions."));
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("explicit_paddings", &explicit_paddings_));
+    OP_REQUIRES_OK(context, CheckValidPadding(padding_, explicit_paddings_,
+                                              /*num_dims=*/4, data_format_));
   }
 
   void Compute(OpKernelContext* context) override {
@@ -1521,13 +1526,15 @@ class Conv2DVEBackpropInputOp : public OpKernel {
     LaunchConv2DBackpropInputOp<Device, T>()(
         context, false, false, out_backprop, filter,
         /*row_dilation=*/1, /*col_dilation=*/1, dims.spatial_dims[0].stride,
-        dims.spatial_dims[1].stride, padding_, in_backprop, data_format_);
+        dims.spatial_dims[1].stride, padding_, 
+        explicit_paddings_, in_backprop, data_format_);
   }
 
  private:
   std::vector<int32> dilations_;
   std::vector<int32> strides_;
   Padding padding_;
+  std::vector<int64> explicit_paddings_;
   TensorFormat data_format_;
 };
 
@@ -1536,6 +1543,6 @@ REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropInput")
                         .TypeConstraint<float>("T")
                         .HostMemory("input_sizes"),
                         Conv2DVEBackpropInputOp<VEDevice, float>);
-#endif
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
