@@ -1532,6 +1532,11 @@ struct FusedBatchNorm<VEDevice, T, U> {
                   Tensor* saved_var_output, TensorFormat tensor_format,
                   bool use_reserved_space, bool is_training) {
 
+    OP_REQUIRES(context, side_input == nullptr,
+                errors::Internal(
+                    "The VE implementation of FusedBatchNorm does not support "
+                    "side input."));
+
     OP_REQUIRES(context, tensor_format == FORMAT_NCHW,
                 errors::Internal("The VE implementation of FusedBatchNorm "
                                  "only supports NCHW tensor format for now."));
@@ -1540,6 +1545,16 @@ struct FusedBatchNorm<VEDevice, T, U> {
             " reserve_space_allocator=%p\n",
             is_training, epsilon, reserve_space_allocator);
 #endif
+
+    // copid from CPU implementation
+    if (use_reserved_space) {
+      Tensor* dummy_reserve_space = nullptr;
+      OP_REQUIRES_OK(context,
+                     context->allocate_output(5, {}, &dummy_reserve_space));
+      // Initialize the memory, to avoid sanitizer alerts.
+      dummy_reserve_space->flat<U>()(0) = U();
+    }
+
     VEOpKernelHelper::ArgsImpl<> args;
     args.addArg<Tensor>(x_input);
     args.addArg<Tensor>(scale_input);
