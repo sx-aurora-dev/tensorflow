@@ -7,13 +7,14 @@ You can also modifiy the source code and build it.
 
 We are providing two whl files on github. See "releases" page.
 
-- tensorflow_ve-1.14.0-cp36-cp36m-linux_x86_64.whl
-- Keras-2.2.4-py3-none-any.whl
+- tensorflow_ve-2.0.0-cp36-cp36m-linux_x86_64.whl
+
+Note that we do not release Keras. Please use tf.keras
 
 We have tested on CentOS 7.5 and:
 
-- veos: 2.1.0
-- veoffload: 2.1.0
+- veos: 2.1.3
+- veoffload: 2.1.1
 - python: 3.6
 
 We have installed VEOS and veoffload using [VEOS yum Repository on the
@@ -57,8 +58,8 @@ Now you can run your scripts.
 
 We have tested on above envirionment with:
 
-- bazel 0.25.2
-- gcc 8.2.1 (devtoolset-8)
+- bazel 1.1.0
+- gcc 8.3.1 (devtoolset-8)
 - git 2.9.3 (rh-git29)
 
 
@@ -85,6 +86,8 @@ Install bazel.
 % yum install bazel
 ```
 
+If you can not find the specific version of bazel you want, see https://github.com/vbatts/copr-build-bazel.
+
 ### Build tensorflow
 
 Build tensorflow with scl and virtualenv.
@@ -93,13 +96,17 @@ Build tensorflow with scl and virtualenv.
 $ scl enable rh-python36 devtoolset-8 rh-git29 bash
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)% ./configure # answer N for all questions. You can probably ignore an error on getsitepackages.
-(tmp)% bazel build --config=ve --config=opt //tensorflow/tools/pip_package:build_pip_package
+(tmp)% BAZEL_LINKLIBS=-l%:libstdc++.a BAZEL_LINKOPTS=-static-libstdc++ bazel build --jobs 12 --config=ve --config=opt //tensorflow/tools/pip_package:build_pip_package
 (tmp)% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
 ```
 
 You can see a tensorflow package in current direcotry.
 
+We need BAZEL_LINKLIBS and BAZEL_LINKOPTS. see https://github.com/bazelbuild/bazel/issues/10327.
+
 ## (option) Build keras
+
+Note that this is obsolete because current Keras dose not work with TF in master branch as far as we know. Use tf.keras instead.
 
 Clone https://github.com/sx-aurora-dev/keras.
 
@@ -136,8 +143,8 @@ You can specify version of ncc/nc++.
 
 ```
 (tmp)% (cd build && cmake3 \
-        -DNCC=/opt/nec/ve/bin/ncc-2.2.2 \
-        -DNCXX=/opt/nec/ve/bin/nc++-2.2.2 .. && make)
+        -DNCC=/opt/nec/ve/bin/ncc-2.4.1 \
+        -DNCXX=/opt/nec/ve/bin/nc++-2.4.1 .. && make)
 ```
 
 Your veorun_tf can be used by setting VEORUN_BIN.
@@ -148,6 +155,6 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 
 We have tested on above envirionment with:
 
-- llvm-ve 1.2.2
-- ncc/nc++ 2.3.0
+- llvm-ve 1.8.1
+- ncc/nc++ 2.4.1
 
