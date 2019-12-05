@@ -34,6 +34,7 @@ limitations under the License.
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
 #endif
@@ -951,6 +952,152 @@ REGISTER_KERNELS(GPU, complex128);
 #endif
 #undef REGISTER_CPU_KERNELS
 #undef REGISTER_KERNELS
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VEApplyAdadeltaOp : public VEOpKernel {
+ public:
+  explicit VEApplyAdadeltaOp(OpKernelConstruction* ctx) : VEOpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    Var* resource;
+    const bool sparse = false;
+    mutex* mu = VEGetTrainingVariableMutex<T>(ctx, 0, sparse, &resource);
+    core::ScopedUnref scoped_unref(resource);
+    if (use_exclusive_lock_ && mu != nullptr) {
+      mutex_lock l1(*mu);
+      // Don't try to acquire a lock on the second ref as they share the same
+      // mutex.
+      //
+      // mutex_lock l2(*ctx->input_ref_mutex(1));
+      DoValidate(ctx);
+      if (!ctx->status().ok()) return;
+      DoCompute(ctx);
+    } else {
+      DoValidate(ctx);
+      if (!ctx->status().ok()) return;
+      DoCompute(ctx);
+    }
+    MaybeForwardRefInputToRefOutput(ctx, 0, 0);
+  }
+
+ private:
+  bool use_exclusive_lock_;
+
+  void DoValidate(OpKernelContext* ctx) {
+    Tensor var;
+    const bool sparse = false;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 0, use_exclusive_lock_, sparse, &var));
+    Tensor accum;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 1, use_exclusive_lock_, sparse, &accum));
+    Tensor accum_update;
+    OP_REQUIRES_OK(
+        ctx, VEGetInputTensorFromVariable<T>(ctx, 2, use_exclusive_lock_,
+                                                   sparse, &accum_update));
+
+    OP_REQUIRES(
+        ctx, var.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(0)));
+    OP_REQUIRES(
+        ctx, accum.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(1)));
+    OP_REQUIRES(
+        ctx, accum_update.IsInitialized(),
+        errors::FailedPrecondition(
+            "Attempting to use uninitialized variables: ", requested_input(2)));
+
+    const Tensor& lr = ctx->input(3);
+    const Tensor& rho = ctx->input(4);
+    const Tensor& epsilon = ctx->input(5);
+    const Tensor& grad = ctx->input(6);
+
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(lr.shape()),
+                errors::InvalidArgument("lr is not a scalar: ",
+                                        lr.shape().DebugString()));
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(rho.shape()),
+                errors::InvalidArgument("rho is not a scalar: ",
+                                        rho.shape().DebugString()));
+
+    OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(epsilon.shape()),
+                errors::InvalidArgument("epsilon is not a scalar: ",
+                                        epsilon.shape().DebugString()));
+
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(accum.shape()),
+        errors::InvalidArgument("var and accum do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                accum.shape().DebugString()));
+    OP_REQUIRES(
+        ctx, var.shape().IsSameSize(grad.shape()),
+        errors::InvalidArgument("var and grad do not have the same shape",
+                                var.shape().DebugString(), " ",
+                                grad.shape().DebugString()));
+  }
+
+  void DoCompute(OpKernelContext* ctx) {
+//    const Device& device = ctx->template eigen_device<Device>();
+    Tensor var;
+    const bool sparse = false;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 0, use_exclusive_lock_, sparse, &var));
+    Tensor accum;
+    OP_REQUIRES_OK(ctx, VEGetInputTensorFromVariable<T>(
+                            ctx, 1, use_exclusive_lock_, sparse, &accum));
+    Tensor accum_update;
+    OP_REQUIRES_OK(
+        ctx, VEGetInputTensorFromVariable<T>(ctx, 2, use_exclusive_lock_,
+                                                   sparse, &accum_update));
+
+    const Tensor& lr = ctx->input(3);
+    const Tensor& rho = ctx->input(4);
+    const Tensor& epsilon = ctx->input(5);
+    const Tensor& grad = ctx->input(6);
+
+    ArgsImpl<> Args = ArgsImpl<>() ;
+    Args.addArg<Tensor>(var) ;
+    Args.addArg<Tensor>(accum) ;
+    Args.addArg<Tensor>(accum_update) ;
+    Args.addArg<Tensor>(lr) ;
+    Args.addArg<Tensor>(rho) ;
+    Args.addArg<Tensor>(epsilon) ;
+    Args.addArg<Tensor>(grad) ;
+
+    Call(ctx, "ApplyAdadelta", Args);
+
+  }
+};
+
+#define REGISTER_VE_KERNELS(T)                                          \
+  REGISTER_KERNEL_BUILDER(                                              \
+      Name("ApplyAdadelta").Device(DEVICE_VE).TypeConstraint<T>("T"),   \
+      VEApplyAdadeltaOp<T>);                                            \
+  REGISTER_KERNEL_BUILDER(Name("ResourceApplyAdadelta")                 \
+                              .Device(DEVICE_VE)                        \
+                              .HostMemory("var")                        \
+                              .HostMemory("accum")                      \
+                              .HostMemory("accum_update")               \
+                              .TypeConstraint<T>("T"),                  \
+                          VEApplyAdadeltaOp<T>);
+
+//TF_CALL_half(REGISTER_VE_KERNELS);
+//TF_CALL_bfloat16(REGISTER_VE_KERNELS);
+TF_CALL_float(REGISTER_VE_KERNELS);
+//TF_CALL_double(REGISTER_VE_KERNELS);
+//#ifndef PLATFORM_WINDOWS
+//TF_CALL_complex64(REGISTER_VE_KERNELS);
+//TF_CALL_complex128(REGISTER_VE_KERNELS);
+//#endif
+
+#undef REGISTER_VE_KERNELS
+#endif // TENSORFLOW_USE_VE
 
 // Note, this op works on cpu only.
 template <typename T, typename Tindex>
