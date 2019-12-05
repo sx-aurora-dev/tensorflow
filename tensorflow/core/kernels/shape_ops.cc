@@ -278,6 +278,33 @@ REGISTER_KERNEL_BUILDER(Name("Rank")
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#if TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                        \
+  REGISTER_KERNEL_BUILDER(Name("Rank")                   \
+                              .Device(DEVICE_VE)        \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("output"),     \
+                          RankOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_variant(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
+
+REGISTER_KERNEL_BUILDER(Name("Rank")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        RankOp);
+
+REGISTER_KERNEL_BUILDER(Name("Rank")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<bool>("T")
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        RankOp);
+
+#endif // TENSORFLOW_USE_VE
+
 // Size ------------------------------------------
 REGISTER_KERNEL_BUILDER(Name("Size")
                             .Device(DEVICE_CPU)

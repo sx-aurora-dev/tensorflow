@@ -32,4 +32,7 @@ REGISTER_SYCL_KERNEL(double);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER2(UnaryOp, GPU, "Sinh", functor::sinh, float, double);
 #endif
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Sinh, float);
+#endif
 }  // namespace tensorflow

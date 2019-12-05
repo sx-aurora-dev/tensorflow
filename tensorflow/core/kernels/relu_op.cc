@@ -329,6 +329,54 @@ class ReluGradOp<VEDevice, T> : public BinaryElementWiseOp<T, ReluGradOp<VEDevic
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
 #undef REGISTER_VE_KERNELS
 
+
+template <typename T>
+class Relu6Op<VEDevice, T> : public UnaryElementWiseOp<T, Relu6Op<VEDevice, T>> {
+ public:
+  using UnaryElementWiseOp<T, Relu6Op<VEDevice, T>>::UnaryElementWiseOp;
+
+  void Operate(OpKernelContext* context, const Tensor& input, Tensor* output) {
+      VEOpKernelHelper::ArgsImpl<> args;
+      args.addArg<Tensor>(input);
+      args.addArg<Tensor>(*output);
+      VEOpKernelHelper::Call(context, "Relu6", args);
+  }
+};
+
+template <typename T>
+class Relu6GradOp<VEDevice, T> : public BinaryElementWiseOp<T, Relu6GradOp<VEDevice, T>> {
+ public:
+  using BinaryElementWiseOp<T, Relu6GradOp<VEDevice, T>>::BinaryElementWiseOp;
+
+  // INPUTS:
+  //   g (gradients): backpropagated gradients
+  //   a (inputs): inputs that were passed to Relu6Op()
+  // OUTPUT:
+  //   gradients to backprop
+  template <int NDIMS>
+  void Operate(OpKernelContext* context, const Tensor& g, const Tensor& a,
+               Tensor* output) {
+      VEOpKernelHelper::ArgsImpl<> args;
+      args.addArg<Tensor>(g);
+      args.addArg<Tensor>(a);
+      args.addArg<Tensor>(*output);
+      VEOpKernelHelper::Call(context, "Relu6Grad", args);
+  }
+};
+
+#define REGISTER_VE_KERNELS(type)                                    	 \
+  REGISTER_KERNEL_BUILDER(                                               \
+	  Name("Relu6").Device(DEVICE_VE).TypeConstraint<type>("T"),         \
+	  Relu6Op<VEDevice, type>);                                          \
+  REGISTER_KERNEL_BUILDER(                                               \
+	  Name("Relu6Grad").Device(DEVICE_VE).TypeConstraint<type>("T"),     \
+	  Relu6GradOp<VEDevice, type>);
+
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+
+
+
 template <typename T>
 class LeakyReluOp<VEDevice, T> : public UnaryElementWiseOp<T, LeakyReluOp<VEDevice, T>> {
   public:

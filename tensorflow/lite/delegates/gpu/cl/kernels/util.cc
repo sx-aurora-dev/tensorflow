@@ -125,6 +125,19 @@ std::string GetCommonDefines(CalculationsPrecision precision) {
   return result;
 }
 
+TensorCodeGenerator::SizeVariablesNames::SizeVariablesNames(
+    const std::string& width_name, const std::string& height_name,
+    const std::string& depth_name)
+    : width(width_name), height(height_name), depth(depth_name) {}
+
+TensorCodeGenerator::SizeVariablesNames::SizeVariablesNames(
+    const std::string& width_name, const std::string& height_name,
+    const std::string& depth_name, const std::string& batch_name)
+    : width(width_name),
+      height(height_name),
+      depth(depth_name),
+      batch(batch_name) {}
+
 TensorCodeGenerator::TensorCodeGenerator(const std::string& name,
                                          const std::string& uniform_size_name,
                                          const TensorDescriptor& descriptor)
@@ -133,7 +146,7 @@ TensorCodeGenerator::TensorCodeGenerator(const std::string& name,
   sizes_.height = uniform_size_name + ".y";
   sizes_.channels = uniform_size_name + ".z";
   sizes_.depth = uniform_size_name + ".w";
-  sizes_.batch_size = "BATCH_SIZE";
+  sizes_.batch = "BATCH_SIZE";
 }
 
 TensorCodeGenerator::TensorCodeGenerator(const std::string& name,
@@ -234,9 +247,20 @@ std::string TensorCodeGenerator::GetGlobalAddressNoDeclaration(
   switch (descriptor_.storage_type) {
     case TensorStorageType::BUFFER:
     case TensorStorageType::IMAGE_BUFFER:
-      return absl::Substitute("(((($3) * $4 + $2) * $5 + ($1)) * $6 + ($0))", x,
-                              y, z, b, sizes_.depth, sizes_.height,
-                              sizes_.width);
+      return absl::Substitute("(((($3) * $4 + $2) * $5 + ($1)) * $6 + ($0))", b,
+                              x, y, z, sizes_.height, sizes_.width,
+                              sizes_.batch);
+    case TensorStorageType::TEXTURE_2D:
+      return absl::Substitute("(int2)(($0) * ($4) + ($1), ($2) * $5 + ($3))", x,
+                              b, y, z, sizes_.batch, sizes_.depth);
+    case TensorStorageType::SINGLE_TEXTURE_2D:
+      return absl::Substitute("(int2)(($0) * ($3) + ($1), ($2))", x, b, y,
+                              sizes_.batch);
+    case TensorStorageType::TEXTURE_ARRAY:
+      return absl::Substitute("(int4)(($0) * ($4) + ($1), ($2), ($3), 0)", x, b,
+                              y, z, sizes_.batch);
+    case TensorStorageType::UNKNOWN:
+      return "error";
     default:
       return "error";
   }
@@ -330,6 +354,18 @@ std::string TensorCodeGenerator::Write(
     case TensorStorageType::UNKNOWN:
       return "";
   }
+}
+
+std::string GetXStrideCorrected(const std::string& src_x,
+                                const std::string& batch_size,
+                                const std::string& stride_x,
+                                const std::string& padding_x) {
+  // TODO(sorokin) check perf and optimize with floor() if needed
+  // int p0 = src_x / batch_size;\n";
+  // int b0 = src_x % batch_size;\n";
+  // return p0 * stride_x * batch_size + b0 + padding_x;\n";
+  return absl::Substitute("((($0) / $1) * $2 * $1 + (($0) % $1) + $3)", src_x,
+                          batch_size, stride_x, padding_x);
 }
 
 TextureAddressMode GetFastestZeroMode(const CLDevice& device) {

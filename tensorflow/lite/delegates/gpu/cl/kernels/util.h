@@ -44,11 +44,20 @@ enum class TextureAddressMode {
 class TensorCodeGenerator {
  public:
   struct SizeVariablesNames {
+    SizeVariablesNames() = default;
+    SizeVariablesNames(const std::string& width_name,
+                       const std::string& height_name,
+                       const std::string& depth_name);
+    SizeVariablesNames(const std::string& width_name,
+                       const std::string& height_name,
+                       const std::string& depth_name,
+                       const std::string& batch_name);
+
     std::string width = "unknown";
     std::string height = "unknown";
     std::string channels = "unknown";
     std::string depth = "unknown";
-    std::string batch_size = "unknown";
+    std::string batch = "unknown";
   };
   TensorCodeGenerator() = default;
   TensorCodeGenerator(const std::string& name,
@@ -72,24 +81,24 @@ class TensorCodeGenerator {
   // parameter.
   std::string Read3D(
       const std::string& x, const std::string& y, const std::string& z,
-      TextureAddressMode address_mode = TextureAddressMode::ZERO) const;
+      TextureAddressMode address_mode = TextureAddressMode::DONT_CARE) const;
 
   // Read4D supports BUFFER and IMAGE_BUFFER storage types.
   std::string Read4D(
       const std::string& x, const std::string& y, const std::string& z,
       const std::string& b,
-      TextureAddressMode address_mode = TextureAddressMode::ZERO) const;
+      TextureAddressMode address_mode = TextureAddressMode::DONT_CARE) const;
 
   // Optimization for textures, so as in opencl we can use read_imagef for any
   // texture type.
   std::string ReadAsFloat3D(
       const std::string& x, const std::string& y, const std::string& z,
-      TextureAddressMode address_mode = TextureAddressMode::ZERO) const;
+      TextureAddressMode address_mode = TextureAddressMode::DONT_CARE) const;
 
   std::string ReadAsFloat4D(
       const std::string& x, const std::string& y, const std::string& z,
       const std::string& b,
-      TextureAddressMode address_mode = TextureAddressMode::ZERO) const;
+      TextureAddressMode address_mode = TextureAddressMode::DONT_CARE) const;
 
   std::string Write3D(const std::string& var_name, const std::string& x,
                       const std::string& y, const std::string& z) const;
@@ -101,12 +110,12 @@ class TensorCodeGenerator {
 
   std::string Read(
       const std::string& global_address,
-      TextureAddressMode address_mode = TextureAddressMode::ZERO) const;
+      TextureAddressMode address_mode = TextureAddressMode::DONT_CARE) const;
   // Optimization for textures, so as in opencl we can use read_imagef for any
   // texture type.
   std::string ReadAsFloat(
       const std::string& global_address,
-      TextureAddressMode address_mode = TextureAddressMode::ZERO) const;
+      TextureAddressMode address_mode = TextureAddressMode::DONT_CARE) const;
   std::string Write(const std::string& var_name,
                     const std::string& global_address) const;
 
@@ -126,37 +135,46 @@ class TensorCodeGenerator {
   TensorDescriptor descriptor_;
 };
 
+// Calculates correct X coordinate when stride != 1 and batch != 1 for
+// DHWBC4, HDWBC4, HWBC layouts
+std::string GetXStrideCorrected(const std::string& src_x,
+                                const std::string& batch_size,
+                                const std::string& stride_x,
+                                const std::string& padding_x);
+
 template <DataType S, typename T>
-void RearrangeWeightsToOHWI4I4O(const ::tflite::gpu::Tensor<OHWI, S>& weights,
-                                absl::Span<T> dst) {
+void RearrangeWeightsToOHWIOGroupI4O4(
+    const ::tflite::gpu::Tensor<OHWI, S>& weights, int out_group_size,
+    absl::Span<T> dst) {
   const int dst_depth = IntegralDivideRoundUp(weights.shape.o, 4);
   const int src_depth = IntegralDivideRoundUp(weights.shape.i, 4);
   const int kernel_x = weights.shape.w;
   const int kernel_y = weights.shape.h;
 
+  const int dst_groups = IntegralDivideRoundUp(dst_depth, out_group_size);
+
   int counter = 0;
-  for (int d = 0; d < dst_depth; ++d) {
+  for (int d = 0; d < dst_groups; ++d) {
     for (int y = 0; y < kernel_y; ++y) {
       for (int x = 0; x < kernel_x; ++x) {
         for (int s = 0; s < src_depth; ++s) {
-          T filters[4];
-          for (int i = 0; i < 4; ++i) {
+          for (int d_group = 0; d_group < out_group_size; ++d_group) {
             for (int j = 0; j < 4; ++j) {
-              const int s_ch = s * 4 + j;
-              const int d_ch = d * 4 + i;
-              if (s_ch < weights.shape.i && d_ch < weights.shape.o) {
-                const int f_index =
-                    weights.shape.LinearIndex({d_ch, y, x, s_ch});
-                filters[j][i] = weights.data[f_index];
-              } else {
-                filters[j][i] = 0.0f;
+              T filter;
+              for (int i = 0; i < 4; ++i) {
+                const int s_ch = s * 4 + j;
+                const int d_ch = (d * out_group_size + d_group) * 4 + i;
+                if (s_ch < weights.shape.i && d_ch < weights.shape.o) {
+                  const int f_index =
+                      weights.shape.LinearIndex({d_ch, y, x, s_ch});
+                  filter[i] = weights.data[f_index];
+                } else {
+                  filter[i] = 0.0f;
+                }
               }
+              dst[counter++] = filter;
             }
           }
-          dst[counter++] = filters[0];
-          dst[counter++] = filters[1];
-          dst[counter++] = filters[2];
-          dst[counter++] = filters[3];
         }
       }
     }

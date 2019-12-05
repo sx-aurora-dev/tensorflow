@@ -122,13 +122,13 @@ DebugEventsWriter::~DebugEventsWriter() { Close().IgnoreError(); }
 
 // static
 DebugEventsWriter* DebugEventsWriter::GetDebugEventsWriter(
-    const string& dump_root, int64 cyclic_buffer_size) {
+    const string& dump_root, int64 circular_buffer_size) {
   mutex_lock l(DebugEventsWriter::factory_mu_);
   std::unordered_map<string, std::unique_ptr<DebugEventsWriter>>* writer_pool =
       DebugEventsWriter::GetDebugEventsWriterMap();
   if (writer_pool->find(dump_root) == writer_pool->end()) {
     std::unique_ptr<DebugEventsWriter> writer(
-        new DebugEventsWriter(dump_root, cyclic_buffer_size));
+        new DebugEventsWriter(dump_root, circular_buffer_size));
     writer_pool->insert(std::make_pair(dump_root, std::move(writer)));
   }
   return (*writer_pool)[dump_root].get();
@@ -216,19 +216,22 @@ void DebugEventsWriter::WriteDebuggedGraph(DebuggedGraph* debugged_graph) {
 }
 
 void DebugEventsWriter::WriteExecution(Execution* execution) {
-  if (cyclic_buffer_size_ <= 0) {
+  if (circular_buffer_size_ <= 0) {
     // No cyclic-buffer behavior.
     DebugEvent debug_event;
     debug_event.set_allocated_execution(execution);
     SerializeAndWriteDebugEvent(&debug_event, EXECUTION);
   } else {
-    // Cyclic buffer behavior.
+    // Circular buffer behavior.
     DebugEvent debug_event;
     MaybeSetDebugEventTimestamp(&debug_event, env_);
     debug_event.set_allocated_execution(execution);
+    string serialized;
+    debug_event.SerializeToString(&serialized);
+
     mutex_lock l(execution_buffer_mu_);
-    execution_buffer_.push_back(debug_event);
-    if (execution_buffer_.size() > cyclic_buffer_size_) {
+    execution_buffer_.emplace_back(std::move(serialized));
+    if (execution_buffer_.size() > circular_buffer_size_) {
       execution_buffer_.pop_front();
     }
   }
@@ -236,20 +239,85 @@ void DebugEventsWriter::WriteExecution(Execution* execution) {
 
 void DebugEventsWriter::WriteGraphExecutionTrace(
     GraphExecutionTrace* graph_execution_trace) {
-  if (cyclic_buffer_size_ <= 0) {
+  if (circular_buffer_size_ <= 0) {
     // No cyclic-buffer behavior.
     DebugEvent debug_event;
     debug_event.set_allocated_graph_execution_trace(graph_execution_trace);
     SerializeAndWriteDebugEvent(&debug_event, GRAPH_EXECUTION_TRACES);
   } else {
-    // Cyclic buffer behavior.
+    // Circular buffer behavior.
     DebugEvent debug_event;
     MaybeSetDebugEventTimestamp(&debug_event, env_);
     debug_event.set_allocated_graph_execution_trace(graph_execution_trace);
+    string serialized;
+    debug_event.SerializeToString(&serialized);
+
     mutex_lock l(graph_execution_trace_buffer_mu_);
-    graph_execution_trace_buffer_.push_back(debug_event);
-    if (graph_execution_trace_buffer_.size() > cyclic_buffer_size_) {
+    graph_execution_trace_buffer_.emplace_back(std::move(serialized));
+    if (graph_execution_trace_buffer_.size() > circular_buffer_size_) {
       graph_execution_trace_buffer_.pop_front();
+    }
+  }
+}
+
+void DebugEventsWriter::WriteGraphExecutionTrace(const string& tfdbg_context_id,
+                                                 const string& device_name,
+                                                 const string& op_name,
+                                                 int32 output_slot,
+                                                 int32 tensor_debug_mode,
+                                                 const Tensor& tensor_value) {
+  std::unique_ptr<GraphExecutionTrace> trace(new GraphExecutionTrace());
+  trace->set_tfdbg_context_id(tfdbg_context_id);
+  if (!op_name.empty()) {
+    trace->set_op_name(op_name);
+  }
+  if (output_slot > 0) {
+    trace->set_output_slot(output_slot);
+  }
+  if (tensor_debug_mode > 0) {
+    trace->set_tensor_debug_mode(TensorDebugMode(tensor_debug_mode));
+  }
+  trace->set_device_name(device_name);
+  tensor_value.AsProtoTensorContent(trace->mutable_tensor_proto());
+  WriteGraphExecutionTrace(trace.release());
+}
+
+void DebugEventsWriter::WriteSerializedNonExecutionDebugEvent(
+    const string& debug_event_str, DebugEventFileType type) {
+  std::unique_ptr<SingleDebugEventFileWriter>* writer = nullptr;
+  SelectWriter(type, &writer);
+  (*writer)->WriteSerializedDebugEvent(debug_event_str);
+}
+
+void DebugEventsWriter::WriteSerializedExecutionDebugEvent(
+    const string& debug_event_str, DebugEventFileType type) {
+  const std::unique_ptr<SingleDebugEventFileWriter>* writer = nullptr;
+  std::deque<string>* buffer = nullptr;
+  mutex* mu = nullptr;
+  switch (type) {
+    case EXECUTION:
+      writer = &execution_writer_;
+      buffer = &execution_buffer_;
+      mu = &execution_buffer_mu_;
+      break;
+    case GRAPH_EXECUTION_TRACES:
+      writer = &graph_execution_traces_writer_;
+      buffer = &graph_execution_trace_buffer_;
+      mu = &graph_execution_trace_buffer_mu_;
+      break;
+    default:
+      return;
+  }
+
+  if (circular_buffer_size_ <= 0) {
+    // No cyclic-buffer behavior.
+    (*writer)->WriteSerializedDebugEvent(debug_event_str);
+  } else {
+    // Circular buffer behavior.
+    mutex_lock l(*mu);
+    buffer->push_back(debug_event_str);
+    if (buffer->size() > circular_buffer_size_) {
+      buffer->pop_front();
     }
   }
 }
@@ -272,11 +340,12 @@ Status DebugEventsWriter::FlushExecutionFiles() {
   TF_RETURN_IF_ERROR(Init());
 
   if (execution_writer_ != nullptr) {
-    if (cyclic_buffer_size_ > 0) {
-      // Write out all the content in the cyclic buffers.
+    if (circular_buffer_size_ > 0) {
+      // Write out all the content in the circular buffers.
       mutex_lock l(execution_buffer_mu_);
       while (!execution_buffer_.empty()) {
-        SerializeAndWriteDebugEvent(&execution_buffer_.front(), EXECUTION);
+        execution_writer_->WriteSerializedDebugEvent(execution_buffer_.front());
+        // SerializeAndWriteDebugEvent(&execution_buffer_.front());
         execution_buffer_.pop_front();
       }
     }
@@ -284,12 +353,12 @@ Status DebugEventsWriter::FlushExecutionFiles() {
   }
 
   if (graph_execution_traces_writer_ != nullptr) {
-    if (cyclic_buffer_size_ > 0) {
-      // Write out all the content in the cyclic buffers.
+    if (circular_buffer_size_ > 0) {
+      // Write out all the content in the circular buffers.
       mutex_lock l(graph_execution_trace_buffer_mu_);
       while (!graph_execution_trace_buffer_.empty()) {
-        SerializeAndWriteDebugEvent(&graph_execution_trace_buffer_.front(),
-                                    GRAPH_EXECUTION_TRACES);
+        graph_execution_traces_writer_->WriteSerializedDebugEvent(
+            graph_execution_trace_buffer_.front());
         graph_execution_trace_buffer_.pop_front();
       }
     }
@@ -370,12 +439,12 @@ DebugEventsWriter::GetDebugEventsWriterMap() {
 }
 
 DebugEventsWriter::DebugEventsWriter(const string& dump_root,
-                                     int64 cyclic_buffer_size)
+                                     int64 circular_buffer_size)
     : env_(Env::Default()),
       dump_root_(dump_root),
       is_initialized_(false),
       initialization_mu_(),
-      cyclic_buffer_size_(cyclic_buffer_size),
+      circular_buffer_size_(circular_buffer_size),
       execution_buffer_(),
       execution_buffer_mu_(),
       graph_execution_trace_buffer_(),

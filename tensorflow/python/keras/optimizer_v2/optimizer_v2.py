@@ -582,6 +582,15 @@ class OptimizerV2(trackable.Trackable):
       else:
         initial_value = initializer
       strategy = distribute_ctx.get_strategy()
+      if not strategy.extended.variable_created_in_scope(var):
+        raise ValueError(
+            "Trying to create optimizer slot variable under the scope for "
+            "tf.distribute.Strategy ({}), which is different from the scope "
+            "used for the original variable ({}). Make sure the slot "
+            "variables are created under the same strategy scope. This may "
+            "happen if you're restoring from a checkpoint outside the scope"
+            .format(strategy, var))
+
       with strategy.extended.colocate_vars_with(var):
         weight = tf_variables.Variable(
             name="%s/%s" % (var._shared_name, slot_name),  # pylint: disable=protected-access
@@ -842,8 +851,10 @@ class OptimizerV2(trackable.Trackable):
     Returns:
       Valid types for loss, variables and gradients.
     """
-    return set(
-        [dtypes.float16, dtypes.bfloat16, dtypes.float32, dtypes.float64])
+    return set([
+        dtypes.float16, dtypes.bfloat16, dtypes.float32, dtypes.float64,
+        dtypes.complex64, dtypes.complex128
+    ])
 
   def _call_if_callable(self, param):
     """Call the function if param is callable."""

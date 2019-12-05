@@ -414,6 +414,7 @@ class SplitOpSYCL : public SplitOpBase<SYCLDevice, T> {
 
 TF_CALL_ALL_TYPES(REGISTER_SPLIT);
 REGISTER_SPLIT(quint8);
+REGISTER_SPLIT(uint64);
 
 #undef REGISTER_SPLIT
 

@@ -20,14 +20,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifdef SPIRV_LOGICAL_OPS
-#else
+#ifndef SPIRV_LOGICAL_OPS
 #define SPIRV_LOGICAL_OPS
 
-#ifdef SPIRV_BASE
-#else
-include "mlir/SPIRV/SPIRVBase.td"
-#endif // SPIRV_BASE
+include "mlir/Dialect/SPIRV/SPIRVBase.td"
 
 class SPV_LogicalBinaryOp<string mnemonic, Type operandsType,
                     list<OpTrait> traits = []> :
@@ -601,6 +597,8 @@ def SPV_LogicalNotOp : SPV_LogicalUnaryOp<"LogicalNot", SPV_Bool, []> {
     %2 = spv.LogicalNot %0 : vector<4xi1>
     ```
   }];
+
+  let hasCanonicalizer = 1;
 }
 
 // -----
@@ -858,6 +856,10 @@ def SPV_SelectOp : SPV_Op<"Select", [NoSideEffect]> {
   let results = (outs
     SPV_SelectType:$result
   );
+
+  let builders = [OpBuilder<[{Builder *builder, OperationState &state,
+                              Value *cond, Value *trueValue,
+                              Value *falseValue}]>];
 }
 
 // -----
@@ -886,7 +888,7 @@ def SPV_UGreaterThanOp : SPV_LogicalBinaryOp<"UGreaterThan", SPV_Integer, []> {
     For example:
 
     ```
-    %4 = spv.UGreaterhan %0, %1 : i32
+    %4 = spv.UGreaterThan %0, %1 : i32
     %5 = spv.UGreaterThan %2, %3 : vector<4xi32>
 
     ```

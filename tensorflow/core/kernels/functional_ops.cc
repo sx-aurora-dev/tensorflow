@@ -332,6 +332,17 @@ REGISTER_KERNEL_BUILDER(Name("StatelessIf").Device(DEVICE_CPU), IfOp);
 REGISTER_KERNEL_BUILDER(
     Name("StatelessIf").Device(DEVICE_GPU).HostMemory("cond"), IfOp);
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("_If").Device(DEVICE_VE).HostMemory("cond"),
+                        IfOp);
+REGISTER_KERNEL_BUILDER(Name("If").Device(DEVICE_VE).HostMemory("cond"), IfOp);
+REGISTER_KERNEL_BUILDER(
+    Name("Case").Device(DEVICE_VE).HostMemory("branch_index"), CaseOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name("StatelessIf").Device(DEVICE_VE).HostMemory("cond"), IfOp);
+#endif
+
 class WhileOp : public AsyncOpKernel {
  public:
   explicit WhileOp(OpKernelConstruction* ctx) : AsyncOpKernel(ctx) {
@@ -510,6 +521,12 @@ REGISTER_KERNEL_BUILDER(Name("While").Device(DEVICE_GPU), WhileOp);
 REGISTER_KERNEL_BUILDER(Name("StatelessWhile").Device(DEVICE_CPU), WhileOp);
 REGISTER_KERNEL_BUILDER(Name("StatelessWhile").Device(DEVICE_GPU), WhileOp);
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("_While").Device(DEVICE_VE), WhileOp);
+REGISTER_KERNEL_BUILDER(Name("While").Device(DEVICE_VE), WhileOp);
+REGISTER_KERNEL_BUILDER(Name("StatelessWhile").Device(DEVICE_VE), WhileOp);
+#endif
+
 Status GetScalar(OpKernelContext* ctx, int index, int32* value,
                  const char* label) {
   Tensor t = ctx->input(index);
@@ -655,6 +672,14 @@ REGISTER_KERNEL_BUILDER(Name("For")
                             .HostMemory("limit")
                             .HostMemory("delta"),
                         ForOp);
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("For")
+                            .Device(DEVICE_VE)
+                            .HostMemory("start")
+                            .HostMemory("limit")
+                            .HostMemory("delta"),
+                        ForOp);
+#endif
 
 // FakeParamOp allocates a tensor with a shape conforming to the expected
 // output. This is necessary if the value will be stored in a while_loop's
@@ -694,6 +719,9 @@ class FakeParamOp : public OpKernel {
 
 REGISTER_KERNEL_BUILDER(Name("FakeParam").Device(DEVICE_CPU), FakeParamOp);
 REGISTER_KERNEL_BUILDER(Name("FakeParam").Device(DEVICE_GPU), FakeParamOp);
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("FakeParam").Device(DEVICE_VE), FakeParamOp);
+#endif
 
 }  // namespace
 }  // namespace tensorflow

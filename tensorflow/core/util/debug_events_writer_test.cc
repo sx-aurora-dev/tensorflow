@@ -581,7 +581,7 @@ TEST_F(DebugEventsWriterTest, WriteExecutionWithCyclicBufferNoFlush) {
   TF_ASSERT_OK(writer->Init());
 
   // First, try writing and flushing more debug events than the capacity
-  // of the cyclic buffer, in a serial fashion.
+  // of the circular buffer, in a serial fashion.
   for (size_t i = 0; i < kCyclicBufferSize * 2; ++i) {
     Execution* execution = new Execution();
     execution->set_op_type("Log");
@@ -603,7 +603,7 @@ TEST_F(DebugEventsWriterTest, WriteExecutionWithCyclicBufferFlush) {
   TF_ASSERT_OK(writer->Init());
 
   // First, try writing and flushing more debug events than the capacity
-  // of the cyclic buffer, in a serial fashion.
+  // of the circular buffer, in a serial fashion.
   for (size_t i = 0; i < kCyclicBufferSize * 2; ++i) {
     Execution* execution = new Execution();
     execution->set_op_type("Log");
@@ -625,7 +625,7 @@ TEST_F(DebugEventsWriterTest, WriteExecutionWithCyclicBufferFlush) {
               kCyclicBufferSize + i);
   }
 
-  // Second, write more than the capacity of the cyclic buffer,
+  // Second, write more than the capacity of the circular buffer,
   // in a concurrent fashion.
   thread::ThreadPool* thread_pool =
       new thread::ThreadPool(Env::Default(), "test_pool", 8);
@@ -675,10 +675,10 @@ TEST_F(DebugEventsWriterTest, WriteGrahExecutionTraceWithCyclicBufferNoFlush) {
   TF_ASSERT_OK(writer->Init());
 
   // First, try writing and flushing more debug events than the capacity
-  // of the cyclic buffer, in a serial fashion.
+  // of the circular buffer, in a serial fashion.
   for (size_t i = 0; i < kCyclicBufferSize * 2; ++i) {
     GraphExecutionTrace* trace = new GraphExecutionTrace();
-    trace->set_graph_id(strings::Printf("graph_%.2ld", i));
+    trace->set_tfdbg_context_id(strings::Printf("graph_%.2ld", i));
     writer->WriteGraphExecutionTrace(trace);
   }
 
@@ -696,10 +696,10 @@ TEST_F(DebugEventsWriterTest, WriteGrahExecutionTraceWithCyclicBufferFlush) {
   TF_ASSERT_OK(writer->Init());
 
   // First, try writing and flushing more debug events than the capacity
-  // of the cyclic buffer, in a serial fashion.
+  // of the circular buffer, in a serial fashion.
   for (size_t i = 0; i < kCyclicBufferSize * 2; ++i) {
     GraphExecutionTrace* trace = new GraphExecutionTrace();
-    trace->set_graph_id(strings::Printf("graph_%.2ld", i));
+    trace->set_tfdbg_context_id(strings::Printf("graph_%.2ld", i));
     writer->WriteGraphExecutionTrace(trace);
   }
 
@@ -712,18 +712,18 @@ TEST_F(DebugEventsWriterTest, WriteGrahExecutionTraceWithCyclicBufferFlush) {
                        &actuals);
   EXPECT_EQ(actuals.size(), kCyclicBufferSize);
   for (size_t i = 0; i < kCyclicBufferSize; ++i) {
-    EXPECT_EQ(actuals[i].graph_execution_trace().graph_id(),
+    EXPECT_EQ(actuals[i].graph_execution_trace().tfdbg_context_id(),
               strings::Printf("graph_%.2ld", i + kCyclicBufferSize));
   }
 
-  // Second, write more than the capacity of the cyclic buffer,
+  // Second, write more than the capacity of the circular buffer,
   // in a concurrent fashion.
   thread::ThreadPool* thread_pool =
       new thread::ThreadPool(Env::Default(), "test_pool", 8);
   std::atomic_int_fast64_t counter(0);
   auto fn = [&writer, &counter]() {
     GraphExecutionTrace* trace = new GraphExecutionTrace();
-    trace->set_graph_id(
+    trace->set_tfdbg_context_id(
         strings::Printf("new_graph_%.2ld", counter.fetch_add(1)));
     writer->WriteGraphExecutionTrace(trace);
   };
@@ -740,9 +740,9 @@ TEST_F(DebugEventsWriterTest, WriteGrahExecutionTraceWithCyclicBufferFlush) {
   EXPECT_EQ(actuals.size(), kCyclicBufferSize * 2);
   for (size_t i = 0; i < kCyclicBufferSize; ++i) {
     const size_t index = i + kCyclicBufferSize;
-    EXPECT_EQ(
-        actuals[index].graph_execution_trace().graph_id().find("new_graph_"),
-        0);
+    EXPECT_EQ(actuals[index].graph_execution_trace().tfdbg_context_id().find(
+                  "new_graph_"),
+              0);
   }
 
   // Verify no cross-talk.
@@ -783,7 +783,7 @@ TEST_F(DebugEventsWriterTest, DisableCyclicBufferBeahavior) {
 
   for (size_t i = 0; i < kNumEvents; ++i) {
     GraphExecutionTrace* trace = new GraphExecutionTrace();
-    trace->set_graph_id(strings::Printf("graph_%.2ld", i));
+    trace->set_tfdbg_context_id(strings::Printf("graph_%.2ld", i));
     writer->WriteGraphExecutionTrace(trace);
   }
   TF_ASSERT_OK(writer->FlushExecutionFiles());
@@ -792,7 +792,7 @@ TEST_F(DebugEventsWriterTest, DisableCyclicBufferBeahavior) {
                        &actuals);
   EXPECT_EQ(actuals.size(), kNumEvents);
   for (size_t i = 0; i < kNumEvents; ++i) {
-    EXPECT_EQ(actuals[i].graph_execution_trace().graph_id(),
+    EXPECT_EQ(actuals[i].graph_execution_trace().tfdbg_context_id(),
               strings::Printf("graph_%.2ld", i));
   }
 }

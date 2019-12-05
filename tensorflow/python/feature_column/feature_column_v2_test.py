@@ -27,7 +27,6 @@ from tensorflow.core.example import example_pb2
 from tensorflow.core.example import feature_pb2
 from tensorflow.core.protobuf import config_pb2
 from tensorflow.core.protobuf import rewriter_config_pb2
-from tensorflow.python import keras
 from tensorflow.python.client import session
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
@@ -41,6 +40,7 @@ from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import sparse_tensor
 from tensorflow.python.framework import test_util
+from tensorflow.python.keras.utils import np_utils
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import lookup_ops
@@ -491,6 +491,12 @@ class NumericColumnTest(test.TestCase):
         config, custom_objects={'_increment_two': _increment_two})
     self.assertEqual(price, new_col)
     self.assertEqual(new_col.shape, (1,))
+
+    # Also test round trip through feature column serialization utils.
+    new_col = serialization.deserialize_feature_column(
+        serialization.serialize_feature_column(price),
+        custom_objects={'_increment_two': _increment_two})
+    self.assertEqual(price, new_col)
 
 
 class BucketizedColumnTest(test.TestCase):
@@ -2085,7 +2091,7 @@ class LinearModelTest(test.TestCase):
 
     x = {'a': np.random.random((10, 1))}
     y = np.random.randint(20, size=(10, 1))
-    y = keras.utils.to_categorical(y, num_classes=20)
+    y = np_utils.to_categorical(y, num_classes=20)
     model.fit(x, y, epochs=1, batch_size=5)
     model.fit(x, y, epochs=1, batch_size=5)
     model.evaluate(x, y, batch_size=5)
@@ -5313,6 +5319,10 @@ class IndicatorColumnTest(test.TestCase):
     self.assertEqual(indicator_b.name, 'b_indicator')
     self.assertEqual(indicator_b.variable_shape, [1, 100])
     self.assertFalse(indicator_b._is_v2_column)
+
+  def test_not_categorical_input(self):
+    with self.assertRaisesRegexp(ValueError, 'Unsupported input type.'):
+      fc.indicator_column('aaa')
 
   def test_1D_shape_succeeds(self):
     animal = fc.indicator_column(

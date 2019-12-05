@@ -61,7 +61,8 @@ class VariableHolder(object):
     v = None
 
     # Get expected variable name.
-    with ops.name_scope(kwargs.get("name", None), "Variable") as name:
+    with ops.name_scope(
+        kwargs.get("name", None), "Variable", skip_on_eager=False) as name:
       variable_name = ops.name_from_scope_name(name)
       kwargs["name"] = name
 
@@ -204,12 +205,14 @@ def _lift_unlifted_variables(graph, variable_holder):
         mutable_collection[index] = lifted_variables.get(id(current), current)
         if not resource_variable_ops.is_resource_variable(
             mutable_collection[index]):
-          logging.warning(
+          logging.log_first_n(
+              logging.WARN,
               "Unable to create a python object for variable {} because it is "
               "a reference variable. It may not be visible to training APIs. "
               "If this is a problem, consider rebuilding the SavedModel after "
               "running tf.compat.v1.enable_resource_variables().".format(
-                  mutable_collection[index]))
+                  mutable_collection[index]),
+              5)
 
 
 # TODO(allenl): make this trackable
@@ -314,7 +317,8 @@ class WrappedFunction(function.ConcreteFunction):
     lift_map = lift_to_graph.lift_to_graph(
         operation_fetches + tensor_fetches,
         pruned_graph,
-        sources=flat_feeds + self.graph.internal_captures)
+        sources=flat_feeds + self.graph.internal_captures,
+        base_graph=self._func_graph)
 
     # Note that we add the component tensors of any composite tensors to the
     # returned function's outputs list; the list must contain these component

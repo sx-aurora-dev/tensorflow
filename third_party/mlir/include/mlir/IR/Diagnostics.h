@@ -391,7 +391,7 @@ private:
   friend DiagnosticEngine;
 
   /// The engine that this diagnostic is to report to.
-  DiagnosticEngine *owner;
+  DiagnosticEngine *owner = nullptr;
 
   /// The raw diagnostic that is inflight to be reported.
   llvm::Optional<Diagnostic> impl;
@@ -435,7 +435,7 @@ public:
   HandlerID registerHandler(const HandlerTy &handler);
 
   /// Set the diagnostic handler with a function that returns void. This is a
-  /// convient wrapper for handlers that always completely process the given
+  /// convenient wrapper for handlers that always completely process the given
   /// diagnostic.
   template <typename FuncTy, typename RetT = decltype(std::declval<FuncTy>()(
                                  std::declval<Diagnostic &>()))>

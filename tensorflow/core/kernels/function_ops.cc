@@ -153,6 +153,66 @@ REGISTER_KERNEL_BUILDER(Name(kRetOp)
                         RetvalOp);
 #undef REGISTER
 
+#define REGISTER_VE(type)     \
+  REGISTER_KERNEL_BUILDER( \
+      Name(kArgOp).Device(DEVICE_VE).TypeConstraint<type>("T"), ArgOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE)
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE)
+TF_CALL_bool(REGISTER_VE)
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+						   .Device(DEVICE_VE)
+						   .HostMemory("output")
+						   .TypeConstraint<int32>("T"),
+					   ArgOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kDeviceArgOp).Device(DEVICE_VE).TypeConstraint<int32>("T"), ArgOp);
+#undef REGISTER_VE
+
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<ResourceHandle>("T"),
+                        ArgOp);
+
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<tstring>("T"),
+                        ArgOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kArgOp).Device(DEVICE_VE).TypeConstraint<Variant>("T"), ArgOp);
+
+#define REGISTER_VE(type)     \
+  REGISTER_KERNEL_BUILDER( \
+      Name(kRetOp).Device(DEVICE_VE).TypeConstraint<type>("T"), RetvalOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE)
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE)
+REGISTER_VE(Variant)
+TF_CALL_bool(REGISTER_VE)
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+						   .Device(DEVICE_VE)
+						   .HostMemory("input")
+						   .TypeConstraint<int32>("T"),
+					   RetvalOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kDeviceRetOp).Device(DEVICE_VE).TypeConstraint<int32>("T"), RetvalOp);
+
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<ResourceHandle>("T")
+                            .HostMemory("input"),
+                        RetvalOp);
+
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<tstring>("T")
+                            .HostMemory("input"),
+                        RetvalOp);
+#undef REGISTER_VE
+
 class PassOn : public OpKernel {
  public:
   explicit PassOn(OpKernelConstruction* ctx) : OpKernel(ctx) {
@@ -175,8 +235,8 @@ class PassOn : public OpKernel {
   }
 };
 
-REGISTER_KERNEL_BUILDER(Name("_ListToArray").Device(DEVICE_CPU), PassOn);
-REGISTER_KERNEL_BUILDER(Name("_ArrayToList").Device(DEVICE_CPU), PassOn);
+REGISTER_SYSTEM_KERNEL_BUILDER(Name("_ListToArray").Device(DEVICE_CPU), PassOn);
+REGISTER_SYSTEM_KERNEL_BUILDER(Name("_ArrayToList").Device(DEVICE_CPU), PassOn);
 
 #define REGISTER_GPU_KERNELS(type)                                       \
   REGISTER_KERNEL_BUILDER(                                               \
@@ -200,6 +260,33 @@ REGISTER_KERNEL_BUILDER(Name("_ListToArray")
                         PassOn);
 REGISTER_KERNEL_BUILDER(Name("_ArrayToList")
                             .Device(DEVICE_GPU)
+                            .HostMemory("input")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PassOn);
+
+#define REGISTER_VE_KERNELS(type)                                       \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("_ListToArray").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PassOn);                                                           \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("_ArrayToList").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PassOn);
+
+// REGISTER_VE_KERNELS(Eigen::half);
+REGISTER_VE_KERNELS(float);
+REGISTER_VE_KERNELS(double);
+
+#undef REGISTER_VE_KERNELS
+
+REGISTER_KERNEL_BUILDER(Name("_ListToArray")
+                            .Device(DEVICE_VE)
+                            .HostMemory("input")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PassOn);
+REGISTER_KERNEL_BUILDER(Name("_ArrayToList")
+                            .Device(DEVICE_VE)
                             .HostMemory("input")
                             .HostMemory("output")
                             .TypeConstraint<int32>("T"),
@@ -268,7 +355,7 @@ class SymbolicGradientOp : public AsyncOpKernel {
               "SymbolicGradientOp #parent_step_id=", ctx->step_id(),
               ",function_step_id=", opts.step_id, "#");
         },
-        /*level=*/2);
+        profiler::TraceMeLevel::kInfo);
     lib->Run(opts, handle, args, rets, [ctx, done, rets](const Status& status) {
       if (!status.ok()) {
         ctx->SetStatus(status);
@@ -293,6 +380,8 @@ class SymbolicGradientOp : public AsyncOpKernel {
 REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_CPU),
                         SymbolicGradientOp);
 REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_GPU),
+                        SymbolicGradientOp);
+REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_VE),
                         SymbolicGradientOp);
 #if TENSORFLOW_USE_SYCL
 REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_SYCL),
@@ -322,10 +411,18 @@ void RemoteCallOp::ComputeAsync(OpKernelContext* ctx, DoneCallback done) {
                                               source_device, &target_device),
       done);
 
+  std::string func_name = func_.name();
   AttrValueMap attr_values = func_.attr();
 
   FunctionLibraryRuntime::InstantiateOptions instantiate_opts;
-  // TODO(b/141576771): Propagate ctxt's ConfigProto into opts.config_proto.
+
+  const auto* config = (ctx->function_library())
+                           ? ctx->function_library()->config_proto()
+                           : nullptr;
+  if (config) {
+    instantiate_opts.config_proto = *config;
+  }
+
   instantiate_opts.target = target_device;
 
   FunctionTarget function_target = {target_device, lib};
@@ -337,21 +434,20 @@ void RemoteCallOp::ComputeAsync(OpKernelContext* ctx, DoneCallback done) {
     if (cached_entry != handle_cache_.end()) {
       handle = cached_entry->second;
     } else {
-      VLOG(1) << "Instantiating " << func_.name() << " on " << target_device;
+      VLOG(1) << "Instantiating " << func_name << " on " << target_device;
       profiler::TraceMe activity(
           [&] {
-            return strings::StrCat("RemoteCall: Instantiate: ", func_.name(),
+            return strings::StrCat("RemoteCall: Instantiate: ", func_name,
                                    " on ", target_device);
           },
           profiler::TraceMeLevel::kInfo);
-      OP_REQUIRES_OK_ASYNC(
-          ctx,
-          lib->Instantiate(func_.name(), AttrSlice(&attr_values),
-                           instantiate_opts, &handle),
-          done);
+      OP_REQUIRES_OK_ASYNC(ctx,
+                           lib->Instantiate(func_name, AttrSlice(&attr_values),
+                                            instantiate_opts, &handle),
+                           done);
       auto insert_result = handle_cache_.insert({function_target, handle});
       CHECK(insert_result.second) << "Insert unsuccessful.";
-      VLOG(1) << "Instantiated " << func_.name() << " on " << target_device
+      VLOG(1) << "Instantiated " << func_name << " on " << target_device
               << ", resulting in handle: " << handle << " flr: " << lib;
     }
   }
@@ -386,39 +482,45 @@ void RemoteCallOp::ComputeAsync(OpKernelContext* ctx, DoneCallback done) {
     opts.rets_alloc_attrs.push_back(ret_alloc_attrs);
   }
   auto* rets = new std::vector<Tensor>;
-  auto* activity = new profiler::TraceMe(
-      [&] {
-        return strings::StrCat("RemoteCall: Run: ", func_.name(), " on ",
-                               target_device);
-      },
-      profiler::TraceMeLevel::kInfo);
-  VLOG(1) << "Running " << func_.name() << " on " << target_device
+  VLOG(1) << "Running " << func_name << " on " << target_device
           << " with handle: " << handle;
   profiler::TraceMe trace_me(
       [&] {
-        return absl::StrCat("RemoteCallOp #parent_step_id=", ctx->step_id(),
-                            ",function_step_id=", opts.step_id, "#");
+        return absl::StrCat("RemoteCallOp#func_name=", func_name,
+                            ",parent_step_id=", ctx->step_id(),
+                            ",function_step_id=", opts.step_id,
+                            ",device=", target_device, "#");
       },
-      /*level=*/2);
-  lib->Run(opts, handle, args, rets,
-           [rets, activity, done, ctx](const Status& status) {
-             if (!status.ok()) {
-               ctx->SetStatus(status);
-             } else {
-               for (size_t i = 0; i < rets->size(); ++i) {
-                 ctx->set_output(i, (*rets)[i]);
-               }
-             }
-             delete rets;
-             delete activity;
-             done();
-           });
+      profiler::TraceMeLevel::kInfo);
+  lib->Run(
+      opts, handle, args, rets,
+      [rets, done, func_name, ctx, opts, target_device](const Status& status) {
+        profiler::TraceMe activity(
+            [&] {
+              return absl::StrCat("RemoteCallOpDone#func_name=", func_name,
+                                  ",parent_step_id=", ctx->step_id(),
+                                  ",function_step_id=", opts.step_id,
+                                  ",device=", target_device, "#");
+            },
+            profiler::TraceMeLevel::kInfo);
+        if (!status.ok()) {
+          ctx->SetStatus(status);
+        } else {
+          for (size_t i = 0; i < rets->size(); ++i) {
+            ctx->set_output(i, (*rets)[i]);
+          }
+        }
+        delete rets;
+        done();
+      });
 }
 
 REGISTER_KERNEL_BUILDER(
     Name("RemoteCall").Device(DEVICE_CPU).HostMemory("target"), RemoteCallOp);
 REGISTER_KERNEL_BUILDER(
     Name("RemoteCall").Device(DEVICE_GPU).HostMemory("target"), RemoteCallOp);
+REGISTER_KERNEL_BUILDER(
+    Name("RemoteCall").Device(DEVICE_VE).HostMemory("target"), RemoteCallOp);
 #if TENSORFLOW_USE_SYCL
 REGISTER_KERNEL_BUILDER(
     Name("RemoteCall").Device(DEVICE_SYCL).HostMemory("target"), RemoteCallOp);

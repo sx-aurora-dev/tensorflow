@@ -132,7 +132,7 @@ int main(int argc, char **argv) {
 
   StatusOr<mlir::OwningModuleRef> module =
       tensorflow::LoadFromGraphdefOrMlirSource(
-          input_file_name, input_mlir, use_splatted_constant, extra_opdefs,
+          input_file_name, input_mlir, use_splatted_constant, custom_opdefs,
           debug_info_file, input_arrays, input_dtypes, input_shapes,
           output_arrays,
           /*prune_unused_nodes=*/true, &source_mgr, &context);
@@ -161,19 +161,32 @@ int main(int argc, char **argv) {
       return kTrFailure;
     }
   }
+  if (!emit_quant_adaptor_ops) {
+    quant_specs.inference_input_type = quant_specs.inference_type;
+  }
+
+  if (!quant_stats_file_name.empty()) {
+    std::string error_message;
+    auto file = mlir::openInputFile(quant_stats_file_name, &error_message);
+    if (!file) {
+      llvm::errs() << "fail to open quant stats file: "
+                   << quant_stats_file_name;
+      return kTrFailure;
+    }
+    quant_specs.serialized_quant_stats = file->getBuffer().str();
+  }
 
   mlir::TFL::PassConfig pass_config(quant_specs);
   pass_config.emit_builtin_tflite_ops = emit_builtin_tflite_ops;
-  pass_config.emit_quant_adaptor_ops = emit_quant_adaptor_ops;
   pass_config.lower_tensor_list_ops = lower_tensor_list_ops;
+  pass_config.inline_functions = inline_functions;
 
   tensorflow::AddTFToTFLConversionPasses(pass_config, &pm);
 
   std::string result;
   auto status = tensorflow::ConvertTFExecutorToTFLOrFlatbuffer(
       module.ValueOrDie().get(), output_mlir, emit_builtin_tflite_ops,
-      emit_select_tf_ops, emit_custom_ops, emit_quant_adaptor_ops,
-      lower_tensor_list_ops, quant_specs, &result, &pm);
+      emit_select_tf_ops, emit_custom_ops, quant_specs, &result, &pm);
   if (!status.ok()) return kTrFailure;
 
   std::string error_msg;

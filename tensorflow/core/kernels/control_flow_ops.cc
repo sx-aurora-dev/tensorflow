@@ -404,24 +404,28 @@ TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_SYCL_REF_KERNEL);
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-#define REGISTER_VE_KERNEL(type)                        \
+#define REGISTER_VE_KERNEL(type)                          \
   REGISTER_KERNEL_BUILDER(Name("Merge")                   \
-                              .Device(DEVICE_VE)        \
+                              .Device(DEVICE_VE)          \
                               .TypeConstraint<type>("T")  \
                               .HostMemory("value_index"), \
                           MergeOp);
-REGISTER_VE_KERNEL(bool);
-TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
 
-#define REGISTER_VE_REF_KERNEL(type)                    \
+#define REGISTER_VE_REF_KERNEL(type)                      \
   REGISTER_KERNEL_BUILDER(Name("RefMerge")                \
-                              .Device(DEVICE_VE)        \
+                              .Device(DEVICE_VE)          \
                               .TypeConstraint<type>("T")  \
                               .HostMemory("value_index"), \
                           MergeOp);
-REGISTER_VE_REF_KERNEL(bool);
-TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_REF_KERNEL);
 
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_REF_KERNEL);
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE_KERNEL);
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE_REF_KERNEL);
+REGISTER_VE_KERNEL(bool);
+REGISTER_VE_REF_KERNEL(bool);
+REGISTER_VE_KERNEL(uint64);
+TF_CALL_variant(REGISTER_VE_KERNEL);
 #undef REGISTER_VE_KERNEL
 #undef REGISTER_VE_REF_KERNEL
 #endif  // TENSORFLOW_USE_VE

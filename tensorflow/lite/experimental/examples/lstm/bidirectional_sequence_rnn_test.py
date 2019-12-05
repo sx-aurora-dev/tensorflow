@@ -1,3 +1,4 @@
+# Lint as: python2, python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +18,7 @@ from __future__ import division
 from __future__ import print_function
 import tempfile
 import numpy as np
+from six.moves import range
 import tensorflow as tf
 
 from tensorflow import flags
@@ -90,8 +92,8 @@ class BidirectionalSequenceRnnTest(test_util.TensorFlowTestCase):
     """
     # Weights and biases for output softmax layer.
     out_weights = tf.Variable(
-        tf.random_normal([self.num_units * 2, self.n_classes]))
-    out_bias = tf.Variable(tf.random_normal([self.n_classes]))
+        tf.random.normal([self.num_units * 2, self.n_classes]))
+    out_bias = tf.Variable(tf.random.normal([self.n_classes]))
 
     batch_size = self.batch_size
     if is_inference:
@@ -257,7 +259,7 @@ class BidirectionalSequenceRnnTest(test_util.TensorFlowTestCase):
     converter = tf.lite.TFLiteConverter.from_session(sess, [input_tensor],
                                                      [output_tensor])
     tflite = converter.convert()
-    converter.experimental_enable_mlir_converter = use_mlir_converter
+    converter.experimental_new_converter = use_mlir_converter
 
     interpreter = tf.lite.Interpreter(model_content=tflite)
 

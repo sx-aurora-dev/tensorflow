@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <deque>
 
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/io/record_writer.h"
 #include "tensorflow/core/platform/env.h"
@@ -70,7 +71,7 @@ class DebugEventsWriter {
  public:
 #ifndef SWIG
   // Prefix of version string present in the first entry of every event file.
-  // Default size of each cyclic buffer (unit: number of DebugEvent protos).
+  // Default size of each circular buffer (unit: number of DebugEvent protos).
   static constexpr const int64 kDefaultCyclicBufferSize = 1000;
 
   static constexpr const char* kFileNamePrefix = "tfdbg_events";
@@ -93,14 +94,15 @@ class DebugEventsWriter {
   //
   // Args:
   //   dump_root: Dump root directory. If it doesn't exist, will be created.
-  //   cyclic_buffer_size: Cyclic buffer size (in number of DebugEvent protos).
-  //     If set to a value <=0, will abolish the cyclic-buffer behavior.
+  //   circular_buffer_size: Circular buffer size (in number of DebugEvent
+  //     protos). If set to a value <=0, will abolish the circular-buffer
+  //     behavior.
   // Returns:
   //   A pointer to a DebugEventsWriter object: a per-dump_root singleton.
   static DebugEventsWriter* GetDebugEventsWriter(const string& dump_root,
-                                                 int64 cyclic_buffer_size);
-  // Same as the 2-arg factory method above, but uses the default cyclic buffer
-  // size.
+                                                 int64 circular_buffer_size);
+  // Same as the 2-arg factory method above, but uses the default circular
+  // buffer size.
   static DebugEventsWriter* GetDebugEventsWriter(const string& dump_root);
   ~DebugEventsWriter();
 
@@ -113,7 +115,7 @@ class DebugEventsWriter {
   // deleted by another process), this will open a new file.
   Status Init();
 
-  // The four DebugEvent fields below are written _without_ the cyclic buffer.
+  // The four DebugEvent fields below are written _without_ the circular buffer.
   // Source file contents are written to the *.source_files file.
   // Takes ownership of source_file.
   void WriteSourceFile(SourceFile* source_file);
@@ -127,7 +129,7 @@ class DebugEventsWriter {
   // Takes ownership of debugged_graph.
   void WriteDebuggedGraph(DebuggedGraph* debugged_graph);
 
-  // The two DebugEvent fields below are written to the cyclic buffer
+  // The two DebugEvent fields below are written to the circular buffer
   // and saved to disk only at the FlushExecutionFiles() call.
   // Execution events (eager execution of an op or a tf.function) are written to
   // the *.execution file.
@@ -138,15 +140,52 @@ class DebugEventsWriter {
   // Takes ownership of graph_execution_trace.
   void WriteGraphExecutionTrace(GraphExecutionTrace* graph_execution_trace);
 
+  // Write a graph execution trace without using a protocol buffer.
+  // Instead, pass the raw values related to the graph execution trace.
+  // Args:
+  //   tfdbg_context_id: A unique ID for the context of interest, e.g., a
+  //   concreted compiled tf.function that the op of interest belongs to.
+  //   op_name: Name of the op that this graph execution trace is concerned
+  //     with. Applicable only to the single-tensor trace case. For cases in
+  //     which the trace concerns multiple tensors, this is an empty string.
+  //   output_slot: Output slot index of the op that this trace is concerned
+  //     with.
+  //   tensor_debug_mode: An integer that represents the tensor-debug mode enum.
+  //   tensor_value: The value of the tensor that describes the tensor(s)
+  //     that this trace is concerned with. The sematics of this tensor value
+  //     depends on the value of `tensor_debug_mode`.
+  void WriteGraphExecutionTrace(const string& tfdbg_context_id,
+                                const string& device_name,
+                                const string& op_name, int32 output_slot,
+                                int32 tensor_debug_mode,
+                                const Tensor& tensor_value);
+
+  // Writes a serialized DebugEvent to one of the debug-events files
+  // concerned with the non-execution events: the SOURCE_FILES, STACK_FRAMES
+  // and GRAPHS files.
+  // NOTE: Actually used in the Python binding, to avoid overhead of
+  // serializing and parsing protos at the language interface.
+  void WriteSerializedNonExecutionDebugEvent(const string& debug_event_str,
+                                             DebugEventFileType type);
+
+  // Writes a serialized DebugEvent to one of the debug-events files
+  // concerned with the execution-related events: the EXECUTION and
+  // GRAPH_EXECUTION_TRACES files. This involves the cyclic-buffer behavior if
+  // circular_buffer_size is configured to be >0.
+  // NOTE: Actually used in the Python binding, to avoid overhead of
+  // serializing and parsing protos at the language interface.
+  void WriteSerializedExecutionDebugEvent(const string& debug_event_str,
+                                          DebugEventFileType type);
+
   // EventWriter automatically flushes and closes on destruction, but
   // this method is provided for users who want to write to disk sooner
   // and/or check for success.
   // FlushNonExecutionFiles() pushes outstanding DebugEvents not written
-  // events to the cyclic buffer to their respective files.
+  // events to the circular buffer to their respective files.
   Status FlushNonExecutionFiles();
 
-  // Writes current contents of the cyclic buffers to their respective
-  // debug event files and clears the cyclic buffers.
+  // Writes current contents of the circular buffers to their respective
+  // debug event files and clears the circular buffers.
   Status FlushExecutionFiles();
 
   // Close() calls FlushNonExecutionFiles() and FlushExecutionFiles()
@@ -163,7 +202,7 @@ class DebugEventsWriter {
   // Guards calls to the GetDebugEventsWriter() method.
   static mutex factory_mu_;
 
-  DebugEventsWriter(const string& dump_root, int64 cyclic_buffer_size);
+  DebugEventsWriter(const string& dump_root, int64 circular_buffer_size);
 
   // Get the path prefix. The same for all files, which differ only in the
   // suffix.
@@ -187,10 +226,10 @@ class DebugEventsWriter {
   bool is_initialized_ GUARDED_BY(initialization_mu_);
   mutex initialization_mu_;
 
-  const int64 cyclic_buffer_size_;
-  std::deque<DebugEvent> execution_buffer_ GUARDED_BY(execution_buffer_mu_);
+  const int64 circular_buffer_size_;
+  std::deque<string> execution_buffer_ GUARDED_BY(execution_buffer_mu_);
   mutex execution_buffer_mu_;
-  std::deque<DebugEvent> graph_execution_trace_buffer_
+  std::deque<string> graph_execution_trace_buffer_
       GUARDED_BY(graph_execution_trace_buffer_mu_);
   mutex graph_execution_trace_buffer_mu_;
 
