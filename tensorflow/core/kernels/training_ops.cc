@@ -712,9 +712,9 @@ TF_CALL_double(REGISTER_SYCL_KERNELS);
 
 #ifdef TENSORFLOW_USE_VE
 template <typename T>
-class VEApplyGradientDescentOp : public OpKernel {
+class VEApplyGradientDescentOp : public VEOpKernel {
  public:
-  explicit VEApplyGradientDescentOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+  explicit VEApplyGradientDescentOp(OpKernelConstruction* ctx) : VEOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
   }
 
@@ -741,23 +741,12 @@ class VEApplyGradientDescentOp : public OpKernel {
                                 var.shape().DebugString(), " ",
                                 delta.shape().DebugString()));
 
-    struct {
-      int dtype;
-      int64_t num_elements ;
-      uint64_t var_ptr, delta_ptr ;
-      uint64_t alpha_ptr ;
-    } args;
+    ArgsImpl<> Args = ArgsImpl<>() ;
+    Args.addArg<Tensor>(var) ;
+    Args.addArg<Tensor>(alpha) ;
+    Args.addArg<Tensor>(delta) ;
 
-    args.dtype = var.dtype() ;
-    args.num_elements = var.NumElements() ;
-    args.var_ptr = (uint64_t) DMAHelper::base(&var) ;
-    args.delta_ptr = (uint64_t) DMAHelper::base(&delta) ;
-    args.alpha_ptr  = (uint64_t) DMAHelper::base(&alpha) ;
-
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("ApplyGradientDescent", (void*)&args, sizeof(args));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    Call(ctx, "ApplyGradientDescent", Args);
 
     MaybeForwardRefInputToRefOutput(ctx, 0, 0);
   }
