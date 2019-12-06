@@ -712,9 +712,9 @@ TF_CALL_double(REGISTER_SYCL_KERNELS);
 
 #ifdef TENSORFLOW_USE_VE
 template <typename T>
-class VEApplyGradientDescentOp : public OpKernel {
+class VEApplyGradientDescentOp : public VEOpKernel {
  public:
-  explicit VEApplyGradientDescentOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+  explicit VEApplyGradientDescentOp(OpKernelConstruction* ctx) : VEOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
   }
 
@@ -741,23 +741,12 @@ class VEApplyGradientDescentOp : public OpKernel {
                                 var.shape().DebugString(), " ",
                                 delta.shape().DebugString()));
 
-    struct {
-      int dtype;
-      int64_t num_elements ;
-      uint64_t var_ptr, delta_ptr ;
-      uint64_t alpha_ptr ;
-    } args;
+    ArgsImpl<> Args = ArgsImpl<>() ;
+    Args.addArg<Tensor>(var) ;
+    Args.addArg<Tensor>(alpha) ;
+    Args.addArg<Tensor>(delta) ;
 
-    args.dtype = var.dtype() ;
-    args.num_elements = var.NumElements() ;
-    args.var_ptr = (uint64_t) DMAHelper::base(&var) ;
-    args.delta_ptr = (uint64_t) DMAHelper::base(&delta) ;
-    args.alpha_ptr  = (uint64_t) DMAHelper::base(&alpha) ;
-
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("ApplyGradientDescent", (void*)&args, sizeof(args));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    Call(ctx, "ApplyGradientDescent", Args);
 
     MaybeForwardRefInputToRefOutput(ctx, 0, 0);
   }
@@ -3210,9 +3199,9 @@ REGISTER_KERNELS(GPU, complex128);
 
 #ifdef TENSORFLOW_USE_VE
 template <typename T>
-class VEApplyMomentumOp : public OpKernel {
+class VEApplyMomentumOp : public VEOpKernel {
  public:
-  explicit VEApplyMomentumOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+  explicit VEApplyMomentumOp(OpKernelConstruction* ctx) : VEOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_nesterov", &use_nesterov_));
   }
@@ -3257,28 +3246,15 @@ class VEApplyMomentumOp : public OpKernel {
                 errors::InvalidArgument("momentum is not a scalar: ",
                                         momentum.shape().DebugString()));
 
-    struct {
-      int dtype;
-      bool use_nesterov_ ;
-      int64_t num_elements ;
-      uint64_t var_ptr, accum_ptr ;
-      uint64_t lr_ptr, momentum_ptr ;
-      uint64_t grad_ptr;
-    } args;
+    ArgsImpl<> Args = ArgsImpl<>() ;
+    Args.addArg<Tensor>(var) ;
+    Args.addArg<Tensor>(accum) ;
+    Args.addArg<Tensor>(lr) ;
+    Args.addArg<Tensor>(grad) ;
+    Args.addArg<Tensor>(momentum) ;
+    Args.addArg<int64_t>(use_nesterov_ ? 1 : 0) ;
 
-    args.dtype = var.dtype() ;
-    args.use_nesterov_ = use_nesterov_ ;
-    args.num_elements = var.NumElements() ;
-    args.var_ptr = (uint64_t) DMAHelper::base(&var) ;
-    args.accum_ptr = (uint64_t) DMAHelper::base(&accum) ;
-    args.lr_ptr = (uint64_t) DMAHelper::base(&lr) ;
-    args.momentum_ptr = (uint64_t) DMAHelper::base(&momentum) ;
-    args.grad_ptr = (uint64_t) DMAHelper::base(&grad) ;
-
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("ApplyMomentum", (void*)&args, sizeof(args));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    Call(ctx, "ApplyMomentum", Args);
 
     MaybeForwardRefInputToRefOutput(ctx, 0, 0);
   }
@@ -3972,9 +3948,9 @@ REGISTER_KERNELS(GPU, complex128);
 
 #ifdef TENSORFLOW_USE_VE
 template < typename T>
-class VEApplyAdamOp : public OpKernel {
+class VEApplyAdamOp : public VEOpKernel {
  public:
-  explicit VEApplyAdamOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+  explicit VEApplyAdamOp(OpKernelConstruction* ctx) : VEOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_nesterov", &use_nesterov_));
   }
@@ -4047,35 +4023,20 @@ class VEApplyAdamOp : public OpKernel {
                                 var.shape().DebugString(), " ",
                                 grad.shape().DebugString()));
 
-    struct {
-      int dtype;
-      bool use_nesterov_ ;
-      int64_t num_elements ;
-      uint64_t var_ptr, m_ptr, v_ptr ;
-      uint64_t beta1_power_ptr, beta2_power_ptr ;
-      uint64_t lr_ptr ;
-      uint64_t beta1_ptr, beta2_ptr, epsilon_ptr ;
-      uint64_t grad_ptr;
-    } args;
+    ArgsImpl<> Args = ArgsImpl<>() ;
+    Args.addArg<Tensor>(var) ;
+    Args.addArg<Tensor>(m) ;
+    Args.addArg<Tensor>(v) ;
+    Args.addArg<Tensor>(beta1_power) ;	// scalar
+    Args.addArg<Tensor>(beta2_power) ;	// scalar
+    Args.addArg<Tensor>(lr) ;		// scalar
+    Args.addArg<Tensor>(beta1) ;	// scalar
+    Args.addArg<Tensor>(beta2) ;	// scalar
+    Args.addArg<Tensor>(epsilon) ;	// scalar
+    Args.addArg<Tensor>(grad) ;
+    Args.addArg<int64_t>(use_nesterov_ ? 1 : 0) ;
 
-    args.dtype = var.dtype() ;
-    args.use_nesterov_ = use_nesterov_ ;
-    args.num_elements = var.NumElements() ;
-    args.var_ptr = (uint64_t) DMAHelper::base(&var) ;
-    args.m_ptr = (uint64_t) DMAHelper::base(&m) ;
-    args.v_ptr = (uint64_t) DMAHelper::base(&v) ;
-    args.beta1_power_ptr = (uint64_t) DMAHelper::base(&beta1_power) ;
-    args.beta2_power_ptr = (uint64_t) DMAHelper::base(&beta2_power) ;
-    args.lr_ptr = (uint64_t) DMAHelper::base(&lr) ;
-    args.beta1_ptr = (uint64_t) DMAHelper::base(&beta1) ;
-    args.beta2_ptr = (uint64_t) DMAHelper::base(&beta2) ;
-    args.epsilon_ptr = (uint64_t) DMAHelper::base(&epsilon) ;
-    args.grad_ptr = (uint64_t) DMAHelper::base(&grad) ;
-
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("ApplyAdam", (void*)&args, sizeof(args));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    Call(ctx, "ApplyAdam", Args);
 
     MaybeForwardRefInputToRefOutput(ctx, 0, 0);
   }
