@@ -764,8 +764,14 @@ class VEApplyGradientDescentOp : public VEOpKernel {
                               .HostMemory("var")                             \
                               .TypeConstraint<T>("T"),                       \
                           VEApplyGradientDescentOp<T>);
-REGISTER_VE_KERNELS(float);
-REGISTER_VE_KERNELS(double);
+
+//TF_CALL_half(REGISTER_VE_KERNELS);
+TF_CALL_float(REGISTER_VE_KERNELS);
+//TF_CALL_double(REGISTER_VE_KERNELS);
+//#ifndef PLATFORM_WINDOWS
+//TF_CALL_complex64(REGISTER_VE_KERNELS);
+//TF_CALL_complex128(REGISTER_VE_KERNELS);
+//#endif
 #undef REGISTER_VE_KERNELS
 
 #endif // TENSORFLOW_USE_VE
@@ -1077,7 +1083,6 @@ class VEApplyAdadeltaOp : public VEOpKernel {
                           VEApplyAdadeltaOp<T>);
 
 //TF_CALL_half(REGISTER_VE_KERNELS);
-//TF_CALL_bfloat16(REGISTER_VE_KERNELS);
 TF_CALL_float(REGISTER_VE_KERNELS);
 //TF_CALL_double(REGISTER_VE_KERNELS);
 //#ifndef PLATFORM_WINDOWS
@@ -3275,8 +3280,13 @@ class VEApplyMomentumOp : public VEOpKernel {
                               .TypeConstraint<T>("T"),                 \
                           VEApplyMomentumOp<T>);
 
+//TF_CALL_half(REGISTER_VE_KERNELS);
 TF_CALL_float(REGISTER_VE_KERNELS);
-TF_CALL_double(REGISTER_VE_KERNELS);
+//TF_CALL_double(REGISTER_VE_KERNELS);
+//#ifndef PLATFORM_WINDOWS
+//TF_CALL_complex64(REGISTER_VE_KERNELS);
+//TF_CALL_complex128(REGISTER_VE_KERNELS);
+//#endif
 #undef REGISTER_VE_KERNELS
 #endif
 
@@ -4058,8 +4068,13 @@ class VEApplyAdamOp : public VEOpKernel {
                               .TypeConstraint<T>("T"),             \
                           VEApplyAdamOp<T>);
 
-REGISTER_VE_KERNELS(float);
-REGISTER_VE_KERNELS(double);
+//TF_CALL_half(REGISTER_VE_KERNELS);
+TF_CALL_float(REGISTER_VE_KERNELS);
+//TF_CALL_double(REGISTER_VE_KERNELS);
+//#ifndef PLATFORM_WINDOWS
+//TF_CALL_complex64(REGISTER_VE_KERNELS);
+//TF_CALL_complex128(REGISTER_VE_KERNELS);
+//#endif
 #undef REGISTER_VE_KERNELS
 
 #endif // TENSORFLOW_USE_VE
