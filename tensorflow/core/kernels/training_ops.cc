@@ -3199,9 +3199,9 @@ REGISTER_KERNELS(GPU, complex128);
 
 #ifdef TENSORFLOW_USE_VE
 template <typename T>
-class VEApplyMomentumOp : public OpKernel {
+class VEApplyMomentumOp : public VEOpKernel {
  public:
-  explicit VEApplyMomentumOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+  explicit VEApplyMomentumOp(OpKernelConstruction* ctx) : VEOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_locking", &use_exclusive_lock_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_nesterov", &use_nesterov_));
   }
@@ -3246,28 +3246,15 @@ class VEApplyMomentumOp : public OpKernel {
                 errors::InvalidArgument("momentum is not a scalar: ",
                                         momentum.shape().DebugString()));
 
-    struct {
-      int dtype;
-      bool use_nesterov_ ;
-      int64_t num_elements ;
-      uint64_t var_ptr, accum_ptr ;
-      uint64_t lr_ptr, momentum_ptr ;
-      uint64_t grad_ptr;
-    } args;
+    ArgsImpl<> Args = ArgsImpl<>() ;
+    Args.addArg<Tensor>(var) ;
+    Args.addArg<Tensor>(accum) ;
+    Args.addArg<Tensor>(lr) ;
+    Args.addArg<Tensor>(grad) ;
+    Args.addArg<Tensor>(momentum) ;
+    Args.addArg<int64_t>(use_nesterov_ ? 1 : 0) ;
 
-    args.dtype = var.dtype() ;
-    args.use_nesterov_ = use_nesterov_ ;
-    args.num_elements = var.NumElements() ;
-    args.var_ptr = (uint64_t) DMAHelper::base(&var) ;
-    args.accum_ptr = (uint64_t) DMAHelper::base(&accum) ;
-    args.lr_ptr = (uint64_t) DMAHelper::base(&lr) ;
-    args.momentum_ptr = (uint64_t) DMAHelper::base(&momentum) ;
-    args.grad_ptr = (uint64_t) DMAHelper::base(&grad) ;
-
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("ApplyMomentum", (void*)&args, sizeof(args));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    Call(ctx, "ApplyMomentum", Args);
 
     MaybeForwardRefInputToRefOutput(ctx, 0, 0);
   }
