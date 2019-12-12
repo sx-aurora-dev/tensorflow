@@ -728,6 +728,7 @@ TF_CALL_double(REGISTER_SYCL);
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
+// Register Tile on VE
 template<>
 template<>
 void TileOp<VEDevice, int32>::HandleCase<DataTypeToEnum<float>::value>(
@@ -748,6 +749,19 @@ REGISTER_KERNEL_BUILDER(Name("Tile")
                         .TypeConstraint<int32>("Tmultiples")
                         .HostMemory("multiples"),
                         TileOp<VEDevice, int32>);
+// Register Tile for int32 using CPU
+REGISTER_KERNEL_BUILDER(Name("Tile")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("multiples")
+                            .TypeConstraint<int32>("Tmultiples"),
+                        TileOp<CPUDevice, int32>);
+REGISTER_KERNEL_BUILDER(Name("TileGrad")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("multiples")
+                            .TypeConstraint<int32>("Tmultiples"),
+                        TileGradientOp<CPUDevice, int32>);
 #endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
