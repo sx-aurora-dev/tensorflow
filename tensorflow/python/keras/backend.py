@@ -631,7 +631,11 @@ def _get_available_devices(device_type):
     # Returns
         A list of available devices of device_type.
     """
+    if ops.executing_eagerly_outside_functions():
+            # Returns names of devices directly.
+                return [d.name for d in config.list_logical_devices(device_type)]
     global _LOCAL_DEVICES
+
     if _LOCAL_DEVICES is None:
         _LOCAL_DEVICES = get_session().list_devices()
     return [x.name for x in _LOCAL_DEVICES if x.device_type == device_type]
