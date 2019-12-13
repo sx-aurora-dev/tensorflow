@@ -4,7 +4,7 @@ You can use prebuilt packages if you do not need to modify tensorflow.
 
 ## Using prebuilt packages
 
-We are providing a whl package on github. See "releases" page.
+We are providing a whl package on github. See [releases](https://github.com/sx-aurora-dev/llvm-project/releases) page.
 
 - tensorflow_ve-2.0.0-cp36-cp36m-linux_x86_64.whl
 
