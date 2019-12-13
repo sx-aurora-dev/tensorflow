@@ -1,11 +1,10 @@
 # TensroFlow with VE support
 
-You can use prebuilt packages if you are interested in using TF on SX-Aurora.
-You can also modifiy the source code and build it.
+You can use prebuilt packages if you do not need to modify tensorflow.
 
 ## Using prebuilt packages
 
-We are providing two whl files on github. See "releases" page.
+We are providing a whl package on github. See "releases" page.
 
 - tensorflow_ve-2.0.0-cp36-cp36m-linux_x86_64.whl
 
@@ -47,11 +46,13 @@ $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
 (tmp)$ pip install -U six numpy wheel Keras-Preprocessing setuptools
-(tmp)% pip install -U tensorflow_ve-1.14.0-cp36-cp36m-linux_x86_64.whl
-(tmp)% pip install -U Keras-2.2.4-py3-none-any.whl
+(tmp)% pip install -U tensorflow_ve-2.0.0-cp36-cp36m-linux_x86_64.whl
 ```
 
 Now you can run your scripts.
+
+Important note: Some kernels for VE such as conv2d support only NCHW format.
+You may need to rewrite your TF program to support NCHW format.
 
 
 ## Building TensorFlow
@@ -86,7 +87,7 @@ Install bazel.
 % yum install bazel
 ```
 
-If you can not find the specific version of bazel you want, see https://github.com/vbatts/copr-build-bazel.
+If you can not find the specific version of bazel, see https://github.com/vbatts/copr-build-bazel.
 
 ### Build tensorflow
 
@@ -128,7 +129,7 @@ veorun_tf by yourself.
 llvm-ve is required to build veorun_tf because intrinsic functions provided by
 llvm-ve are used to write efficient kernels.
 
-You can install the rpm package for llvm-ve. See [our
+You can install the llvm-ve rpm package. See [our
 post](https://sx-aurora-dev.github.io/blog/post/2019-05-22-llvm-rpm/).
 
 ```
@@ -136,7 +137,7 @@ post](https://sx-aurora-dev.github.io/blog/post/2019-05-22-llvm-rpm/).
 (tmp)% git clone https://github.com/sx-aurora-dev/vetfkernel vetfkernel
 (tmp)% git clone https://github.com/sx-aurora-dev/vednn vetfkernel/libs/vednn
 (tmp)% cd vetfkernel
-(tmp)% (mkdir build && cd build && cmake3 -DLLVM_DIR=/opt/nec/nosupport/llvm-ve/lib/cmake/llvm .. && make)
+(tmp)% (mkdir build && cd build && cmake3 .. && make)
 ```
 
 You can specify version of ncc/nc++.
@@ -155,6 +156,6 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 
 We have tested on above envirionment with:
 
-- llvm-ve 1.8.1
+- llvm-ve 1.9.0
 - ncc/nc++ 2.4.1
 
