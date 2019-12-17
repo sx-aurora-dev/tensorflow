@@ -12,8 +12,8 @@ Note that we do not release Keras. Please use tf.keras
 
 We have tested on CentOS 7.5 and:
 
-- veos: 2.1.3
-- veoffload: 2.1.1
+- veos: 2.2.2
+- veoffload: 2.2.2
 - python: 3.6
 
 We have installed VEOS and veoffload using [VEOS yum Repository on the
