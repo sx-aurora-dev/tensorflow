@@ -4,7 +4,7 @@ You can use prebuilt packages if you do not need to modify tensorflow.
 
 ## Using prebuilt packages
 
-We are providing a whl package on github. See [releases](https://github.com/sx-aurora-dev/llvm-project/releases) page.
+We are providing a whl package on github. See [releases](https://github.com/sx-aurora-dev/tensorflow/releases) page.
 
 - tensorflow_ve-2.0.0-cp36-cp36m-linux_x86_64.whl
 
@@ -103,11 +103,11 @@ $ source ~/.virtualenvs/tmp/bin/activate
 
 You can see a tensorflow package in current direcotry.
 
-We need BAZEL_LINKLIBS and BAZEL_LINKOPTS. see https://github.com/bazelbuild/bazel/issues/10327.
+We need BAZEL_LINKLIBS and BAZEL_LINKOPTS. See https://github.com/bazelbuild/bazel/issues/10327.
 
 ## (option) Build keras
 
-Note that this is obsolete because current Keras dose not work with TF in master branch as far as we know. Use tf.keras instead.
+**Note that this is obsolete because current Keras dose not work with TF in master branch as far as we know. Use tf.keras instead.**
 
 Clone https://github.com/sx-aurora-dev/keras.
 
