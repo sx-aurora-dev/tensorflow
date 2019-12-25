@@ -46,6 +46,10 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -53,6 +57,10 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
+
 
 namespace {
 
@@ -659,6 +667,104 @@ class BaseBatchMatMulOp : public OpKernel {
   bool adj_y_;
 };
 
+
+template <typename Scalar>
+class BaseBatchMatMulOp<VEDevice, Scalar> : public VEOpKernel {
+ public:
+  explicit BaseBatchMatMulOp(OpKernelConstruction* context)
+      : VEOpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("adj_x", &adj_x_));
+    OP_REQUIRES_OK(context, context->GetAttr("adj_y", &adj_y_));
+  }
+
+  ~BaseBatchMatMulOp() override {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& in0 = ctx->input(0);
+    const Tensor& in1 = ctx->input(1);
+
+    ValidateInputTensors(ctx, in0, in1);
+
+    MatMulBCast bcast(in0.shape().dim_sizes(), in1.shape().dim_sizes());
+    OP_REQUIRES(
+        ctx, bcast.IsValid(),
+        errors::InvalidArgument(
+            "In[0] and In[1] must have compatible batch dimensions: ",
+            in0.shape().DebugString(), " vs. ", in1.shape().DebugString()));
+
+    TensorShape out_shape = bcast.output_batch_shape();
+    auto batch_size = bcast.output_batch_size();
+    auto d0 = in0.dim_size(in0.dims() - 2);
+    auto d1 = in0.dim_size(in0.dims() - 1);
+#if 0
+    Tensor in0_reshaped;
+    OP_REQUIRES(
+        ctx,
+        in0_reshaped.CopyFrom(in0, TensorShape({bcast.x_batch_size(), d0, d1})),
+        errors::Internal("Failed to reshape In[0] from ",
+                         in0.shape().DebugString()));
+#endif
+    auto d2 = in1.dim_size(in1.dims() - 2);
+    auto d3 = in1.dim_size(in1.dims() - 1);
+#if 0
+    Tensor in1_reshaped;
+    OP_REQUIRES(
+        ctx,
+        in1_reshaped.CopyFrom(in1, TensorShape({bcast.y_batch_size(), d2, d3})),
+        errors::Internal("Failed to reshape In[1] from ",
+                         in1.shape().DebugString()));
+#endif
+    if (adj_x_) std::swap(d0, d1);
+    if (adj_y_) std::swap(d2, d3);
+    OP_REQUIRES(ctx, d1 == d2,
+                errors::InvalidArgument(
+                    "In[0] mismatch In[1] shape: ", d1, " vs. ", d2, ": ",
+                    in0.shape().DebugString(), " ", in1.shape().DebugString(),
+                    " ", adj_x_, " ", adj_y_));
+    out_shape.AddDim(d0);
+    out_shape.AddDim(d3);
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, out_shape, &out));
+    if (out->NumElements() == 0) {
+      return;
+    }
+
+#if 0
+    if (in0.NumElements() == 0 || in1.NumElements() == 0) {
+      functor::SetZeroFunctor<Device, Scalar> f;
+      f(ctx->eigen_device<Device>(), out->flat<Scalar>());
+      return;
+    }
+    Tensor out_reshaped;
+    OP_REQUIRES(ctx,
+                out_reshaped.CopyFrom(*out, TensorShape({batch_size, d0, d3})),
+                errors::Internal("Failed to reshape output from ",
+                                 out->shape().DebugString()));
+    LaunchBatchMatMul<Device, Scalar>::Launch(
+        ctx, in0_reshaped, in1_reshaped, adj_x_, adj_y_, bcast, &out_reshaped);
+#else
+
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(in0);
+    args.addArg<Tensor>(in1);
+    args.addArg<Tensor>(*out);
+    args.addArg<int32>(adj_x_ ? 1 : 0) ;
+    args.addArg<int32>(adj_y_ ? 1 : 0) ;
+
+    VEOpKernelHelper::Call(ctx, "BatchMatMul", args);
+#endif
+  }
+
+ protected:
+  virtual void ValidateInputTensors(OpKernelContext* ctx, const Tensor& in0,
+                                    const Tensor& in1) = 0;
+
+ private:
+  bool adj_x_;
+  bool adj_y_;
+};
+
+
 // BatchMatMul Op implementation which disallows broadcasting.
 template <typename Device, typename Scalar>
 class BatchMatMulOp : public BaseBatchMatMulOp<Device, Scalar> {
@@ -739,6 +845,16 @@ class BatchMatMulV2Op : public BaseBatchMatMulOp<Device, Scalar> {
       Name("BatchMatMulV2").Device(DEVICE_SYCL).TypeConstraint<TYPE>("T"), \
       BatchMatMulV2Op<SYCLDevice, TYPE>)
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_BATCH_MATMUL_VE(TYPE)                                   \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("BatchMatMul").Device(DEVICE_VE).TypeConstraint<TYPE>("T"),   \
+      BatchMatMulOp<VEDevice, TYPE>);                                    \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("BatchMatMulV2").Device(DEVICE_VE).TypeConstraint<TYPE>("T"), \
+      BatchMatMulV2Op<VEDevice, TYPE>)
+#endif //  TENSORFLOW_USE_VE
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_KERNELS_BATCH_MATMUL_OP_IMPL_H_
