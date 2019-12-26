@@ -1108,6 +1108,14 @@ class VEDeviceFactory : public DeviceFactory {
     if (!s.ok())
       return s;
 
+
+    size_t n = 1;
+    auto iter = options.config.device_count().find("VE");
+    if (iter != options.config.device_count().end()) {
+      n = iter->second;
+    }
+    if( n <= 0 ) return Status::OK();
+
     size_t total_memory = 20UL*1024*1024*1024;
     Allocator* ve_allocator = new VEBFCAllocator(total_memory, true, "VE_0_bfc", veo);
 
