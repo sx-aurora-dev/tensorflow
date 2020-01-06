@@ -667,7 +667,7 @@ class BaseBatchMatMulOp : public OpKernel {
   bool adj_y_;
 };
 
-
+#ifdef TENSORFLOW_USE_VE
 template <typename Scalar>
 class BaseBatchMatMulOp<VEDevice, Scalar> : public VEOpKernel {
  public:
@@ -763,7 +763,7 @@ class BaseBatchMatMulOp<VEDevice, Scalar> : public VEOpKernel {
   bool adj_x_;
   bool adj_y_;
 };
-
+#endif  // TENSORFLOW_USE_VE
 
 // BatchMatMul Op implementation which disallows broadcasting.
 template <typename Device, typename Scalar>
