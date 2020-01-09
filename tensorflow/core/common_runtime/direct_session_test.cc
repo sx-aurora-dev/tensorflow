@@ -1175,6 +1175,8 @@ REGISTER_KERNEL_BUILDER(Name("SessionMetadataReader").Device(DEVICE_CPU),
                         SessionMetadataReaderOp);
 REGISTER_KERNEL_BUILDER(Name("SessionMetadataReader").Device(DEVICE_GPU),
                         SessionMetadataReaderOp);
+REGISTER_KERNEL_BUILDER(Name("SessionMetadataReader").Device(DEVICE_VE),
+                        SessionMetadataReaderOp);
 
 FunctionDef SessionMetadataReaderOpFn() {
   return FunctionDefHelper::Define(
@@ -1904,6 +1906,7 @@ static void TestSessionInterOpThreadsImpl(bool use_function_lib,
   (*options.config.mutable_device_count())["CPU"] = 2;
   (*options.config.mutable_device_count())["GPU"] = 0;
   (*options.config.mutable_device_count())["SYCL"] = 0;
+  (*options.config.mutable_device_count())["VE"] = 0;
 
   auto* p = options.config.add_session_inter_op_thread_pool();
   if (use_global_pools) p->set_global_name("large pool");
