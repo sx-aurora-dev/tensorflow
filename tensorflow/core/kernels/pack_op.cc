@@ -279,10 +279,20 @@ class PackOp<VEDevice, T> : public VEOpKernel {
   int axis_;
 };
 
-REGISTER_KERNEL_BUILDER(
-    Name("Pack").Device(DEVICE_VE).TypeConstraint<float>("T"),
-    PackOp<VEDevice, float>) ;
+#define REGISTER_VE(type)                                       \
+  REGISTER_KERNEL_BUILDER(                                      \
+      Name("Pack").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PackOp<VEDevice, type>)
 
+//TF_CALL_half(REGISTER_VE);
+TF_CALL_float(REGISTER_VE);
+TF_CALL_double(REGISTER_VE);
+//TF_CALL_bfloat16(REGISTER_VE);
+//TF_CALL_int64(REGISTER_VE);
+//TF_CALL_int16(REGISTER_VE);
+//TF_CALL_bool(REGISTER_VE);
+
+#undef REGISTER_VE
 
 REGISTER_KERNEL_BUILDER(Name("Pack")
                             .Device(DEVICE_VE)
