@@ -29,7 +29,7 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
 #endif
 
@@ -200,16 +200,13 @@ REGISTER_KERNEL_BUILDER(Name("Pack")
 
 #ifdef TENSORFLOW_USE_VE
 template <typename T>
-class PackOp<VEDevice, T> : public OpKernel {
+class PackOp<VEDevice, T> : public VEOpKernel {
  public:
   typedef std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>
       ConstMatrixVector;
 
-  explicit PackOp(OpKernelConstruction* context) : OpKernel(context) {
+  explicit PackOp(OpKernelConstruction* context) : VEOpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("axis", &axis_));
-    OP_REQUIRES(context, axis_ == 0,
-	errors::InvalidArgument("PackOp<VEDevice> only support axis==0")
-    ); // [todo] support axis != 0
   }
 
   void Compute(OpKernelContext* c) override {
@@ -260,48 +257,42 @@ class PackOp<VEDevice, T> : public OpKernel {
       after_dim *= output_shape.dim_size(i);
     }
 
-    const int64 axis_dim = output_shape.dim_size(axis);
+    ArgsImpl<> Args = ArgsImpl<>() ;
 
-    const int64 output_size = output->NumElements();
-    if (output_size > 0) {
-      struct Args {
-	int dtype;
-	uint64_t n ;
-	uint64_t l ;
-	uint64_t out;
-	uint64_t in[1];
-      } ;
+    Args.addArg<int64>((int64)(values[0].dtype())) ;
+    Args.addArg<uint64>(num) ;
+    Args.addArg<uint64>(before_dim) ;
+    Args.addArg<uint64>((uint64)(DMAHelper::base(output))) ;
 
-      size_t len = sizeof(struct Args) + sizeof(uint64_t) * (num-1) ;
-      char *args_buf = new char[len] ;
-
-      struct Args *args = reinterpret_cast<struct Args*>(args_buf) ;
-
-      args->dtype = DataTypeToEnum<T>::v();
-      args->n     = num ;
-      args->l     = after_dim ;
-      args->out = (uint64_t)DMAHelper::base(output);
-      for (int i = 0; i < num; ++i) {
-	args->in[i] = (uint64_t)DMAHelper::base(&values[i]) ;
-      }
-
-      VEDeviceContext* vectx = c->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute("Pack", (void*)args, len);
-      if (!s.ok())
-	c->SetStatus(s);
-
-      delete[] args_buf ;
+    uint64_t offset = 0 ;
+    Args.addArg<uint64>(offset) ;
+    for (int i = 0; i < num; ++i) {
+      Args.addArg<uint64>((uint64)(DMAHelper::base(&values[i]))) ;
+      offset += after_dim;
+      Args.addArg<uint64>(offset) ;
     }
+
+    Call(c, "Concat", Args);
   }
 
  private:
   int axis_;
 };
 
-REGISTER_KERNEL_BUILDER(
-    Name("Pack").Device(DEVICE_VE).TypeConstraint<float>("T"),
-    PackOp<VEDevice, float>) ;
+#define REGISTER_VE(type)                                       \
+  REGISTER_KERNEL_BUILDER(                                      \
+      Name("Pack").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PackOp<VEDevice, type>)
 
+//TF_CALL_half(REGISTER_VE);
+TF_CALL_float(REGISTER_VE);
+TF_CALL_double(REGISTER_VE);
+//TF_CALL_bfloat16(REGISTER_VE);
+//TF_CALL_int64(REGISTER_VE);
+//TF_CALL_int16(REGISTER_VE);
+//TF_CALL_bool(REGISTER_VE);
+
+#undef REGISTER_VE
 
 REGISTER_KERNEL_BUILDER(Name("Pack")
                             .Device(DEVICE_VE)
