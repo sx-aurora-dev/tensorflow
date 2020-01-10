@@ -763,7 +763,7 @@ class VESplitVOp : public VEOpKernel {
     }
 
     if (input.NumElements() > 0) {
-      Call(context, "SplitV", Args);
+      Call(context, "Split", Args);
     }
 #endif
   }

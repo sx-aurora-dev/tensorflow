@@ -599,7 +599,8 @@ class VESplitOp : public VEOpKernel {
     TensorShape output_shape(input_shape);
     output_shape.set_dim(split_dim, split_dim_output_size);
 
-    ArgsImpl<> Args = ArgsImpl<>() ;
+    // FIXME : check num_split
+    ArgsImpl<4096> Args = ArgsImpl<4096>() ;
     Args.addArg<int64>(num_split) ;
     Args.addArg<int64>(prefix_dim_size) ;
     Args.addArg<int64>(split_dim_size) ;
@@ -613,6 +614,7 @@ class VESplitOp : public VEOpKernel {
                      context->allocate_output(i, output_shape, &result));
 
       Args.addArg<Tensor>(*result) ;
+      Args.addArg<int64>(split_dim_size / num_split) ;
     }
 
     Call(context, "Split", Args);
