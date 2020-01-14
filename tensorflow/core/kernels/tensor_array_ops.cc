@@ -160,6 +160,7 @@ struct SplitToVector<VEDevice, T> {
                                                    &persistent_tensor, 
                                                    &tensor_value_i));
       OP_REQUIRES_OK(ctx, args.addArg<Tensor>(*tensor_value_i));
+      OP_REQUIRES_OK(ctx, args.addArg<int64>(1));
       write_values.push_back(persistent_tensor);
     }
 
