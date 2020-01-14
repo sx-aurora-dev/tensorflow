@@ -257,7 +257,7 @@ class PackOp<VEDevice, T> : public VEOpKernel {
       after_dim *= output_shape.dim_size(i);
     }
 
-    ArgsImpl<> Args = ArgsImpl<>() ;
+    ArgsImpl<102400> Args ;
 
     Args.addArg<int64>((int64)(values[0].dtype())) ;
     Args.addArg<uint64>(num) ;

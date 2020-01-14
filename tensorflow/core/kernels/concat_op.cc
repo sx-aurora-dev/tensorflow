@@ -495,7 +495,7 @@ class VEConcatBaseOp : public VEOpKernel {
 
       uint64_t n_input = inputs_flat.size() ;
 
-      ArgsImpl<> Args = ArgsImpl<>() ;
+      ArgsImpl<102400> Args ;
 
       Args.addArg<int64>((int64)(values[0].dtype())) ;
       Args.addArg<uint64>(n_input) ;

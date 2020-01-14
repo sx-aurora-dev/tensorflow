@@ -268,7 +268,7 @@ class UnpackOp<VEDevice, T> : public VEOpKernel {
         input.shaped<T, 2>({before_dim, axis_dim * after_dim});
 
     // FIXME : check num
-    ArgsImpl<4096> Args = ArgsImpl<4096>() ;
+    ArgsImpl<102400> Args ;
 
     Args.addArg<int64>(num) ;
     Args.addArg<int64>(before_dim) ;
