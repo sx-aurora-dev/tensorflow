@@ -44,7 +44,6 @@ limitations under the License.
 
 #ifdef TENSORFLOW_USE_VE
 #include "tensorflow/core/framework/ve_ops_common.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
 #endif // TENSORFLOW_USE_VE
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -61,38 +60,6 @@ namespace tensorflow {
 
 #if 1
 namespace {
-#ifdef TENSORFLOW_USE_VE
-template <typename T>
-void ConcatVE(OpKernelContext* ctx,
-              std::vector<PersistentTensor>& values,
-              Tensor& output)
-{
-  // values.size() > 0
-  // Tensors in values have same shape
-
-  VEOpKernelHelper::ArgsImpl<102400> args;
-
-  const Tensor* value_0_t = values[0].AccessTensor(ctx);
-
-  OP_REQUIRES_OK(ctx, args.addArg<int64>(value_0_t->dtype()));
-  OP_REQUIRES_OK(ctx, args.addArg<uint64>(values.size()));
-  OP_REQUIRES_OK(ctx, args.addArg<uint64>(1)); // output_flat_dim0
-
-  OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)DMAHelper::base(&output)));
-
-  uint64_t offset = 0 ;
-  OP_REQUIRES_OK(ctx, args.addArg<uint64>(offset));
-  for (int i = 0; i < values.size(); ++i) {
-    const Tensor* value_t = values[i].AccessTensor(ctx);
-    OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)DMAHelper::base(value_t)));
-    offset += value_t->NumElements() ;
-    OP_REQUIRES_OK(ctx, args.addArg<uint64>(offset));
-  }
-
-  VEOpKernelHelper::Call(ctx, "Concat", args);
-}
-#endif // TENSORFLOW_USE_VE
-
 template <typename Device, typename T>
 struct SplitToVector {
   void operator()(OpKernelContext* ctx,
@@ -160,6 +127,7 @@ struct SplitToVector<VEDevice, T> {
                                                    &persistent_tensor, 
                                                    &tensor_value_i));
       OP_REQUIRES_OK(ctx, args.addArg<Tensor>(*tensor_value_i));
+      OP_REQUIRES_OK(ctx, args.addArg<int64>(1));
       write_values.push_back(persistent_tensor);
     }
 
@@ -949,7 +917,7 @@ class TensorArrayPackOrGatherOp : public OpKernel {
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #ifdef TENSORFLOW_USE_VE
     if (std::is_same<Device, VEDevice>::value) {
-      ConcatVE<T>(ctx, values, *output_tensor);
+      ConcatVE<T>(ctx, input_tensors_flat, &output_flat);
       return;
     }
 #endif // TENSORFLOW_USE_VE

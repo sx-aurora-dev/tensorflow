@@ -742,7 +742,7 @@ class VESplitVOp : public VEOpKernel {
     }
 #else
     // FIXME : check num_split
-    ArgsImpl<4096> Args = ArgsImpl<4096>() ;
+    ArgsImpl<102400> Args ;
 
     Args.addArg<int64>(num_split) ;
     Args.addArg<int64>(prefix_dim_size) ;

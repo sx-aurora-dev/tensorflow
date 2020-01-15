@@ -600,7 +600,7 @@ class VESplitOp : public VEOpKernel {
     output_shape.set_dim(split_dim, split_dim_output_size);
 
     // FIXME : check num_split
-    ArgsImpl<4096> Args = ArgsImpl<4096>() ;
+    ArgsImpl<102400> Args ;
     Args.addArg<int64>(num_split) ;
     Args.addArg<int64>(prefix_dim_size) ;
     Args.addArg<int64>(split_dim_size) ;
