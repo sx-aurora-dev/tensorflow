@@ -22,6 +22,10 @@ limitations under the License.
 #include "tensorflow/core/framework/device_base.h"
 #include "tensorflow/core/framework/register_types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif // TENSORFLOW_USE_VE
+
 namespace tensorflow {
 
 // Functors to concatenate tensors. These always take a rank-2 tensor (i.e a
@@ -84,6 +88,15 @@ void ConcatSYCL(
         inputs,
     typename TTypes<T, 2>::Matrix* output);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+void ConcatVE(
+    OpKernelContext* ctx,
+    const std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>&
+        inputs_flat,
+    typename TTypes<T, 2>::Tensor* output_flat) ;
+#endif
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_KERNELS_CONCAT_LIB_H_
