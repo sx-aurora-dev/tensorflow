@@ -54,8 +54,8 @@ limitations under the License.
 #include "third_party/lapack/blas.h"
 #endif
 
-#ifdef GEMMLOWP_PROFILING
-#include "profiling/profiler.h"
+#ifdef RUY_PROFILER
+#include "tensorflow/lite/experimental/ruy/profiler/profiler.h"
 #endif
 
 namespace ruy {
@@ -80,8 +80,10 @@ inline const char* PathName(Path path) {
     RUY_PATHNAME_CASE(kNeon)
     RUY_PATHNAME_CASE(kNeonDotprod)
 #elif RUY_PLATFORM(X86)
+    RUY_PATHNAME_CASE(kSse42)
     RUY_PATHNAME_CASE(kAvx2)
     RUY_PATHNAME_CASE(kAvx512)
+    RUY_PATHNAME_CASE(kAvxVnni)
 #endif
     default:
       RUY_CHECK(false);
@@ -1908,17 +1910,17 @@ void TestSet<LhsScalar, RhsScalar, SpecType>::Benchmark(
   if (!benchmark_min_secs) {
     benchmark_min_secs = 0.5;
   }
-#ifdef GEMMLOWP_PROFILING
-  const char* lhstype = TypeName<LhsScalar>();
-  const char* lhssymm = SymmetryName(lhs.matrix);
-  const char* rhstype = TypeName<RhsScalar>();
-  const char* rhssymm = SymmetryName(rhs.matrix);
+#ifdef RUY_PROFILER
+  {
+    const char* lhstype = TypeName<LhsScalar>();
+    const char* lhssymm = SymmetryName(lhs.matrix);
+    const char* rhstype = TypeName<RhsScalar>();
+    const char* rhssymm = SymmetryName(rhs.matrix);
 
-  printf("Profiling path=%s shape=(%dx%dx%d) lhs=(%s,%s) rhs=(%s,%s)\n",
-         PathName(*result).c_str(), rows, depth, cols, lhstype, lhssymm,
-         rhstype, rhssymm);
-  gemmlowp::RegisterCurrentThreadForProfiling();
-  gemmlowp::StartProfiling();
+    printf("Profiling path=%s shape=(%dx%dx%d) lhs=(%s,%s) rhs=(%s,%s)\n",
+           PathName(*result).c_str(), rows, depth, cols, lhstype, lhssymm,
+           rhstype, rhssymm);
+    ruy::profiler::ScopeProfile profile;
 #endif
 
   float latency = std::numeric_limits<float>::infinity();
@@ -2000,8 +2002,8 @@ void TestSet<LhsScalar, RhsScalar, SpecType>::Benchmark(
     result->backend_stall_rate = backend_stall_rate;
   }
 
-#ifdef GEMMLOWP_PROFILING
-  gemmlowp::FinishProfiling();
+#ifdef RUY_PROFILER
+  }
   fflush(stdout);
 #endif
 

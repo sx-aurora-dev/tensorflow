@@ -18,9 +18,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_XLA_HLO_UTILS_H_
 #define TENSORFLOW_COMPILER_MLIR_XLA_HLO_UTILS_H_
 
-#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
-#include "mlir/IR/Builders.h"  // TF:local_config_mlir
-#include "mlir/IR/StandardTypes.h"  // TF:local_config_mlir
+#include "mlir/IR/Attributes.h"  // TF:llvm-project
+#include "mlir/IR/Builders.h"  // TF:llvm-project
+#include "mlir/IR/StandardTypes.h"  // TF:llvm-project
 #include "tensorflow/compiler/mlir/xla/convert_op_folder.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 
@@ -65,7 +65,6 @@ template <typename TypeT>
 static StatusOr<mlir::Type> ConvertShapeToType(const Shape& shape,
                                                mlir::Builder builder) {
   if (shape.IsTuple()) {
-    mlir::Type mlir_type;
     llvm::SmallVector<mlir::Type, 4> contents;
     contents.reserve(shape.tuple_shapes_size());
     for (const auto& subtype : shape.tuple_shapes()) {

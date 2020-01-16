@@ -89,6 +89,7 @@ except ImportError:
 # Enable TF2 behaviors
 from tensorflow.python.compat import v2_compat as _compat  # pylint: disable=g-import-not-at-top
 _compat.enable_v2_behavior()
+_major_api_version = 2
 
 
 # Load all plugin libraries from site-packages/tensorflow-plugins if we are
@@ -119,11 +120,17 @@ def _running_from_pip_package():
       _current_file_location.startswith(dir_) for dir_ in _site_packages_dirs)
 
 if _running_from_pip_package():
-  for s in _site_packages_dirs:
-    # TODO(gunan): Add sanity checks to loaded modules here.
-    plugin_dir = _os.path.join(s, 'tensorflow-plugins')
-    if _fi.file_exists(plugin_dir):
-      _ll.load_library(plugin_dir)
+  # TODO(gunan): Add sanity checks to loaded modules here.
+  for _s in _site_packages_dirs:
+    # Load first party dynamic kernels.
+    _main_dir = _os.path.join(_s, 'tensorflow_core/core/kernels')
+    if _fi.file_exists(_main_dir):
+      _ll.load_library(_main_dir)
+
+    # Load third party dynamic kernels.
+    _plugin_dir = _os.path.join(_s, 'tensorflow-plugins')
+    if _fi.file_exists(_plugin_dir):
+      _ll.load_library(_plugin_dir)
 
 # Add module aliases
 if hasattr(_current_module, 'keras'):
@@ -140,3 +147,5 @@ if hasattr(_current_module, 'keras'):
 if 'VEORUN_BIN' not in _os.environ:
     veorun = _os.path.dirname(_current_file_location) + "/aux-bin/veorun_tf"
     _os.environ['VEORUN_BIN'] = veorun
+
+# __all__ PLACEHOLDER
