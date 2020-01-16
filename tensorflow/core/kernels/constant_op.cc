@@ -306,7 +306,6 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
     explicit FillOp(OpKernelConstruction* context) : OpKernel(context) {}
 
     void Compute(OpKernelContext* context) override {
-      VLOG(2) << __PRETTY_FUNCTION__;
       const Tensor& Tdims = context->input(0);
       OP_REQUIRES(context, IsLegacyVector(Tdims.shape()),
                   errors::InvalidArgument("dims must be a vector, got shape ",
@@ -318,31 +317,12 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
       auto dims = Tdims.flat<Index>();
       TensorShape shape;
       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
-              reinterpret_cast<const Index*>(dims.data()),
-              dims.size(), &shape));
+                                  reinterpret_cast<const Index*>(dims.data()),
+                                  dims.size(), &shape));
       Tensor* out = nullptr;
       OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
 
-      struct {
-        int32 data_type;
-        uint64_t in;
-        uint64_t out;
-        size_t num_elems;
-      } args;
-
-      args.data_type = out->dtype();
-      args.in = (uint64_t)DMAHelper::base(&Tvalue);
-      args.out = (uint64_t)DMAHelper::base(out);
-      args.num_elems = out->NumElements();
-
-      VLOG(2) << "FillOp: num_elems=" << out->NumElements();
-
-      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute("Fill", (void*)&args, sizeof(args));
-      if (!s.ok())
-        context->SetStatus(s);
-
-      VLOG(2) << __PRETTY_FUNCTION__ << " done";
+      functor::VEFillFunctor<T>(context, out, &Tvalue) ;
     }
 };
 
@@ -456,25 +436,7 @@ class ZerosLikeOp<VEDevice, T> : public OpKernel {
       Tensor* out = nullptr;
       OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
                               {0}, 0, input.shape(), &out));
-
-      struct {
-        int32 data_type;
-        uint64_t out_ptr;
-        size_t num_elems;
-      } args;
-
-      args.data_type = out->dtype();
-      args.out_ptr = (uint64_t)DMAHelper::base(out);
-      args.num_elems = out->NumElements();
-
-      VLOG(2) << "FillOp: num_elems=" << out->NumElements();
-
-      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute("ZerosLike", (void*)&args, sizeof(args));
-      if (!s.ok())
-        ctx->SetStatus(s);
-
-      VLOG(2) << __PRETTY_FUNCTION__ << " done";
+      functor::VESetZeroFunctor<T>(ctx, out) ;
     }
   }
 };
@@ -541,6 +503,38 @@ REGISTER_KERNEL_BUILDER(Name("OnesLike")
                             .HostMemory("y"),
                         OnesLikeOp<CPUDevice, int32>);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class OnesLikeOp<VEDevice, T> : public OpKernel {
+ public:
+  explicit OnesLikeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+                            {0}, 0, input.shape(), &out));
+    functor::VESetOneFunctor<T>(ctx, out);
+  }
+};
+
+//REGISTER_KERNEL(bool, VE);
+//REGISTER_KERNEL(Eigen::half, VE);
+//REGISTER_KERNEL(bfloat16, VE);
+REGISTER_KERNEL(float, VE);
+REGISTER_KERNEL(double, VE);
+//REGISTER_KERNEL(complex64, VE);
+//REGISTER_KERNEL(complex128, VE);
+//REGISTER_KERNEL(int64, VE);
+REGISTER_KERNEL_BUILDER(Name("OnesLike")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("y"),
+                        OnesLikeOp<CPUDevice, int32>);
+#endif	// TENSORFLOW_USE_VE
 
 #undef REGISTER_KERNEL
 
