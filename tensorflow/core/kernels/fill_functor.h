@@ -68,6 +68,11 @@ struct SetZeroFunctor<Eigen::ThreadPoolDevice, tstring> {
                   typename TTypes<tstring>::Flat out);
 };
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+void VESetZeroFunctor(OpKernelContext* c, Tensor* out ) ;
+#endif
+
 template <typename Device, typename T>
 struct SetOneFunctor {
   // Computes on device "d": out = out.setOne(),
@@ -94,6 +99,11 @@ struct SetOneFunctor<Eigen::ThreadPoolDevice, tstring> {
   void operator()(const Eigen::ThreadPoolDevice& d,
                   typename TTypes<tstring>::Flat out);
 };
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+void VESetOneFunctor(OpKernelContext* c, Tensor* out ) ;
+#endif
 
 }  // namespace functor
 }  // namespace tensorflow
