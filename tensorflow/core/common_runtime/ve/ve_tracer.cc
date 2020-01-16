@@ -3,6 +3,7 @@
 
 //#include "tensorflow/core/platform/device_tracer.h"
 #include "tensorflow/core/profiler/internal/profiler_interface.h"
+#include "tensorflow/core/profiler/internal/profiler_factory.h"
 #include "tensorflow/core/common_runtime/step_stats_collector.h"
 #include "tensorflow/core/framework/step_stats.pb.h"
 #if 0

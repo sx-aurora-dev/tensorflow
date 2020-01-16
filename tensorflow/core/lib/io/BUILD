@@ -1,3 +1,8 @@
+load(
+    "//tensorflow/core/platform:rules_cc.bzl",
+    "cc_library",
+)
+
 package(
     default_visibility = [
         "//tensorflow/c/experimental/filesystem:__pkg__",
@@ -113,6 +118,7 @@ cc_library(
     hdrs = ["proto_encode_helper.h"],
     deps = [
         "//tensorflow/core/lib/core:coding",
+        "//tensorflow/core/platform:logging",
         "//tensorflow/core/platform:protobuf",
         "//tensorflow/core/platform:stringpiece",
     ],
