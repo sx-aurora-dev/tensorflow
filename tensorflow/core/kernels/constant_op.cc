@@ -305,7 +305,6 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
     explicit FillOp(OpKernelConstruction* context) : OpKernel(context) {}
 
     void Compute(OpKernelContext* context) override {
-      VLOG(2) << __PRETTY_FUNCTION__;
       const Tensor& Tdims = context->input(0);
       OP_REQUIRES(context, IsLegacyVector(Tdims.shape()),
                   errors::InvalidArgument("dims must be a vector, got shape ",
@@ -317,31 +316,12 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
       auto dims = Tdims.flat<Index>();
       TensorShape shape;
       OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
-              reinterpret_cast<const Index*>(dims.data()),
-              dims.size(), &shape));
+                                  reinterpret_cast<const Index*>(dims.data()),
+                                  dims.size(), &shape));
       Tensor* out = nullptr;
       OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
 
-      struct {
-        int32 data_type;
-        uint64_t in;
-        uint64_t out;
-        size_t num_elems;
-      } args;
-
-      args.data_type = out->dtype();
-      args.in = (uint64_t)DMAHelper::base(&Tvalue);
-      args.out = (uint64_t)DMAHelper::base(out);
-      args.num_elems = out->NumElements();
-
-      VLOG(2) << "FillOp: num_elems=" << out->NumElements();
-
-      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute("Fill", (void*)&args, sizeof(args));
-      if (!s.ok())
-        context->SetStatus(s);
-
-      VLOG(2) << __PRETTY_FUNCTION__ << " done";
+      functor::VEFillFunctor<T>(context, out, &Tvalue) ;
     }
 };
 

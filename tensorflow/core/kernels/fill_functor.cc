@@ -164,5 +164,29 @@ TF_CALL_INTEGRAL_TYPES(DEFINE_FILL_SYCL)
 #undef DEFINE_FILL_SYCL
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+void VEFillFunctor(OpKernelContext* c, Tensor* out, const Tensor* in )
+{
+  VEOpKernelHelper::ArgsImpl<> args;
+
+  OP_REQUIRES_OK(c, args.addArg<int64>(DataTypeToEnum<T>::v()));	// 0
+  OP_REQUIRES_OK(c, args.addArg<Tensor*>(out));			// 1
+  OP_REQUIRES_OK(c, args.addArg<Tensor*>((Tensor*)in));		// 2
+
+  VEOpKernelHelper::Call(c, "Fill", args);
+} ;
+
+#define DEFINE_FILL_VE(T)	\
+  template void VEFillFunctor<T>(OpKernelContext* c, Tensor* out, const Tensor* in ) ;
+
+TF_CALL_float(DEFINE_FILL_VE) ;
+TF_CALL_double(DEFINE_FILL_VE) ;
+TF_CALL_int64(DEFINE_FILL_VE) ;
+#undef DEFINE_FILL_VE
+
+#endif
+
 }  // namespace functor
 }  // namespace tensorflow
