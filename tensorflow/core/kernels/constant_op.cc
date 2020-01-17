@@ -322,7 +322,7 @@ class FillOp<VEDevice, T, Index> : public OpKernel {
       Tensor* out = nullptr;
       OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
 
-      functor::VEFillFunctor<T>(context, out, &Tvalue) ;
+      functor::VEFillFunctor<T>(context, out, Tvalue) ;
     }
 };
 
