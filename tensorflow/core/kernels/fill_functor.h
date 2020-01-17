@@ -38,7 +38,7 @@ struct FillFunctor {
 
 #ifdef TENSORFLOW_USE_VE
 template <typename T>
-void VEFillFunctor(OpKernelContext* c, Tensor* out, const Tensor* in ) ;
+void VEFillFunctor(OpKernelContext* c, Tensor* out, const Tensor& in ) ;
 #endif
 
 template <typename Device, typename T>
