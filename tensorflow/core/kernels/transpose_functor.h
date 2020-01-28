@@ -51,6 +51,11 @@ template <typename Device>
 Status DoConjugateTranspose(const Device& device, const Tensor& in,
                             const gtl::ArraySlice<int32> perm, Tensor* out);
 
+#ifdef TENSORFLOW_USE_VE
+Status VEDoConjugateTranspose(OpKernelContext* ctx, const Tensor& in,
+                     gtl::ArraySlice<int32> perm, Tensor* out) ;
+#endif
+
 // Convenience versions of DoTranspose that only swap the last (inner) two
 // dimensions.
 template <typename Device>
