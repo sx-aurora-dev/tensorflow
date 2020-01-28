@@ -29,11 +29,6 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/logging.h"
 
-#ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
-#endif
-
 namespace tensorflow {
 
 // inv = InvertPermutationOp(T<int32/int64> p) takes a permutation of
@@ -325,33 +320,7 @@ class TransposeVeOp : public TransposeOp {
 
 Status TransposeVeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
                                   gtl::ArraySlice<int32> perm, Tensor* out) {
-  if (perm.size() > 4) {
-    return errors::InvalidArgument("transpose with perm.size > 4"
-                                   "is not supported on VE. perm.size is ",
-                                   perm.size());
-  }
-
-  struct {
-    int dtype;
-    uint64_t in;
-    uint64_t out;
-    int size;
-    int32_t dim_size[4];
-    int32_t perm[4];
-  } args;
-
-  args.dtype = in.dtype();
-  args.in = (uint64_t)DMAHelper::base(&in);
-  args.out = (uint64_t)DMAHelper::base(out);
-  args.size = perm.size();
-  for (int i = 0; i < perm.size(); ++i) {
-    args.dim_size[i] = in.dim_size(i);
-    args.perm[i] = perm[i];
-  }
-
-  VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-  Status s = vectx->Compute("Transpose", (void*)&args, sizeof(args));
-  return s;
+  return ::tensorflow::VEDoTranspose(ctx, in, perm, out);
 }
 #define REGISTER(T)                                   \
   REGISTER_KERNEL_BUILDER(Name("Transpose")           \

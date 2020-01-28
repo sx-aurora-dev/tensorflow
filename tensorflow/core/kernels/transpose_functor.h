@@ -35,6 +35,11 @@ template <typename Device>
 Status DoTranspose(const Device& device, const Tensor& in,
                    const gtl::ArraySlice<int32> perm, Tensor* out);
 
+#ifdef TENSORFLOW_USE_VE
+Status VEDoTranspose(OpKernelContext* ctx, const Tensor& in,
+                     gtl::ArraySlice<int32> perm, Tensor* out) ;
+#endif
+
 // Conjugate and transpose tensor 'in' into tensor 'out' according to dimension
 // permutation 'perm'.
 //
