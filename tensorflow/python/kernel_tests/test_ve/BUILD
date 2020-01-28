@@ -8,7 +8,7 @@ tf_py_test(
     name = "conv_ops_test",
     size = "medium",
     srcs = ["conv_ops_test.py"],
-    additional_deps = [
+    deps = [
         "//third_party/py/numpy",
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client",
@@ -33,7 +33,7 @@ tf_py_test(
     name = "matmul_op_test",
     size = "large",
     srcs = ["matmul_op_test.py"],
-    additional_deps = [
+    deps = [
         "//third_party/py/numpy",
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
