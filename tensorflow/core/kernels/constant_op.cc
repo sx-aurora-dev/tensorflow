@@ -443,6 +443,7 @@ class ZerosLikeOp<VEDevice, T> : public OpKernel {
 
 REGISTER_KERNEL(float, VE);
 REGISTER_KERNEL(double, VE);
+REGISTER_KERNEL(int64, VE);
 REGISTER_KERNEL_BUILDER(Name("ZerosLike")
                             .Device(DEVICE_VE)
                             .TypeConstraint<int32>("T")
