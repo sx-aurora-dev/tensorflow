@@ -214,14 +214,14 @@ struct VETransposeArgs {
   uint64_t out;
   int size;
   int conjugate ;	// boolean
-  int32_t dim_size[4];
-  int32_t perm[4];
+  int32_t dim_size[8];
+  int32_t perm[8];
 } ;
 
 Status VEDoTranspose(OpKernelContext* ctx, const Tensor& in,
                      gtl::ArraySlice<int32> perm, Tensor* out) {
-  if (perm.size() > 4) {
-    return errors::InvalidArgument("transpose with perm.size > 4 "
+  if (perm.size() > 8) {
+    return errors::InvalidArgument("transpose with perm.size > 8 "
                                    "is not supported on VE. perm.size is ",
                                    perm.size());
   }
@@ -245,8 +245,8 @@ Status VEDoTranspose(OpKernelContext* ctx, const Tensor& in,
 
 Status VEDoConjugateTranspose(OpKernelContext* ctx, const Tensor& in,
                      gtl::ArraySlice<int32> perm, Tensor* out) {
-  if (perm.size() > 4) {
-    return errors::InvalidArgument("transpose with perm.size > 4 "
+  if (perm.size() > 8) {
+    return errors::InvalidArgument("transpose with perm.size > 8 "
                                    "is not supported on VE. perm.size is ",
                                    perm.size());
   }
