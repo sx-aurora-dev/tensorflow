@@ -668,11 +668,28 @@ class BaseBatchMatMulOp : public OpKernel {
 };
 
 #ifdef TENSORFLOW_USE_VE
+
 template <typename Scalar>
-class BaseBatchMatMulOp<VEDevice, Scalar> : public VEOpKernel {
+struct VELaunchBatchMatMul {
+  static void Launch(OpKernelContext* context, const Tensor& in_x,
+                     const Tensor& in_y, bool adj_x, bool adj_y,
+                     Tensor* out) {
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(in_x);
+    args.addArg<Tensor>(in_y);
+    args.addArg<Tensor>(*out);
+    args.addArg<int32>(adj_x ? 1 : 0) ;
+    args.addArg<int32>(adj_y ? 1 : 0) ;
+
+    VEOpKernelHelper::Call(context, "BatchMatMul", args);
+  }
+};
+
+template <typename Scalar>
+class BaseBatchMatMulOp<VEDevice, Scalar> : public OpKernel {
  public:
   explicit BaseBatchMatMulOp(OpKernelConstruction* context)
-      : VEOpKernel(context) {
+      : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("adj_x", &adj_x_));
     OP_REQUIRES_OK(context, context->GetAttr("adj_y", &adj_y_));
   }
@@ -743,15 +760,7 @@ class BaseBatchMatMulOp<VEDevice, Scalar> : public VEOpKernel {
     LaunchBatchMatMul<Device, Scalar>::Launch(
         ctx, in0_reshaped, in1_reshaped, adj_x_, adj_y_, bcast, &out_reshaped);
 #else
-
-    VEOpKernelHelper::ArgsImpl<> args;
-    args.addArg<Tensor>(in0);
-    args.addArg<Tensor>(in1);
-    args.addArg<Tensor>(*out);
-    args.addArg<int32>(adj_x_ ? 1 : 0) ;
-    args.addArg<int32>(adj_y_ ? 1 : 0) ;
-
-    VEOpKernelHelper::Call(ctx, "BatchMatMul", args);
+    VELaunchBatchMatMul<Scalar>::Launch(ctx, in0, in1, adj_x_, adj_y_, out);
 #endif
   }
 

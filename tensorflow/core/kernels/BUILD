@@ -2291,7 +2291,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime"]),
     alwayslink = 1,
 )
 

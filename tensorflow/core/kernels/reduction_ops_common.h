@@ -293,6 +293,18 @@ struct ReduceFunctor<SYCLDevice, Reducer>
 }  // namespace functor
 
 #ifdef TENSORFLOW_USE_VE
+
+// this structure is also used from einsum_op.
+// If you will update reduction_ops, then update einsum_op.
+struct VEReudctionOpArgs {
+  int dtype;
+  int ndims;
+  uint64_t in;
+  uint64_t out;
+  int64_t dim_size[3];
+  int axis;
+} ;
+
 template <typename T, typename Tperm>
 class VEReductionOp : public OpKernel {
  public:
@@ -364,14 +376,7 @@ class VEReductionOp : public OpKernel {
                       constants.kZero, reducer);
 #else
 
-      struct {
-        int dtype;
-        int ndims;
-        uint64_t in;
-        uint64_t out;
-        int64_t dim_size[3];
-        int axis;
-      } args;
+      struct VEReudctionOpArgs args;
 
       // use d2a1 function
 
@@ -400,14 +405,7 @@ class VEReductionOp : public OpKernel {
                       constants.kOne, reducer);
 #else
     } else if (helper.ndims() == 2) {
-      struct {
-        int dtype;
-        int ndims;
-        uint64_t in;
-        uint64_t out;
-        int64_t dim_size[3];
-        int axis;
-      } args;
+      struct VEReudctionOpArgs args;
 
       args.dtype = data.dtype();
       args.ndims = helper.ndims();
@@ -435,14 +433,7 @@ class VEReductionOp : public OpKernel {
                       constants.kOne, reducer);
 #else
     } else if (helper.ndims() == 3) {
-      struct {
-        int dtype;
-        int ndims;
-        uint64_t in;
-        uint64_t out;
-        int64_t dim_size[3];
-        int axis;
-      } args;
+      struct VEReudctionOpArgs args;
 
       args.dtype = data.dtype();
       args.ndims = helper.ndims();

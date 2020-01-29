@@ -18,6 +18,10 @@ limitations under the License.
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/tensor_types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -42,6 +46,38 @@ struct InflateFunctor {
     output.device(d) = input.inflate(strides);
   }
 };
+
+#ifdef TENSORFLOW_USE_VE
+struct VEStrideFunctor {
+  void operator()(OpKernelContext* ctx, Tensor &input,
+                  const gtl::InlinedVector<int64, 8>& strides,
+                  Tensor &output, const int N) {
+
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<int64>(N);
+    args.addArg<Tensor>(input);
+    args.addArg<Tensor>(output);
+    for(int i=0; i<N; i++) args.addArg<int64>(strides[i]) ;
+
+    VEOpKernelHelper::Call(ctx, "EinsumStride", args);
+  }
+};
+
+struct VEInflateFunctor {
+  void operator()(OpKernelContext* ctx, Tensor &input,
+                  const gtl::InlinedVector<int64, 8>& strides,
+                  Tensor &output, const int N) {
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<int64>(N);
+    args.addArg<Tensor>(input);
+    args.addArg<Tensor>(output);
+    for(int i=0; i<N; i++) args.addArg<int64>(strides[i]) ;
+
+    VEOpKernelHelper::Call(ctx, "EinsumInflate", args);
+  }
+};
+#endif	// TENSORFLOW_USE_VE
+
 }  // namespace functor
 }  // namespace tensorflow
 
