@@ -897,7 +897,8 @@ TEST_F(MathGradTest, Pow) {
 }
 
 // TODO{lukeiwanski}: Implement Complex Pow for SYCL
-#ifndef TENSORFLOW_USE_SYCL
+// TODO{jam}: Implement Complex Pow for VE
+#if !(defined(TENSORFLOW_USE_SYCL) || defined(TENSORFLOW_USE_VE))
 TEST_F(MathGradTest, ComplexPow) {
   auto x = test::AsTensor<complex64>({0.f, 2.f, -2.f}, TensorShape({3}));
   auto y = test::AsTensor<complex64>({2.f, 2.f, 2.f}, TensorShape({3}));
@@ -944,7 +945,7 @@ TEST_F(MathGradTest, ComplexPow) {
                                 TensorShape({3})),
       4.5e-6f);
 }
-#endif  // TENSORFLOW_USE_SYCL
+#endif  // TENSORFLOW_USE_SYCL || TENSORFLOW_USE_VE
 
 TEST_F(MathGradTest, Xlogy) {
   auto x = test::AsTensor<float>({0.f, 0.f, 2.f, 3.f, 4.f, 5.f},
