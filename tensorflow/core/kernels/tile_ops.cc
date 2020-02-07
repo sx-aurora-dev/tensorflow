@@ -728,10 +728,10 @@ TF_CALL_double(REGISTER_SYCL);
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-// Register Tile on VE
-template<>
-template<>
-void TileOp<VEDevice, int32>::HandleCase<DataTypeToEnum<float>::value>(
+
+template <>
+template <DataType DT>
+inline void TileOp<VEDevice, int32>::HandleCase(
     OpKernelContext* context,
     const gtl::ArraySlice<int32>& multiples_array, Tensor* result) {
   const Tensor& input = context->input(0);
@@ -742,26 +742,53 @@ void TileOp<VEDevice, int32>::HandleCase<DataTypeToEnum<float>::value>(
 
   VEOpKernelHelper::Call(context, "Tile", args);
 }
+template <>
+template <DataType DT>
+inline void TileOp<VEDevice, int64>::HandleCase(
+    OpKernelContext* context,
+    const gtl::ArraySlice<int64>& multiples_array, Tensor* result) {
+  const Tensor& input = context->input(0);
 
-REGISTER_KERNEL_BUILDER(Name("Tile")
-                        .Device(DEVICE_VE)
-                        .TypeConstraint<float>("T")
-                        .TypeConstraint<int32>("Tmultiples")
-                        .HostMemory("multiples"),
-                        TileOp<VEDevice, int32>);
-// Register Tile for int32 using CPU
-REGISTER_KERNEL_BUILDER(Name("Tile")
-                            .Device(DEVICE_VE)
-                            .TypeConstraint<int32>("T")
-                            .HostMemory("multiples")
-                            .TypeConstraint<int32>("Tmultiples"),
-                        TileOp<CPUDevice, int32>);
-REGISTER_KERNEL_BUILDER(Name("TileGrad")
-                            .Device(DEVICE_VE)
-                            .TypeConstraint<int32>("T")
-                            .HostMemory("multiples")
-                            .TypeConstraint<int32>("Tmultiples"),
-                        TileGradientOp<CPUDevice, int32>);
+  VEOpKernelHelper::ArgsImpl<> args;
+  args.addArg<Tensor>(input);
+  args.addArg<Tensor>(*result);
+
+  VEOpKernelHelper::Call(context, "Tile", args);
+}
+
+#define REGISTER_VE_TILE(type)                                     \
+  REGISTER_KERNEL_BUILDER(Name("Tile")                             \
+                              .Device(DEVICE_VE)                   \
+                              .TypeConstraint<type>("T")           \
+                              .TypeConstraint<int32>("Tmultiples") \
+                              .HostMemory("multiples"),            \
+                          TileOp<VEDevice, int32>);                \
+  REGISTER_KERNEL_BUILDER(Name("Tile")                             \
+                              .Device(DEVICE_VE)                   \
+                              .TypeConstraint<type>("T")           \
+                              .TypeConstraint<int64>("Tmultiples") \
+                              .HostMemory("multiples"),            \
+                          TileOp<VEDevice, int64>);
+
+// [todo] impl TileGrad for VE
+#define REGISTER_VE_TILE_GRAD(type)
+
+#define REGISTER_VE(type)	\
+  REGISTER_VE_TILE(type);	\
+  REGISTER_VE_TILE_GRAD(type);
+
+TF_CALL_bool(REGISTER_VE_TILE);
+TF_CALL_float(REGISTER_VE);
+//TF_CALL_double(REGISTER_VE);
+//TF_CALL_half(REGISTER_VE);
+//TF_CALL_int16(REGISTER_VE);
+TF_CALL_int32(REGISTER_VE);
+TF_CALL_int64(REGISTER_VE);
+//TF_CALL_complex64(REGISTER_VE);
+//TF_CALL_complex128(REGISTER_VE)
+
+#undef REGISTER_VE
+#undef REGISTER_VE_TILE
 #endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
