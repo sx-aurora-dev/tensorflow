@@ -395,6 +395,7 @@ REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
 // TODO : add other types
 TF_CALL_float(REGISTER_VE)
 TF_CALL_double(REGISTER_VE)
+TF_CALL_bool(REGISTER_VE);
 
 REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
                             .Device(DEVICE_VE)

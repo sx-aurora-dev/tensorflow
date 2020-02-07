@@ -189,6 +189,7 @@ TF_CALL_complex64(REGISTER_VE);
 TF_CALL_complex128(REGISTER_VE);
 TF_CALL_int64(REGISTER_VE);
 REGISTER_VE(bfloat16);
+REGISTER_VE(bool);
 #undef REGISTER_VE
 #endif // TENSORFLOW_USE_VE
 }  // namespace tensorflow
