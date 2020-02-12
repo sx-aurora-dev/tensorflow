@@ -72,6 +72,7 @@ limitations under the License.
 #ifdef TENSORFLOW_USE_VE
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
 #endif
 
 namespace tensorflow {
@@ -241,13 +242,6 @@ struct LaunchConv2DOp<VEDevice, T> {
     VLOG(2) << "LaunchConv2DOp<VEDevice, T>: sizeof(T)=" << sizeof(T);
 #endif
 
-    if (data_format != FORMAT_NCHW) {
-      ctx->SetStatus(
-          errors::Unimplemented("VE conv implementation only supports "
-                                "NCHW tensor format for now."));
-      return;
-    }
-
     struct TensorParam {
       int w, h, c, n;
       TensorParam(const Tensor& t, TensorFormat f) : 
@@ -258,63 +252,103 @@ struct LaunchConv2DOp<VEDevice, T> {
       TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
     };
 
-    struct ConvParam {
-      uint64_t in;
-      uint64_t filter;
-      uint64_t out;
-      TensorParam in_param;
-      TensorParam filter_param;
-      TensorParam out_param;
+    //
+    // Calc. TensorParam
+    //
+    TensorParam in_param(input, data_format);
+    TensorParam filter_param(filter.dim_size(1), filter.dim_size(0),
+      filter.dim_size(2), filter.dim_size(3));
+    TensorParam out_param(*output, data_format);
 
-      int row_stride;
-      int col_stride;
-      int row_dilation;
-      int col_dilation;
-      int row_padding;
-      int col_padding;
+    //
+    // allocate temporary tensor area
+    //
+    Tensor temp_in_tensor, temp_out_tensor, temp_filter_tensor;
+    const int64 in_batch = GetTensorDim(input, data_format, 'N');
+    const int64 in_rows = GetTensorDim(input, data_format, 'H');
+    const int64 in_cols = GetTensorDim(input, data_format, 'W');
+    const int64 in_depths = GetTensorDim(input, data_format, 'C');
+    uint64_t temp_in, temp_out, temp_filter;
+    int row_padding = 0;
+    int col_padding = 0;
+    int data_type = input.dtype();
 
-      int data_format;
-      int data_type;
+    if (data_format == FORMAT_NHWC) {
 
-      ConvParam(const Tensor& in, const Tensor& filter, Tensor* out, TensorFormat f) :
-        in_param(in, f),
-        filter_param(filter.dim_size(1), filter.dim_size(0),
-                     filter.dim_size(2), filter.dim_size(3)),
-        out_param(*out, f) {}
-    };
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(
+			     FORMAT_NCHW, in_batch,
+                            in_depths, in_rows, in_cols),
+                         &temp_in_tensor)
+		     );
+      temp_in = (uint64_t)DMAHelper::base(&temp_in_tensor);
 
-    ConvParam p(input, filter, output, data_format);
-
-    p.in = (uint64_t)DMAHelper::base(&input);
-    p.filter = (uint64_t)DMAHelper::base(&filter);
-    p.out = (uint64_t)DMAHelper::base(output);
-    p.data_format = data_format;
-    p.data_type = input.dtype();
-    p.row_stride = row_stride;
-    p.col_stride = col_stride;
-    p.row_dilation = row_dilation;
-    p.col_dilation = col_dilation;
-    p.row_padding = 0;
-    p.col_padding = 0;
-
-    if (padding == SAME) {
-      const int row_pad_all = std::max<int>(0,
-                                           (p.out_param.h - 1) * row_stride +
-                                           (p.filter_param.h - 1) * row_dilation + 1 - p.in_param.h)  ;
-      const int col_pad_all = std::max<int>(0,
-                                           (p.out_param.w - 1) * col_stride +
-                                           (p.filter_param.w - 1) * col_dilation + 1 - p.in_param.w) ;
-
-      p.row_padding = row_pad_all - row_pad_all/2 ;
-      p.col_padding = col_pad_all - col_pad_all/2 ;
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(
+			     FORMAT_NCHW, in_batch,
+                             in_depths, in_rows, in_cols),
+                         &temp_out_tensor)
+		     );
+      temp_out = (uint64_t)DMAHelper::base(&temp_out_tensor);
+    } else {
+      // if NCHW, area are not allocated.
+      temp_in  = 0;
+      temp_out = 0;
     }
 
-    //VLOG(2) << "VEDeviceContext::conv2d: sizeof(ConvParam)=" << sizeof(ConvParam);
+    //
+    // allocate temporary filter area
+    //
+    const int64 f_batch = GetTensorDim(filter, FORMAT_HWCN, 'N');
+    const int64 f_rows = GetTensorDim(filter, FORMAT_HWCN, 'H');
+    const int64 f_cols = GetTensorDim(filter, FORMAT_HWCN, 'W');
+    const int64 f_depths = GetTensorDim(filter, FORMAT_HWCN, 'C');
+    OP_REQUIRES_OK(ctx,
+		   ctx->allocate_temp(
+		       reinterpret_cast<DataType>(input.dtype()),
+		       ShapeFromFormat(
+			   FORMAT_NCHW, f_batch,
+                           f_depths, f_rows, f_cols),
+		       &temp_filter_tensor)
+		     );
+    temp_filter = (uint64_t)DMAHelper::base(&temp_filter_tensor);
 
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("Conv2D", (void*)&p, sizeof(p));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    //
+    // set argument for vetfkernel
+    //
+    VEOpKernelHelper::ArgsImpl<> args;
+    
+    args.addArg<uint64_t>((uint64_t)DMAHelper::base(&input));  //  0 :
+    args.addArg<uint64_t>((uint64_t)DMAHelper::base(&filter)); //  1 :
+    args.addArg<uint64_t>((uint64_t)DMAHelper::base(output));  //  2 :
+
+    args.addArg<TensorParam>(in_param);                        //  3 :
+    args.addArg<TensorParam>(filter_param);                    //  4 :
+    args.addArg<TensorParam>(out_param);                       //  5 :
+
+    args.addArg<uint64_t>(temp_in);                            //  6 :
+    args.addArg<uint64_t>(temp_filter);                        //  7 :
+    args.addArg<uint64_t>(temp_out);                           //  8 :
+
+    args.addArg<int>(row_stride);                              //  9 :
+    args.addArg<int>(col_stride);                              // 10 :
+    args.addArg<int>(row_dilation);                            // 11 :
+    args.addArg<int>(col_dilation);                            // 12 :
+    args.addArg<int>(row_padding);                             // 13 :
+    args.addArg<int>(col_padding);                             // 14 :
+
+    args.addArg<int>(data_format);                             // 15 :
+    args.addArg<int>(data_type);                               // 16 :
+
+    //
+    // call vetfkernel
+    //
+      VEOpKernelHelper::Call(ctx, "Conv2D", args);
+
   }
 };
 #endif // TENSORFLOW_USE_VE
