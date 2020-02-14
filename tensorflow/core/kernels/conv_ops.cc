@@ -242,6 +242,13 @@ struct LaunchConv2DOp<VEDevice, T> {
     VLOG(2) << "LaunchConv2DOp<VEDevice, T>: sizeof(T)=" << sizeof(T);
 #endif
 
+    if (padding == EXPLICIT) {
+      ctx->SetStatus(errors::Unimplemented(
+          "VE conv implementation only supports SAME/VALID padding."
+	  "Explicit padding is specified."));
+      return;
+    }
+    
     struct TensorParam {
       int w, h, c, n;
       TensorParam(const Tensor& t, TensorFormat f) : 
@@ -272,6 +279,18 @@ struct LaunchConv2DOp<VEDevice, T> {
     int row_padding = 0;
     int col_padding = 0;
     int data_type = input.dtype();
+
+    if (padding == SAME ) {
+      const int row_pad_all = std::max<int>(0,
+					    (out_param.h - 1) * row_stride +
+					    (filter_param.h - 1) * row_dilation + 1 - in_param.h );
+      const int col_pad_all = std::max<int>(0,
+					    (out_param.w - 1) * col_stride +
+					    (filter_param.w - 1) * col_dilation + 1 - in_param.w );
+
+      row_padding = row_pad_all - row_pad_all/2 ;
+      col_padding = col_pad_all - col_pad_all/2 ;
+    }
 
     if (data_format == FORMAT_NHWC) {
 
