@@ -207,6 +207,13 @@ struct LaunchConv2DBackpropFilterOp<VEDevice, T> {
     VLOG(2) << "LaunchConv2DBackpropFilterOp<VEDevice, T>";
     VLOG(2) << "LaunchConv2DBackpropFilterOp<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
 
+    if (padding == EXPLICIT) {
+      ctx->SetStatus(errors::Unimplemented(
+          "VE conv implementation only supports SAME/VALID padding."
+	  "Explicit padding is specified."));
+      return;
+    }
+
     if (data_format != FORMAT_NCHW) {
       ctx->SetStatus(
           errors::Unimplemented("VE conv implementation only supports "
