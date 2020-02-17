@@ -67,12 +67,16 @@ REGISTER_KERNEL_BUILDER(Name("AddV2")
                         BinaryOp<CPUDevice, functor::add<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
 
-#if TENSORFLOW_USE_VE
+#ifdef TENSORFLOW_USE_VE
 REGISTER_VE_BINARY_OP(Add, float, float, float);
 REGISTER_KERNEL_BUILDER(Name("AddV2")
                         .Device(DEVICE_VE)
                         .TypeConstraint<float>("T"),
                         VEAddOp<float, float>);
+REGISTER_KERNEL_BUILDER(Name("AddV2")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<int64>("T"),
+                        VEAddOp<int64, int64>);
 REGISTER_KERNEL_BUILDER(Name("Add")
                             .Device(DEVICE_VE)
                             .HostMemory("x")
