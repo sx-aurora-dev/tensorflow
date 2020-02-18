@@ -1273,6 +1273,86 @@ class ResourceScatterUpdateOp : public OpKernel {
   }
 };
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T, typename Index, scatter_op::UpdateOp op>
+class ResourceScatterUpdateOp<VEDevice, T, Index, op> : public OpKernel {
+ public:
+  explicit ResourceScatterUpdateOp(OpKernelConstruction* c) : OpKernel(c) {
+    // We use the same kernel for many operations.
+    // Each operation has a different set of attributes defined in its nodes.
+    Status s = c->GetAttr("use_locking", &use_exclusive_lock_);
+    if (!s.ok()) {
+      use_exclusive_lock_ = false;
+    }
+  }
+
+  void Compute(OpKernelContext* c) override {
+
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    OP_REQUIRES_OK(c, VEEnsureSparseVariableAccess<T>(c, v.get()));
+    const bool is_non_pod_dtype = c->input_dtype(0) == DT_RESOURCE ||
+                                  c->input_dtype(0) == DT_STRING ||
+                                  c->input_dtype(0) == DT_VARIANT;
+    if (is_non_pod_dtype || use_exclusive_lock_) {
+      mutex_lock ml(*v->mu());
+      DoCompute(c);
+    } else {
+      // For POD dtypes, we can safely run the update without the mutex.
+      tf_shared_lock ml(*v->mu());
+      DoCompute(c);
+    }
+  }
+
+ private:
+  bool use_exclusive_lock_;
+
+  void DoCompute(OpKernelContext* c) {
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    Tensor* params = v->tensor();
+    const Tensor& indices = c->input(1);
+    const Tensor& updates = c->input(2);
+
+    // Check that we have enough index space
+    const int64 N_big = indices.NumElements();
+    OP_REQUIRES(
+        c, N_big <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("indices has too many elements for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", N_big, " > ",
+                                std::numeric_limits<Index>::max()));
+    const Index N = static_cast<Index>(N_big);
+    OP_REQUIRES(
+        c, params->dim_size(0) <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("params.shape[0] too large for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", params->dim_size(0), " > ",
+                                std::numeric_limits<Index>::max()));
+
+    if (N > 0) {
+      auto indices_flat = indices.flat<Index>();
+      auto params_flat = params->flat_outer_dims<T>();
+      if (TensorShapeUtils::IsScalar(updates.shape())) {
+        functor::VEScatterScalarFunctor<T, Index, op> functor ;
+        functor(c, params, updates, indices) ;
+      }
+      else {
+        int64 num_updates = updates.NumElements();
+        OP_REQUIRES(c, num_updates % N == 0,
+                    errors::InvalidArgument(
+                        "shape of indices (", indices.shape().DebugString(),
+                        ") is not compatible with the shape of updates (",
+                        updates.shape().DebugString(), ")"));
+
+        functor::VEScatterFunctor<T, Index, op> functor ;
+        functor(c, params, updates, indices) ;
+      }
+    }
+  }
+};
+#endif	// TENSORFLOW_USE_VE
+
 #define REGISTER_SCATTER_KERNEL_INDEX(type, index_type, dev, name, op) \
   REGISTER_KERNEL_BUILDER(                                             \
       Name(name)                                                       \
@@ -1354,6 +1434,49 @@ REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
                                                 scatter_op::UpdateOp::ASSIGN>)
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_SCATTER_ARITHMETIC_VE(type) \
+  REGISTER_SCATTER_ARITHMETIC(type, VE);
+#define REGISTER_SCATTER_MINMAX_VE(type) REGISTER_SCATTER_MINMAX(type, VE);
+
+//#define REGISTER_SCATTER_UPDATE_VE(type) REGISTER_SCATTER_UPDATE(type, VE);
+
+TF_CALL_float(REGISTER_SCATTER_ARITHMETIC_VE) ;
+//TF_CALL_double(REGISTER_SCATTER_ARITHMETIC_VE) ;
+
+TF_CALL_float(REGISTER_SCATTER_MINMAX_VE) ;
+//TF_CALL_double(REGISTER_SCATTER_MINMAX_VE) ;
+
+//REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+//                            .Device(DEVICE_VE)
+//                            .HostMemory("resource")
+//                            .HostMemory("indices")
+//                            .TypeConstraint<Variant>("dtype")
+//                            .TypeConstraint<int32>("Tindices"),
+//                        ResourceScatterUpdateOp<VEevice, Variant, int32,
+//                                                scatter_op::UpdateOp::ASSIGN>)
+//REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+//                            .Device(DEVICE_VE)
+//                            .HostMemory("resource")
+//                            .TypeConstraint<bool>("dtype")
+//                            .TypeConstraint<int32>("Tindices"),
+//                        ResourceScatterUpdateOp<VEDevice, bool, int32,
+//                                                scatter_op::UpdateOp::ASSIGN>)
+//REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+//                            .Device(DEVICE_VE)
+//                            .HostMemory("resource")
+//                            .HostMemory("indices")
+//                            .TypeConstraint<Variant>("dtype")
+//                            .TypeConstraint<int64>("Tindices"),
+//                        ResourceScatterUpdateOp<VEDevice, Variant, int64,
+//                                                scatter_op::UpdateOp::ASSIGN>)
+
+#undef REGISTER_SCATTER_MINMAX_VE
+//#undef REGISTER_SCATTER_UPDATE_VE
+#undef REGISTER_SCATTER_ARITHMETIC_VE
+
+#endif  // TENSORFLOW_USE_VE
 
 #undef REGISTER_SCATTER_ARITHMETIC
 #undef REGISTER_SCATTER_ARITHMETIC_CPU
