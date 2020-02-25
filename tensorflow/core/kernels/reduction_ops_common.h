@@ -468,7 +468,34 @@ class VEReductionOp : public OpKernel {
                       const_shuffled.shaped<T, 2>({unreduced, reduced}),
                       constants.kOne, reducer);
 #else
-      ctx->SetStatus(errors::Unimplemented("Unsupported reduction on VE"));
+      // If we don't hit one of the cases above, transpose the data so that
+      // all reduced dimensions are last and reuse the 2-D -> 1-D case.
+      Tensor data_reshaped;
+      CHECK(data_reshaped.CopyFrom(data, helper.data_reshape()));
+      Tensor shuffled;
+      OP_REQUIRES_OK(ctx, ctx->allocate_temp(DataTypeToEnum<T>::value,
+                                             helper.shuffled_shape(), &shuffled,
+                                             alloc_attr));
+      OP_REQUIRES_OK(
+          ctx, VEDoTranspose(ctx, data_reshaped, helper.permutation(), &shuffled));
+      const int64 unreduced = tmp_out.NumElements();
+      const int64 reduced = shuffled.NumElements() / unreduced;
+
+      struct VEReudctionOpArgs args;
+
+      args.dtype = data.dtype();
+      args.ndims = 2 ;
+      args.in = (uint64_t)DMAHelper::base(&shuffled);
+      args.out = (uint64_t)DMAHelper::base(&tmp_out);
+      args.dim_size[0] = unreduced ;
+      args.dim_size[1] = reduced ;
+      args.dim_size[2] = 0 ;
+      args.axis = 1 ;
+
+      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute(name_, (void*)&args, sizeof(args));
+      if (!s.ok())
+        ctx->SetStatus(s);
 #endif
     }
 #endif
