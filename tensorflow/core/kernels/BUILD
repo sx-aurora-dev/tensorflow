@@ -4372,7 +4372,7 @@ tf_kernel_library(
     ] + select({
         ":xsmm_convolutions": ["xsmm_conv2d.h"],
         "//conditions:default": [],
-    }),
+    }) + if_ve(["transpose_functor.h"]),
     defines = select({
         ":xsmm_convolutions": ["TENSORFLOW_USE_LIBXSMM_CONVOLUTIONS"],
         "//conditions:default": [],
@@ -4414,7 +4414,7 @@ tf_kernel_library(
         "//tensorflow/stream_executor:tf_allocator_adapter",
         "//tensorflow/stream_executor:stream_executor_headers",
         "//tensorflow/core:stream_executor",
-    ]),
+    ]) + if_ve([":transpose_functor"]),
 )
 
 cc_library(
