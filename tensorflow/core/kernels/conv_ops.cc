@@ -70,8 +70,7 @@ limitations under the License.
 #endif  // GOOGLE_CUDA
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/kernels/transpose_functor.h"
 #include "tensorflow/core/framework/ve_ops_common.h"
 #endif
 
@@ -249,125 +248,105 @@ struct LaunchConv2DOp<VEDevice, T> {
       return;
     }
     
-    struct TensorParam {
-      int w, h, c, n;
-      TensorParam(const Tensor& t, TensorFormat f) : 
-        w(GetTensorDim(t, f, 'W')),
-        h(GetTensorDim(t, f, 'H')),
-        c(GetTensorDim(t, f, 'C')),
-        n(GetTensorDim(t, f, 'N')) {}
-      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
-    };
+    const int64 batch = GetTensorDim(input, data_format, 'N');
 
-    //
-    // Calc. TensorParam
-    //
-    TensorParam in_param(input, data_format);
-    TensorParam filter_param(filter.dim_size(1), filter.dim_size(0),
-      filter.dim_size(2), filter.dim_size(3));
-    TensorParam out_param(*output, data_format);
-
-    //
-    // allocate temporary tensor area
-    //
-    Tensor temp_in_tensor, temp_out_tensor, temp_filter_tensor;
-    const int64 in_batch = GetTensorDim(input, data_format, 'N');
     const int64 in_rows = GetTensorDim(input, data_format, 'H');
     const int64 in_cols = GetTensorDim(input, data_format, 'W');
     const int64 in_depths = GetTensorDim(input, data_format, 'C');
-    uint64_t temp_in, temp_out, temp_filter;
+
+    const int64 out_rows = GetTensorDim(*output, data_format, 'H');
+    const int64 out_cols = GetTensorDim(*output, data_format, 'W');
+    const int64 out_depths = GetTensorDim(*output, data_format, 'C');
+
+    const int64 f_rows = GetTensorDim(filter, FORMAT_HWCN, 'H');
+    const int64 f_cols = GetTensorDim(filter, FORMAT_HWCN, 'W');
+    const int64 f_ic  = GetTensorDim(filter, FORMAT_HWCN, 'C');
+    const int64 f_oc  = GetTensorDim(filter, FORMAT_HWCN, 'N');
+
     int row_padding = 0;
     int col_padding = 0;
     int data_type = input.dtype();
 
     if (padding == SAME ) {
       const int row_pad_all = std::max<int>(0,
-					    (out_param.h - 1) * row_stride +
-					    (filter_param.h - 1) * row_dilation + 1 - in_param.h );
+					    (out_rows - 1) * row_stride +
+					    (f_rows - 1) * row_dilation + 1 - in_rows );
       const int col_pad_all = std::max<int>(0,
-					    (out_param.w - 1) * col_stride +
-					    (filter_param.w - 1) * col_dilation + 1 - in_param.w );
+					    (out_cols - 1) * col_stride +
+					    (f_cols - 1) * col_dilation + 1 - in_cols );
 
       row_padding = row_pad_all - row_pad_all/2 ;
       col_padding = col_pad_all - col_pad_all/2 ;
     }
 
-    if (data_format == FORMAT_NHWC) {
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    /* Input , Output */
+
+    Tensor in_transposed, out_transposed ;
+    if ( data_format == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in/out tensor
 
       OP_REQUIRES_OK(ctx,
 		     ctx->allocate_temp(
 			 reinterpret_cast<DataType>(input.dtype()),
-			 ShapeFromFormat(
-			     FORMAT_NCHW, in_batch,
-                            in_depths, in_rows, in_cols),
-                         &temp_in_tensor)
+			 ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+                         &in_transposed)
 		     );
-      temp_in = (uint64_t)DMAHelper::base(&temp_in_tensor);
 
       OP_REQUIRES_OK(ctx,
 		     ctx->allocate_temp(
 			 reinterpret_cast<DataType>(input.dtype()),
-			 ShapeFromFormat(
-			     FORMAT_NCHW, in_batch,
-                             in_depths, in_rows, in_cols),
-                         &temp_out_tensor)
-		     );
-      temp_out = (uint64_t)DMAHelper::base(&temp_out_tensor);
-    } else {
-      // if NCHW, area are not allocated.
-      temp_in  = 0;
-      temp_out = 0;
+			 ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+                         &out_transposed));
+
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, input, {0,3,1,2}, &in_transposed));
+
+      args.addArg<Tensor>(in_transposed) ;	// 0
+      args.addArg<Tensor>(out_transposed) ;	// 1
+    }
+    else {
+      args.addArg<Tensor>(input) ;	// 0
+      args.addArg<Tensor>(*output) ;	// 1
     }
 
-    //
-    // allocate temporary filter area
-    //
-    const int64 f_batch = GetTensorDim(filter, FORMAT_HWCN, 'N');
-    const int64 f_rows = GetTensorDim(filter, FORMAT_HWCN, 'H');
-    const int64 f_cols = GetTensorDim(filter, FORMAT_HWCN, 'W');
-    const int64 f_depths = GetTensorDim(filter, FORMAT_HWCN, 'C');
-    OP_REQUIRES_OK(ctx,
-		   ctx->allocate_temp(
-		       reinterpret_cast<DataType>(input.dtype()),
-		       ShapeFromFormat(
-			   FORMAT_NCHW, f_batch,
-                           f_depths, f_rows, f_cols),
-		       &temp_filter_tensor)
-		     );
-    temp_filter = (uint64_t)DMAHelper::base(&temp_filter_tensor);
+    /* Filter */
+    Tensor filter_transposed ;
+    if( f_ic * f_oc == 1 ) {
+      OP_REQUIRES(ctx, filter_transposed.CopyFrom(filter, ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic)),
+                  errors::Internal("Error during reduction copy."));
+    }
+    else {
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic),
+			 &filter_transposed));
 
-    //
-    // set argument for vetfkernel
-    //
-    VEOpKernelHelper::ArgsImpl<> args;
-    
-    args.addArg<uint64_t>((uint64_t)DMAHelper::base(&input));  //  0 :
-    args.addArg<uint64_t>((uint64_t)DMAHelper::base(&filter)); //  1 :
-    args.addArg<uint64_t>((uint64_t)DMAHelper::base(output));  //  2 :
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, filter, {3,2,0,1}, &filter_transposed));
+    }
+    args.addArg(filter_transposed) ;	// 2
 
-    args.addArg<TensorParam>(in_param);                        //  3 :
-    args.addArg<TensorParam>(filter_param);                    //  4 :
-    args.addArg<TensorParam>(out_param);                       //  5 :
+    /* conv params */
+    args.addArg<int>(row_stride);       // 3
+    args.addArg<int>(col_stride);       // 4
+    args.addArg<int>(row_dilation);     // 5
+    args.addArg<int>(col_dilation);     // 6
+    args.addArg<int>(row_padding);      // 7
+    args.addArg<int>(col_padding);      // 8
 
-    args.addArg<uint64_t>(temp_in);                            //  6 :
-    args.addArg<uint64_t>(temp_filter);                        //  7 :
-    args.addArg<uint64_t>(temp_out);                           //  8 :
+#if 0
+    args.addArg<int>(FORMAT_NHWC);	// data_layout   : current vetfkernel supports NCHW only.
+    args.addArg<int>(FORMAT_NHWC);	// filter_layout : current vetfkernel supports NCHW only.
+#endif
 
-    args.addArg<int>(row_stride);                              //  9 :
-    args.addArg<int>(col_stride);                              // 10 :
-    args.addArg<int>(row_dilation);                            // 11 :
-    args.addArg<int>(col_dilation);                            // 12 :
-    args.addArg<int>(row_padding);                             // 13 :
-    args.addArg<int>(col_padding);                             // 14 :
+    VEOpKernelHelper::Call(ctx, "Conv2D", args);
 
-    args.addArg<int>(data_format);                             // 15 :
-    args.addArg<int>(data_type);                               // 16 :
 
-    //
-    // call vetfkernel
-    //
-      VEOpKernelHelper::Call(ctx, "Conv2D", args);
-
+    // if data_format is NHWC, then transpose output tensor
+    if ( data_format == FORMAT_NHWC ) {
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, out_transposed, {0,2,3,1}, output));
+    }
   }
 };
 #endif // TENSORFLOW_USE_VE
