@@ -61,8 +61,10 @@ limitations under the License.
 #endif  // GOOGLE_CUDA
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/kernels/transpose_functor.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
+//#include "tensorflow/core/common_runtime/ve/ve_device.h"
+//#include "tensorflow/core/common_runtime/dma_helper.h"
 #endif
 
 namespace {
@@ -214,81 +216,89 @@ struct LaunchConv2DBackpropFilterOp<VEDevice, T> {
       return;
     }
 
-    if (data_format != FORMAT_NCHW) {
-      ctx->SetStatus(
-          errors::Unimplemented("VE conv implementation only supports "
-                                "NCHW tensor format for now."));
-      return;
-    }
+    const int64 batch = GetTensorDim(input, data_format, 'N');
 
-#if 1
+    const int64 in_rows = GetTensorDim(input, data_format, 'H');
+    const int64 in_cols = GetTensorDim(input, data_format, 'W');
+    const int64 in_depths = GetTensorDim(input, data_format, 'C');
 
-    struct TensorParam {
-      int w, h, c, n;
-      TensorParam(const Tensor& t, TensorFormat f) :
-        w(GetTensorDim(t, f, 'W')),
-        h(GetTensorDim(t, f, 'H')),
-        c(GetTensorDim(t, f, 'C')),
-        n(GetTensorDim(t, f, 'N')) {}
-      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
-    };
+    const int64 out_rows = GetTensorDim(out_backprop, data_format, 'H');
+    const int64 out_cols = GetTensorDim(out_backprop, data_format, 'W');
+    const int64 out_depths = GetTensorDim(out_backprop, data_format, 'C');
 
-    struct ConvParam {
-      uint64_t out_bp;
-      uint64_t in;
-      uint64_t filter_bp;
-      TensorParam out_bp_param;
-      TensorParam in_param;
-      TensorParam filter_bp_param;
+    const int64 f_rows = GetTensorDim(*filter_backprop, FORMAT_HWCN, 'H');
+    const int64 f_cols = GetTensorDim(*filter_backprop, FORMAT_HWCN, 'W');
+    const int64 f_ic  = GetTensorDim(*filter_backprop, FORMAT_HWCN, 'C');
+    const int64 f_oc  = GetTensorDim(*filter_backprop, FORMAT_HWCN, 'N');
 
-      int row_stride;
-      int col_stride;
-      int row_dilation;
-      int col_dilation;
-      int row_padding;
-      int col_padding;
+    int row_padding = 0;
+    int col_padding = 0;
+    int data_type = input.dtype();
 
-      int data_format;
-      int data_type;
-
-      ConvParam(const Tensor& out_backprop, const Tensor& input, Tensor* filter_backprop, TensorFormat f) :
-        out_bp_param(out_backprop, f),
-	in_param(input, f),
-        filter_bp_param(filter_backprop->dim_size(1), filter_backprop->dim_size(0),
-                     filter_backprop->dim_size(2), filter_backprop->dim_size(3)) {}
-    };
-
-    ConvParam p(out_backprop, input, filter_backprop, data_format);
-
-    p.out_bp    = (uint64_t)DMAHelper::base(&out_backprop);
-    p.in = (uint64_t)DMAHelper::base(&input);
-    p.filter_bp = (uint64_t)DMAHelper::base(filter_backprop);
-    p.data_format = data_format;
-    p.data_type = input.dtype();
-    p.row_stride = row_stride;
-    p.col_stride = col_stride;
-    p.row_dilation = row_dilation;
-    p.col_dilation = col_dilation;
-    p.row_padding = 0;
-    p.col_padding = 0;
-
-    if (padding == SAME) {
+    if (padding == SAME ) {
       const int row_pad_all = std::max<int>(0,
-                                           (p.out_bp_param.h - 1) * row_stride +
-                                           (p.filter_bp_param.h - 1) * row_dilation + 1 - p.in_param.h)  ;
+					    (out_rows - 1) * row_stride +
+					    (f_rows - 1) * row_dilation + 1 - in_rows );
       const int col_pad_all = std::max<int>(0,
-                                           (p.out_bp_param.w - 1) * col_stride +
-                                           (p.filter_bp_param.w - 1) * col_dilation + 1 - p.in_param.w) ;
+					    (out_cols - 1) * col_stride +
+					    (f_cols - 1) * col_dilation + 1 - in_cols );
 
-      p.row_padding = row_pad_all - row_pad_all/2 ;
-      p.col_padding = col_pad_all - col_pad_all/2 ;
+      row_padding = row_pad_all - row_pad_all/2 ;
+      col_padding = col_pad_all - col_pad_all/2 ;
     }
 
-#endif
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("Conv2DBackpropFilter", (void*)&p, sizeof(p));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    /* Input , Output_backprop */
+    Tensor in_transposed, out_transposed ;
+    if ( data_format == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in/out tensor
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+                         &in_transposed)
+		     );
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+                         &out_transposed));
+
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, input, {0,3,1,2}, &in_transposed));
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, out_backprop, {0,3,1,2}, &out_transposed));
+
+      args.addArg<Tensor>(in_transposed) ;	// 0
+      args.addArg<Tensor>(out_transposed) ;	// 1
+    }
+    else {
+      args.addArg<Tensor>(input) ;		// 0
+      args.addArg<Tensor>(out_backprop) ;	// 1
+    }
+
+    /* Filter */
+    Tensor filter_bp_transposed ;
+    OP_REQUIRES_OK(ctx,
+		   ctx->allocate_temp(
+		       reinterpret_cast<DataType>(input.dtype()),
+		       ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic),
+		       &filter_bp_transposed));
+    args.addArg(filter_bp_transposed) ;		// 2
+
+
+    /* conv params */
+    args.addArg<int>(row_stride);       // 3
+    args.addArg<int>(col_stride);       // 4
+    args.addArg<int>(row_dilation);     // 5
+    args.addArg<int>(col_dilation);     // 6
+    args.addArg<int>(row_padding);      // 7
+    args.addArg<int>(col_padding);      // 8
+
+    VEOpKernelHelper::Call(ctx, "Conv2DBackpropFilter", args);
+
+    OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, filter_bp_transposed, {2,3,1,0}, filter_backprop));
   }
 };
 #endif
@@ -1289,17 +1299,21 @@ class Conv2DVEBackpropFilterOp : public OpKernel {
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
                 errors::InvalidArgument("Invalid data format"));
+    /*
     OP_REQUIRES(context, data_format_ == FORMAT_NCHW,
                 errors::InvalidArgument(
                     "Conv2DVEBackpropFilterOp only supports NCHW."));
+    */
     OP_REQUIRES_OK(context, context->GetAttr("strides", &strides_));
     OP_REQUIRES(context, strides_.size() == 4,
                 errors::InvalidArgument("Sliding window strides field must "
                                         "specify 4 dimensions"));
+    /*
     OP_REQUIRES(
         context, (strides_[0] == 1 && strides_[1] == 1),
         errors::InvalidArgument("Current implementation does not yet support "
                                 "strides in the batch and depth dimensions."));
+    */
     OP_REQUIRES(context, strides_[2] > 0 && strides_[3] > 0,
                 errors::InvalidArgument(
                     "Row and column strides should be larger than 0."));
