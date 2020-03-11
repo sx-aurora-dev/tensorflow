@@ -456,6 +456,59 @@ TF_CALL_float(REGISTER_VE_KERNELS)
 #endif
 #undef REGISTER_VE_KERNELS
 
+
+template <typename T>
+class EluOp<VEDevice,T> : public UnaryElementWiseOp<T, EluOp<VEDevice, T>> {
+ public:
+  using UnaryElementWiseOp<T, EluOp<VEDevice, T>>::UnaryElementWiseOp;
+
+  void Operate(OpKernelContext* context, const Tensor& input, Tensor* output) {
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    args.addArg<Tensor>(input);
+    args.addArg<Tensor>(*output);
+
+    VEOpKernelHelper::Call(context, "Elu", args);
+  }
+};
+
+template <typename T>
+class EluGradOp<VEDevice,T> : public BinaryElementWiseOp<T, EluGradOp<VEDevice, T>> {
+ public:
+  using BinaryElementWiseOp<T, EluGradOp<VEDevice, T>>::BinaryElementWiseOp;
+
+  // INPUTS:
+  //   g (gradients): backpropagated gradients
+  //   a (outputs): outputs of the EluOp()
+  // OUTPUT:
+  //   gradients to backprop
+  template <int NDIMS>
+  void Operate(OpKernelContext* context, const Tensor& g, const Tensor& a,
+               Tensor* output) {
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(g);
+    args.addArg<Tensor>(a);
+    args.addArg<Tensor>(*output);
+
+    VEOpKernelHelper::Call(context, "EluGrad", args);
+  }
+};
+
+#define REGISTER_VE_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("Elu").Device(DEVICE_VE).TypeConstraint<type>("T"),       \
+      EluOp<VEDevice, type>);                                        \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("EluGrad").Device(DEVICE_VE).TypeConstraint<type>("T"),   \
+      EluGradOp<VEDevice, type>)
+#if 0
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#else
+TF_CALL_float(REGISTER_VE_KERNELS)
+//TF_CALL_double(REGISTER_VE_KERNELS)
+#endif
+
+
 template <typename T>
 class SeluOp<VEDevice, T> : public UnaryElementWiseOp<T, SeluOp<VEDevice, T>> {
  public:
