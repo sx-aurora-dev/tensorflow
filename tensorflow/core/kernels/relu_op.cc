@@ -326,7 +326,12 @@ class ReluGradOp<VEDevice, T> : public BinaryElementWiseOp<T, ReluGradOp<VEDevic
   REGISTER_KERNEL_BUILDER(                                             \
       Name("ReluGrad").Device(DEVICE_VE).TypeConstraint<type>("T"),  \
       ReluGradOp<VEDevice, type>);
+#if 0
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#else
+TF_CALL_float(REGISTER_VE_KERNELS)
+//TF_CALL_double(REGISTER_VE_KERNELS)
+#endif
 #undef REGISTER_VE_KERNELS
 
 
@@ -364,15 +369,20 @@ class Relu6GradOp<VEDevice, T> : public BinaryElementWiseOp<T, Relu6GradOp<VEDev
   }
 };
 
-#define REGISTER_VE_KERNELS(type)                                    	 \
-  REGISTER_KERNEL_BUILDER(                                               \
+#define REGISTER_VE_KERNELS(type)                                    	     \
+  REGISTER_KERNEL_BUILDER(                                                   \
 	  Name("Relu6").Device(DEVICE_VE).TypeConstraint<type>("T"),         \
 	  Relu6Op<VEDevice, type>);                                          \
-  REGISTER_KERNEL_BUILDER(                                               \
+  REGISTER_KERNEL_BUILDER(                                                   \
 	  Name("Relu6Grad").Device(DEVICE_VE).TypeConstraint<type>("T"),     \
 	  Relu6GradOp<VEDevice, type>);
 
+#if 0
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#else
+TF_CALL_float(REGISTER_VE_KERNELS)
+//TF_CALL_double(REGISTER_VE_KERNELS)
+#endif
 #undef REGISTER_VE_KERNELS
 
 
@@ -431,14 +441,72 @@ class LeakyReluGradOp<VEDevice, T>
     T alpha_;
 };
 
-#define REGISTER_VE_KERNELS(type)                                    \
-  REGISTER_KERNEL_BUILDER(                                             \
+#define REGISTER_VE_KERNELS(type)                                         \
+  REGISTER_KERNEL_BUILDER(                                                \
       Name("LeakyRelu").Device(DEVICE_VE).TypeConstraint<type>("T"),      \
       LeakyReluOp<VEDevice, type>);                                       \
-  REGISTER_KERNEL_BUILDER(                                             \
+  REGISTER_KERNEL_BUILDER(                                                \
       Name("LeakyReluGrad").Device(DEVICE_VE).TypeConstraint<type>("T"),  \
       LeakyReluGradOp<VEDevice, type>);
+#if 0
 TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#else
+TF_CALL_float(REGISTER_VE_KERNELS)
+//TF_CALL_double(REGISTER_VE_KERNELS)
+#endif
+#undef REGISTER_VE_KERNELS
+
+template <typename T>
+class SeluOp<VEDevice, T> : public UnaryElementWiseOp<T, SeluOp<VEDevice, T>> {
+ public:
+  using UnaryElementWiseOp<T, SeluOp<VEDevice, T>>::UnaryElementWiseOp;
+
+  void Operate(OpKernelContext* context, const Tensor& input, Tensor* output) {
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    args.addArg<Tensor>(input);
+    args.addArg<Tensor>(*output);
+
+    VEOpKernelHelper::Call(context, "Selu", args);
+  }
+};
+
+template <typename T>
+class SeluGradOp<VEDevice, T> : public BinaryElementWiseOp<T, SeluGradOp<VEDevice, T>> {
+ public:
+  using BinaryElementWiseOp<T, SeluGradOp<VEDevice, T>>::BinaryElementWiseOp;
+
+
+  // INPUTS:
+  //   g (gradients): backpropagated gradients
+  //   a (outputs): outputs of the SeluOp()
+  // OUTPUT:
+  //   gradients to backprop
+  template <int NDIMS>
+  void Operate(OpKernelContext* context, const Tensor& g, const Tensor& a,
+               Tensor* output) {
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(g);
+    args.addArg<Tensor>(a);
+    args.addArg<Tensor>(*output);
+
+    VEOpKernelHelper::Call(context, "SeluGrad", args);
+  }
+};
+
+#define REGISTER_VE_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("Selu").Device(DEVICE_VE).TypeConstraint<type>("T"),      \
+      SeluOp<VEDevice, type>);                                       \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("SeluGrad").Device(DEVICE_VE).TypeConstraint<type>("T"),  \
+      SeluGradOp<VEDevice, type>)
+#if 0
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+#else
+TF_CALL_float(REGISTER_VE_KERNELS)
+//TF_CALL_double(REGISTER_VE_KERNELS)
+#endif
 #undef REGISTER_VE_KERNELS
 
 #endif
