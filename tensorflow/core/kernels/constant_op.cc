@@ -444,6 +444,12 @@ class ZerosLikeOp<VEDevice, T> : public OpKernel {
 REGISTER_KERNEL(float, VE);
 REGISTER_KERNEL(double, VE);
 REGISTER_KERNEL(int64, VE);
+// FIXME: implement bool for VE
+REGISTER_KERNEL_BUILDER(Name("ZerosLike")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<bool>("T")
+                            .HostMemory("y"),
+                        ZerosLikeOp<CPUDevice, bool>);
 REGISTER_KERNEL_BUILDER(Name("ZerosLike")
                             .Device(DEVICE_VE)
                             .TypeConstraint<int32>("T")

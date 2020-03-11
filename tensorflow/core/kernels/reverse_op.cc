@@ -551,14 +551,23 @@ TF_CALL_float(REGISTER_VE_KERNELS);
 //TF_CALL_complex128(REGISTER_VE_KERNELS);
 #undef REGISTER_VE_KERNELS
 
+// FIXME: implement Reverse on VE
+REGISTER_KERNEL_BUILDER(Name("Reverse")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("tensor")
+                            .HostMemory("dims")
+                            .HostMemory("output"),
+                        ReverseOp<CPUDevice, float>);
+
 // A special kernel for int32.
-//REGISTER_KERNEL_BUILDER(Name("Reverse")
-//                            .Device(DEVICE_VE)
-//                            .TypeConstraint<int32>("T")
-//                            .HostMemory("tensor")
-//                            .HostMemory("dims")
-//                            .HostMemory("output"),
-//                        ReverseOp<CPUDevice, int32>);
+REGISTER_KERNEL_BUILDER(Name("Reverse")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("tensor")
+                            .HostMemory("dims")
+                            .HostMemory("output"),
+                        ReverseOp<CPUDevice, int32>);
 REGISTER_KERNEL_BUILDER(Name("ReverseV2")
                             .Device(DEVICE_VE)
                             .TypeConstraint<int32>("T")
