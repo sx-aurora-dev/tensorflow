@@ -713,7 +713,7 @@ class VEDepthwiseConv2dNativeOp : public BinaryOp<T> {
                 errors::Internal("Error during reduction copy."));
 
     Tensor filter_transposed ;
-    if( depth_multiplier > 1 || in_depth > 1 ) {
+    if( out_depth > 1 ) {
       OP_REQUIRES_OK(context,
 	             context->allocate_temp(reinterpret_cast<DataType>(input.dtype()),
 	                                    ShapeFromFormat(FORMAT_NCHW, out_depth, filter_rows, filter_cols, 1),
@@ -723,7 +723,7 @@ class VEDepthwiseConv2dNativeOp : public BinaryOp<T> {
     }
     else {
       OP_REQUIRES(context, filter_transposed.CopyFrom(filter_reshaped,
-	                                              ShapeFromFormat(FORMAT_NCHW, out_depth, 1, filter_rows, filter_cols)),
+	                                              ShapeFromFormat(FORMAT_NCHW, out_depth /* =1*/, 1, filter_rows, filter_cols)),
                   errors::Internal("Error during reduction copy."));
     }
 
