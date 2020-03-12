@@ -48,8 +48,8 @@ limitations under the License.
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/kernels/transpose_functor.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
 #endif
 
 namespace tensorflow {
@@ -561,9 +561,8 @@ class VEDepthwiseConv2dNativeOp : public BinaryOp<T> {
   }
 
   void Compute(OpKernelContext* context) override {
-    // Input tensor is of the following dimensions:
-    // [ batch, in_rows, in_cols, in_depth ]
-    const Tensor& input = context->input(0);
+
+    const Tensor& input = context->input(0);	// NHWC or NCHW
 
     // Input filter is of the following dimensions:
     // [ filter_rows, filter_cols, in_depth, depth_multiplier]
@@ -683,78 +682,65 @@ class VEDepthwiseConv2dNativeOp : public BinaryOp<T> {
     }
 #endif
 
-    struct Args {
-      // Tensor Pointers
-      uint64_t input_ptr ;
-      uint64_t filter_ptr ;
-      uint64_t output_ptr ;
+    Tensor input_transposed, output_transposed ;
+    if ( data_format_ == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in/out tensor
 
-      // Tensor Format
-      int data_format ;
-      int data_type ;
+      OP_REQUIRES_OK(context,
+	             context->allocate_temp(
+			        reinterpret_cast<DataType>(input.dtype()),
+			        ShapeFromFormat(FORMAT_NCHW, batch, input_rows, input_cols, in_depth),
+                                &input_transposed)
+		     );
 
-      // Input layer dimensions
-      int batch;
-      int in_rows;
-      int in_cols;
-      int in_depth;
-      int filter_rows;
-      int filter_cols;
-      int depth_multiplier;
-      int stride;
-      int pad_rows;
-      int pad_cols;
+      OP_REQUIRES_OK(context,
+		     context->allocate_temp(
+			        reinterpret_cast<DataType>(input.dtype()),
+			        ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depth),
+			        &output_transposed));
 
-      // Output layer dimensions
-      int out_rows;
-      int out_cols;
-      int out_depth;
+      OP_REQUIRES_OK( context, VEDoTranspose(context, input, {0,3,1,2}, &input_transposed));
 
-      Args()
-          : input_ptr(0),
-			filter_ptr(0),
-			output_ptr(0),
-        	batch(0),
-            in_rows(0),
-            in_cols(0),
-            in_depth(0),
-            filter_rows(0),
-            filter_cols(0),
-            depth_multiplier(0),
-            stride(0),
-            pad_rows(0),
-            pad_cols(0),
-            out_rows(0),
-            out_cols(0),
-            out_depth(0) {}
-    };
+    }
+    else {
+      input_transposed  = input ;
+      output_transposed = *output ;
+    }
 
-    Args args;
-    args.batch = batch;
-    args.in_rows = input_rows;
-    args.in_cols = input_cols;
-    args.in_depth = in_depth;
-    args.filter_rows = filter_rows;
-    args.filter_cols = filter_cols;
-    args.depth_multiplier = depth_multiplier;
-    args.stride = stride_;
-    args.pad_rows = pad_rows;
-    args.pad_cols = pad_cols;
-    args.out_rows = out_rows;
-    args.out_cols = out_cols;
-    args.out_depth = out_depth;
+    Tensor filter_reshaped ;
+    OP_REQUIRES(context, filter_reshaped.CopyFrom(filter,
+	                                          ShapeFromFormat(FORMAT_NHWC, filter_rows, filter_cols, 1, out_depth)),
+                errors::Internal("Error during reduction copy."));
 
-    args.input_ptr  = (uint64_t)DMAHelper::base(&input);
-    args.filter_ptr = (uint64_t)DMAHelper::base(&filter);
-    args.output_ptr = (uint64_t)DMAHelper::base(output);
+    Tensor filter_transposed ;
+    if( depth_multiplier > 1 || in_depth > 1 ) {
+      OP_REQUIRES_OK(context,
+	             context->allocate_temp(reinterpret_cast<DataType>(input.dtype()),
+	                                    ShapeFromFormat(FORMAT_NCHW, out_depth, filter_rows, filter_cols, 1),
+	                                    &filter_transposed));
 
-    args.data_format = data_format_ ;
-    args.data_type   = DataTypeToEnum<T>::value ;
+      OP_REQUIRES_OK(context, VEDoTranspose(context, filter_reshaped, {3,2,0,1}, &filter_transposed));
+    }
+    else {
+      OP_REQUIRES(context, filter_transposed.CopyFrom(filter_reshaped,
+	                                              ShapeFromFormat(FORMAT_NCHW, out_depth, 1, filter_rows, filter_cols)),
+                  errors::Internal("Error during reduction copy."));
+    }
 
-    VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("DepthwiseConv2D", (void*)&args, sizeof(args));
-    if (!s.ok())
-      context->SetStatus(s);
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(input_transposed);		// 0
+    args.addArg<Tensor>(filter_transposed);		// 1
+    args.addArg<Tensor>(output_transposed);		// 2
+    args.addArg<int64>(stride_)	;			// 3
+    args.addArg<int64>(pad_rows) ;			// 4
+    args.addArg<int64>(pad_cols) ;			// 5
+
+    VEOpKernelHelper::Call(context, "DepthwiseConv2D", args);
+
+
+    if ( data_format_ == FORMAT_NHWC ) {
+      OP_REQUIRES_OK( context, VEDoTranspose(context, output_transposed, {0,2,3,1}, output));
+    }
   }
 
 #if 0 // For GPU
