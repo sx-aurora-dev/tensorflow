@@ -767,9 +767,7 @@ class BiasGradOp<VEDevice, T> : public OpKernel {
       Name("BiasAddGrad").Device(DEVICE_VE).TypeConstraint<type>("T"), \
       BiasGradOp<VEDevice, type>);
 
-TF_CALL_INTEGRAL_TYPES(REGISTER_KERNEL);
 REGISTER_KERNEL(float);
-// REGISTER_KERNEL(double);
 #undef REGISTER_KERNEL
 #endif // TENSORFLOW_USE_VE
 
