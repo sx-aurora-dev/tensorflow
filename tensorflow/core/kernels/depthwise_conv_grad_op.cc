@@ -1679,83 +1679,64 @@ class VEDepthwiseConv2dNativeBackpropFilterOp : public OpKernel {
         data_format_);
 #endif
 
-    OP_REQUIRES(
-        context, data_format_ == FORMAT_NCHW,
-        errors::Unimplemented(
-            "Depthwise convolution on VE is only supported for NCHW format"));
+    Tensor input_transposed, output_bp_transposed ;
+    if ( data_format_ == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in/out tensor
 
-    struct Args {
-      // Tensor Pointers
-      uint64_t input_ptr ;
-      uint64_t filter_ptr ;
-      uint64_t output_ptr ;
+      OP_REQUIRES_OK(context,
+	             context->allocate_temp(
+			        reinterpret_cast<DataType>(input.dtype()),
+			        ShapeFromFormat(FORMAT_NCHW, batch, input_rows, input_cols, in_depth),
+                                &input_transposed)
+		     );
 
-      // Tensor Format
-      int data_format ;
-      int data_type ;
+      OP_REQUIRES_OK(context,
+		     context->allocate_temp(
+			        reinterpret_cast<DataType>(input.dtype()),
+			        ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depth),
+			        &output_bp_transposed));
 
-      // Input layer dimensions
-      int batch;
-      int in_rows;
-      int in_cols;
-      int in_depth;
-      int filter_rows;
-      int filter_cols;
-      int depth_multiplier;
-      int stride;
-      int pad_rows;
-      int pad_cols;
+      OP_REQUIRES_OK( context, VEDoTranspose(context, input, {0,3,1,2}, &input_transposed));
+      OP_REQUIRES_OK( context, VEDoTranspose(context, out_backprop, {0,3,1,2}, &output_bp_transposed));
 
-      // Output layer dimensions
-      int out_rows;
-      int out_cols;
-      int out_depth;
+    }
+    else {
+      input_transposed     = input ;
+      output_bp_transposed = out_backprop ;
+    }
 
-      Args()
-          : input_ptr(0),
-			filter_ptr(0),
-			output_ptr(0),
-        	batch(0),
-            in_rows(0),
-            in_cols(0),
-            in_depth(0),
-            filter_rows(0),
-            filter_cols(0),
-            depth_multiplier(0),
-            stride(0),
-            pad_rows(0),
-            pad_cols(0),
-            out_rows(0),
-            out_cols(0),
-            out_depth(0) {}
-    };
+    Tensor filter_bp_reshaped ;
+    OP_REQUIRES(context, filter_bp_reshaped.CopyFrom(*filter_backprop,
+	                                             ShapeFromFormat(FORMAT_NHWC, filter_rows, filter_cols, 1, out_depth)),
+                errors::Internal("Error during reduction copy."));
 
-    Args args;
-    args.batch = batch;
-    args.in_rows = input_rows;
-    args.in_cols = input_cols;
-    args.in_depth = in_depth;
-    args.filter_rows = filter_rows;
-    args.filter_cols = filter_cols;
-    args.depth_multiplier = depth_multiplier;
-    args.stride = stride_;
-    args.pad_rows = pad_rows;
-    args.pad_cols = pad_cols;
-    args.out_rows = out_rows;
-    args.out_cols = out_cols;
-    args.out_depth = out_depth;
+    Tensor filter_bp_transposed ;
+    if( out_depth > 1 ) {
+      OP_REQUIRES_OK(context,
+	             context->allocate_temp(reinterpret_cast<DataType>(input.dtype()),
+	                                    ShapeFromFormat(FORMAT_NCHW, out_depth, filter_rows, filter_cols, 1),
+	                                    &filter_bp_transposed));
+    }
+    else {
+      OP_REQUIRES(context, filter_bp_transposed.CopyFrom(filter_bp_reshaped,
+	                                              ShapeFromFormat(FORMAT_NCHW, out_depth /* =1*/, 1, filter_rows, filter_cols)),
+                  errors::Internal("Error during reduction copy."));
+    }
 
-    args.input_ptr  = (uint64_t)DMAHelper::base(&input);
-    args.filter_ptr = (uint64_t)DMAHelper::base(filter_backprop);
-    args.output_ptr = (uint64_t)DMAHelper::base(&out_backprop);
 
-    args.data_format = data_format_ ;
-    args.data_type   = DataTypeToEnum<T>::value ;
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(input_transposed);		// 0
+    args.addArg<Tensor>(filter_bp_transposed);		// 1
+    args.addArg<Tensor>(output_bp_transposed);		// 2
+    args.addArg<int64>(stride_)	;			// 3
+    args.addArg<int64>(pad_rows) ;			// 4
+    args.addArg<int64>(pad_cols) ;			// 5
 
-    VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("DepthwiseConv2DGradFilter", (void*)&args, sizeof(args));
-    if (!s.ok())
-      context->SetStatus(s);
+    VEOpKernelHelper::Call(context, "DepthwiseConv2DGradFilter", args);
+
+    if ( out_depth > 1 ) {
+      OP_REQUIRES_OK( context, VEDoTranspose(context, filter_bp_transposed, {2,3,1,0}, &filter_bp_reshaped));
+    }
   }
 
 #if 0	// For GPU
