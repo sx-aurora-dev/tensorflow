@@ -47,9 +47,6 @@ limitations under the License.
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
-
 #include "tensorflow/core/kernels/transpose_functor.h"
 #include "tensorflow/core/framework/ve_ops_common.h"
 #endif
