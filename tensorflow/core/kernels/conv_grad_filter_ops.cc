@@ -280,11 +280,19 @@ struct LaunchConv2DBackpropFilterOp<VEDevice, T> {
 
     /* Filter */
     Tensor filter_bp_transposed ;
-    OP_REQUIRES_OK(ctx,
-		   ctx->allocate_temp(
-		       reinterpret_cast<DataType>(input.dtype()),
-		       ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic),
-		       &filter_bp_transposed));
+
+    if( f_oc * f_ic > 1 ) {
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic),
+			 &filter_bp_transposed));
+    }
+    else {
+      OP_REQUIRES(ctx, filter_bp_transposed.CopyFrom(*filter_backprop,
+	                                             ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic)),
+                  errors::Internal("Error during reshape and internal-copy."));
+    }
     args.addArg(filter_bp_transposed) ;		// 2
 
 
@@ -298,7 +306,9 @@ struct LaunchConv2DBackpropFilterOp<VEDevice, T> {
 
     VEOpKernelHelper::Call(ctx, "Conv2DBackpropFilter", args);
 
-    OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, filter_bp_transposed, {2,3,1,0}, filter_backprop));
+    if( f_oc * f_ic > 1 ) {
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, filter_bp_transposed, {2,3,1,0}, filter_backprop));
+    }
   }
 };
 #endif
