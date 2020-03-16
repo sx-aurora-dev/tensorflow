@@ -37,8 +37,7 @@ limitations under the License.
 #include "tensorflow/core/platform/macros.h"
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
 #endif
 
 namespace tensorflow {
@@ -246,11 +245,6 @@ TF_CALL_GPU_NUMBER_TYPES(REGISTER_ARGMAX_GPU);
 #ifdef TENSORFLOW_USE_VE
 enum VEArgOpType { ARGMAX=0, ARGMIN=1 };
 
-static const char* VEArgOpString[] = {
- "ArgMax",
- "ArgMin",
-};
-
 template <typename T, typename Tout, VEArgOpType Op>
 class VEArgOp : public OpKernel {
  public:
@@ -291,32 +285,17 @@ class VEArgOp : public OpKernel {
       return;
     }
 
-#define VE_ARGOP_MAX_HANDLE_DIM	4
+#define VE_ARGOP_MAX_HANDLE_DIM	7
     if( input_dims <= VE_ARGOP_MAX_HANDLE_DIM ) {
+      VEOpKernelHelper::ArgsImpl<> args;
 
-      struct {
-        int dtype, idxtype ;
-        int64_t axis ;
-        uint64_t in_ptr, out_ptr ;
-        int64_t input_dims ;
-        int64_t dim_size[VE_ARGOP_MAX_HANDLE_DIM] ;
-      } args;
 
-      args.dtype = input.dtype() ;
-      args.idxtype = output->dtype() ;
-      args.axis = axis ;
-      args.in_ptr = (uint64_t) DMAHelper::base(&input) ;
-      args.out_ptr = (uint64_t) DMAHelper::base(output) ;
+      args.addArg<Tensor>(input) ;
+      args.addArg<Tensor>(*output) ;
+      args.addArg<int64>(axis) ;
+      args.addArg<int64>(Op) ;
 
-      args.input_dims = input_dims ;
-      for (int d = 0; d < input_dims; ++d) {
-	args.dim_size[d] = input_shape.dim_size(d) ;
-      }
-
-      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute(VEArgOpString[Op], (void*)&args, sizeof(args));
-      if (!s.ok())
-        context->SetStatus(s);
+      VEOpKernelHelper::Call(context, "Arg", args);
 
     }
     else {
@@ -379,7 +358,7 @@ class VEArgMinOp
 
 //TF_CALL_half(REGISTER_ARGMAX_VE) ;
 TF_CALL_float(REGISTER_ARGMAX_VE) ;
-TF_CALL_double(REGISTER_ARGMAX_VE) ;
+//TF_CALL_double(REGISTER_ARGMAX_VE) ;
 
 #undef REGISTER_ARGMAX_VE
 
