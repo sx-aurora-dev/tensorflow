@@ -1538,9 +1538,6 @@ struct FusedBatchNorm<VEDevice, T, U> {
                     "The VE implementation of FusedBatchNorm does not support "
                     "side input."));
 
-    OP_REQUIRES(context, tensor_format == FORMAT_NCHW,
-                errors::Internal("The VE implementation of FusedBatchNorm "
-                                 "only supports NCHW tensor format for now."));
 #if 0
     fprintf(stderr, "FusedBatchNorm<VEDevice>: is_training=%d epsilon=%f"
             " reserve_space_allocator=%p\n",
@@ -1556,23 +1553,73 @@ struct FusedBatchNorm<VEDevice, T, U> {
       dummy_reserve_space->flat<U>()(0) = U();
     }
 
+    const int64 batch = GetTensorDim(x_input, tensor_format, 'N');
+
+    const int64 in_rows = GetTensorDim(x_input, tensor_format, 'H');
+    const int64 in_cols = GetTensorDim(x_input, tensor_format, 'W');
+    const int64 in_depths = GetTensorDim(x_input, tensor_format, 'C');
+
+    const int64 out_rows = GetTensorDim(*y_output, tensor_format, 'H');
+    const int64 out_cols = GetTensorDim(*y_output, tensor_format, 'W');
+    const int64 out_depths = GetTensorDim(*y_output, tensor_format, 'C');
+
+    Tensor x_input_transposed, y_output_transposed;
+    if (tensor_format == FORMAT_NHWC) {
+      // if data_format is NHWC, then transpose in/out tensor
+
+      OP_REQUIRES_OK(context,
+		     context->allocate_temp(
+			 reinterpret_cast<DataType>(x_input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+                         &x_input_transposed)
+		     );
+
+      OP_REQUIRES_OK(context,
+		     context->allocate_temp(
+			 reinterpret_cast<DataType>(x_input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+                         &y_output_transposed));
+
+      /* From:NHWC, To:NCHW(vetfkernel shape) */
+      OP_REQUIRES_OK( context, VEDoTranspose(context, x_input, {0,3,1,2}, &x_input_transposed));
+
+    }
+
     VEOpKernelHelper::ArgsImpl<> args;
-    args.addArg<Tensor>(x_input);
-    args.addArg<Tensor>(scale_input);
-    args.addArg<Tensor>(offset_input);
-    args.addArg<Tensor>(estimated_mean_input);
-    args.addArg<Tensor>(estimated_variance_input);
-    args.addArg<Tensor>(*y_output);
-    args.addArg<Tensor>(*batch_mean_output);
-    args.addArg<Tensor>(*saved_mean_output);
-    args.addArg<Tensor>(*batch_var_output);
-    args.addArg<Tensor>(*saved_var_output); // 9
-    args.addArg<U>(epsilon); // 10
-    args.addArg<bool>(is_training); // 11
-    args.addArg<int64>(DataTypeToEnum<T>::value); // 12
-    args.addArg<int64>(DataTypeToEnum<U>::value); // 13
+    if (tensor_format == FORMAT_NHWC) {            // 0
+      args.addArg<Tensor>(x_input_transposed);
+    } else {
+      args.addArg<Tensor>(x_input);
+    }
+
+    args.addArg<Tensor>(scale_input);              // 1
+    args.addArg<Tensor>(offset_input);             // 2
+    args.addArg<Tensor>(estimated_mean_input);     // 3
+    args.addArg<Tensor>(estimated_variance_input); // 4
+
+    if (tensor_format == FORMAT_NHWC) {            // 5
+      args.addArg<Tensor>(y_output_transposed);
+    } else {
+      args.addArg<Tensor>(*y_output);
+    }
+
+    args.addArg<Tensor>(*batch_mean_output);       // 6
+    args.addArg<Tensor>(*saved_mean_output);       // 7
+    args.addArg<Tensor>(*batch_var_output);        // 8
+    args.addArg<Tensor>(*saved_var_output);        // 9
+    args.addArg<U>(epsilon);                       // 10
+    args.addArg<bool>(is_training);                // 11
+    args.addArg<int64>(DataTypeToEnum<T>::value);  // 12
+    args.addArg<int64>(DataTypeToEnum<U>::value);  // 13
 
     VEOpKernelHelper::Call(context, "FusedBatchNorm", args);
+
+    if (tensor_format == FORMAT_NHWC) {
+      // if data_format is NHWC, then transpose out tensor
+
+      /* From:NCHW(vetfkernel shape), To:NHWC */ 
+      OP_REQUIRES_OK( context, VEDoTranspose(context, y_output_transposed, {0,2,3,1}, y_output));
+    }
   }
 };
 
