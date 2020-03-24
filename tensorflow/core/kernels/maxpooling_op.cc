@@ -52,9 +52,6 @@ limitations under the License.
 #ifdef TENSORFLOW_USE_VE
 #include "tensorflow/core/kernels/transpose_functor.h"
 #include "tensorflow/core/framework/ve_ops_common.h"
-
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
 #endif
 
 namespace tensorflow {
