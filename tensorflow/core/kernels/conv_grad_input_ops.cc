@@ -1535,22 +1535,37 @@ class Conv2DVEBackpropInputOp : public OpKernel {
     OP_REQUIRES(context, strides_.size() == 4,
                 errors::InvalidArgument("Sliding window strides field must "
                                         "specify 4 dimensions"));
+    int stride_n = GetTensorDim(strides_, data_format_, 'N');
+    int stride_c = GetTensorDim(strides_, data_format_, 'C');
+    int stride_h = GetTensorDim(strides_, data_format_, 'H');
+    int stride_w = GetTensorDim(strides_, data_format_, 'W');
     OP_REQUIRES(
-        context, (strides_[0] == 1 && strides_[1] == 1),
+        context, (stride_n == 1 && stride_c == 1),
         errors::InvalidArgument("Current implementation does not yet support "
                                 "strides in the batch and depth dimensions."));
-    OP_REQUIRES(context, strides_[2] > 0 && strides_[3] > 0,
+    OP_REQUIRES(context, stride_h > 0 && stride_w > 0,
                 errors::InvalidArgument(
                     "Row and column strides should be larger than 0."));
+
     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+
+
     OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilations_));
     OP_REQUIRES(context, dilations_.size() == 4,
                 errors::InvalidArgument("Sliding window dilations field must "
                                         "specify 4 dimensions"));
-    OP_REQUIRES(context, (dilations_[0] && dilations_[1]),
+    int dilation_n = GetTensorDim(dilations_, data_format_, 'N');
+    int dilation_c = GetTensorDim(dilations_, data_format_, 'C');
+    int dilation_h = GetTensorDim(dilations_, data_format_, 'H');
+    int dilation_w = GetTensorDim(dilations_, data_format_, 'W');
+    OP_REQUIRES(context, (dilation_n == 1 && dilation_c == 1),
                 errors::InvalidArgument(
                     "Current implementation does not yet support "
                     "dilations in the batch and depth dimensions."));
+    OP_REQUIRES(
+        context, dilation_h > 0 && dilation_w > 0,
+        errors::InvalidArgument("Dilated rates should be larger than 0."));
+
     OP_REQUIRES_OK(context,
                    context->GetAttr("explicit_paddings", &explicit_paddings_));
     OP_REQUIRES_OK(context, CheckValidPadding(padding_, explicit_paddings_,
