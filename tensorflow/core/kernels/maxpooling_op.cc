@@ -50,6 +50,9 @@ limitations under the License.
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/kernels/transpose_functor.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
+
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
 #endif
@@ -1535,62 +1538,23 @@ struct LaunchMaxPoolingVEOP {
     VLOG(2) << "LaunchMaxPoolingVEOP<VEDevice, T>";
     VLOG(2) << "LaunchMaxPoolingVEOP<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
 
-    if (params.data_format != FORMAT_NCHW) {
-      ctx->SetStatus(
-          errors::Unimplemented("LaunchMaxPoolingVEOP implementation only supports"
-                                "NCHW tensor format for now."));
-      return;
-    }
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(input) ;	// 0
+    args.addArg<Tensor>(*output) ;	// 1
 
-    struct TensorParam {
-      int w, h, c, n;
-      TensorParam(const Tensor& t, TensorFormat f) :
-        w(GetTensorDim(t, f, 'W')),
-        h(GetTensorDim(t, f, 'H')),
-        c(GetTensorDim(t, f, 'C')),
-        n(GetTensorDim(t, f, 'N')) {}
-      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
-    };
+    /* pooling params */
+    args.addArg<int>(params.window_rows);   // 2
+    args.addArg<int>(params.window_cols);   // 3
+    args.addArg<int>(params.row_stride);    // 4
+    args.addArg<int>(params.col_stride);    // 5
+    args.addArg<int>(params.pad_rows);      // 6
+    args.addArg<int>(params.pad_cols);      // 7
 
-    struct PoolingParam {
-      uint64_t in;
-      uint64_t out;
-      TensorParam in_param;
-      TensorParam out_param;
+#if 0
+    args.addArg<int>(FORMAT_NHWC); // data_layout   : current vetfkernel supports NCHW only.
+#endif
 
-      int row_window;
-      int col_window;
-      int row_stride;
-      int col_stride;
-      int row_padding;
-      int col_padding;
-
-      int data_format;
-      int data_type;
-
-      PoolingParam(const Tensor& input, Tensor* output, TensorFormat f) :
-	in_param(input, f),
-	out_param(*output, f) {}
-    };
-
-    PoolingParam p(input, output, params.data_format) ;
-
-    p.in  = (uint64_t)DMAHelper::base(&input);
-    p.out = (uint64_t)DMAHelper::base(output);
-    p.data_format = params.data_format;
-    p.data_type = input.dtype();
-
-    p.row_window = params.window_rows ;
-    p.col_window = params.window_cols ;
-    p.row_stride = params.row_stride ;
-    p.col_stride = params.col_stride ;
-    p.row_padding = params.pad_rows ;
-    p.col_padding = params.pad_cols ;
-
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("MaxPooling", (void*)&p, sizeof(p));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    VEOpKernelHelper::Call(ctx, "MaxPool", args);
   }
 };
 
@@ -1607,74 +1571,26 @@ struct LaunchMaxPoolingGradVEOP {
     VLOG(2) << "LaunchMaxPoolingGradVEOP<VEDevice, T>";
     VLOG(2) << "LaunchMaxPoolingGradVEOP<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
 
-    if (params.data_format != FORMAT_NCHW) {
-      ctx->SetStatus(
-          errors::Unimplemented("LaunchMaxPoolingGradVEOP implementation only supports"
-                                "NCHW tensor format for now."));
-      return;
-    }
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(out_backprop) ;	// 0
+    args.addArg<Tensor>(output) ;	// 1
+    args.addArg<Tensor>(input) ;	// 2
+    args.addArg<Tensor>(*in_backprop) ;	// 3
 
-    struct TensorParam {
-      int w, h, c, n;
-      TensorParam(const Tensor& t, TensorFormat f) :
-        w(GetTensorDim(t, f, 'W')),
-        h(GetTensorDim(t, f, 'H')),
-        c(GetTensorDim(t, f, 'C')),
-        n(GetTensorDim(t, f, 'N')) {}
-      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
-    };
+    /* pooling params */
+    args.addArg<int>(params.window_rows);   // 4
+    args.addArg<int>(params.window_cols);   // 5
+    args.addArg<int>(params.row_stride);    // 6
+    args.addArg<int>(params.col_stride);    // 7
+    args.addArg<int>(params.pad_rows);      // 8
+    args.addArg<int>(params.pad_cols);      // 9
 
-    struct PoolingGradParam {
-      uint64_t in;
-      uint64_t out;
-      uint64_t out_bp;
-      uint64_t in_bp;
+#if 0
+    args.addArg<int>(FORMAT_NHWC); // data_layout   : current vetfkernel supports NCHW only.
+#endif
 
-      TensorParam in_param;
-      TensorParam out_param;
-      TensorParam out_bp_param;
-      TensorParam in_bp_param;
+    VEOpKernelHelper::Call(ctx, "MaxPoolGrad", args);
 
-      int row_window;
-      int col_window;
-      int row_stride;
-      int col_stride;
-      int row_padding;
-      int col_padding;
-
-      int data_format;
-      int data_type;
-
-      PoolingGradParam(const Tensor& input, const Tensor& output, const Tensor& out_backprop,
-	  Tensor* in_backprop, TensorFormat f) :
-	in_param(input, f),
-	out_param(output, f),
-	out_bp_param(out_backprop, f),
-	in_bp_param(*in_backprop, f) {}
-    };
-
-    PoolingGradParam p(input, output, out_backprop, in_backprop, params.data_format) ;
-
-    p.in  = (uint64_t)DMAHelper::base(&input);
-    p.out = (uint64_t)DMAHelper::base(&output);
-    p.out_bp = (uint64_t)DMAHelper::base(&out_backprop);
-    p.in_bp = (uint64_t)DMAHelper::base(in_backprop);
-
-    p.data_format = params.data_format;
-    p.data_type = input.dtype();
-
-    p.row_window = params.window_rows ;
-    p.col_window = params.window_cols ;
-    p.row_stride = params.row_stride ;
-    p.col_stride = params.col_stride ;
-    p.row_padding = params.pad_rows ;
-    p.col_padding = params.pad_cols ;
-
-
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("MaxPoolingBackprop", (void*)&p, sizeof(p));
-    if (!s.ok())
-      ctx->SetStatus(s);
   }
 };
 
