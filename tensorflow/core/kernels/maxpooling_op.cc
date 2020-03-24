@@ -50,8 +50,8 @@ limitations under the License.
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
+#include "tensorflow/core/kernels/transpose_functor.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
 #endif
 
 namespace tensorflow {
@@ -1535,62 +1535,64 @@ struct LaunchMaxPoolingVEOP {
     VLOG(2) << "LaunchMaxPoolingVEOP<VEDevice, T>";
     VLOG(2) << "LaunchMaxPoolingVEOP<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
 
-    if (params.data_format != FORMAT_NCHW) {
-      ctx->SetStatus(
-          errors::Unimplemented("LaunchMaxPoolingVEOP implementation only supports"
-                                "NCHW tensor format for now."));
-      return;
+    TensorFormat data_format = params.data_format ;
+
+    Tensor in_transposed, out_transposed ;
+    if ( data_format == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in/out tensor
+
+      const int64 batch = GetTensorDim(input, data_format, 'N');
+
+      const int64 in_rows = GetTensorDim(input, data_format, 'H');
+      const int64 in_cols = GetTensorDim(input, data_format, 'W');
+      const int64 in_depths = GetTensorDim(input, data_format, 'C');
+
+      const int64 out_rows = GetTensorDim(*output, data_format, 'H');
+      const int64 out_cols = GetTensorDim(*output, data_format, 'W');
+      const int64 out_depths = GetTensorDim(*output, data_format, 'C');
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+                         &in_transposed)
+		     );
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+                         &out_transposed));
+
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, input, {0,3,1,2}, &in_transposed));
+    }
+    else {
+      in_transposed  = input ;
+      out_transposed = *output ;
     }
 
-    struct TensorParam {
-      int w, h, c, n;
-      TensorParam(const Tensor& t, TensorFormat f) :
-        w(GetTensorDim(t, f, 'W')),
-        h(GetTensorDim(t, f, 'H')),
-        c(GetTensorDim(t, f, 'C')),
-        n(GetTensorDim(t, f, 'N')) {}
-      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
-    };
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(in_transposed) ;    // 0
+    args.addArg<Tensor>(out_transposed) ;   // 1
 
-    struct PoolingParam {
-      uint64_t in;
-      uint64_t out;
-      TensorParam in_param;
-      TensorParam out_param;
+    /* pooling params */
+    args.addArg<int>(params.window_rows);   // 2
+    args.addArg<int>(params.window_cols);   // 3
+    args.addArg<int>(params.row_stride);    // 4
+    args.addArg<int>(params.col_stride);    // 5
+    args.addArg<int>(params.pad_rows);      // 6
+    args.addArg<int>(params.pad_cols);      // 7
 
-      int row_window;
-      int col_window;
-      int row_stride;
-      int col_stride;
-      int row_padding;
-      int col_padding;
+#if 0
+    args.addArg<int>(FORMAT_NHWC); // data_layout   : current vetfkernel supports NCHW only.
+#endif
 
-      int data_format;
-      int data_type;
+    VEOpKernelHelper::Call(ctx, "MaxPool", args);
 
-      PoolingParam(const Tensor& input, Tensor* output, TensorFormat f) :
-	in_param(input, f),
-	out_param(*output, f) {}
-    };
-
-    PoolingParam p(input, output, params.data_format) ;
-
-    p.in  = (uint64_t)DMAHelper::base(&input);
-    p.out = (uint64_t)DMAHelper::base(output);
-    p.data_format = params.data_format;
-    p.data_type = input.dtype();
-
-    p.row_window = params.window_rows ;
-    p.col_window = params.window_cols ;
-    p.row_stride = params.row_stride ;
-    p.col_stride = params.col_stride ;
-    p.row_padding = params.pad_rows ;
-    p.col_padding = params.pad_cols ;
-
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("MaxPooling", (void*)&p, sizeof(p));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    // if data_format is NHWC, then transpose output tensor
+    if ( data_format == FORMAT_NHWC ) {
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, out_transposed, {0,2,3,1}, output));
+    }
   }
 };
 
@@ -1607,74 +1609,86 @@ struct LaunchMaxPoolingGradVEOP {
     VLOG(2) << "LaunchMaxPoolingGradVEOP<VEDevice, T>";
     VLOG(2) << "LaunchMaxPoolingGradVEOP<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
 
-    if (params.data_format != FORMAT_NCHW) {
-      ctx->SetStatus(
-          errors::Unimplemented("LaunchMaxPoolingGradVEOP implementation only supports"
-                                "NCHW tensor format for now."));
-      return;
+    TensorFormat data_format = params.data_format ;
+
+    Tensor out_bp_transposed ;
+    Tensor out_transposed ;
+    Tensor in_transposed ;
+    Tensor in_bp_transposed ;
+    if ( data_format == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in/out tensor
+
+      const int64 batch = GetTensorDim(input, data_format, 'N');
+
+      const int64 in_rows = GetTensorDim(input, data_format, 'H');
+      const int64 in_cols = GetTensorDim(input, data_format, 'W');
+      const int64 in_depths = GetTensorDim(input, data_format, 'C');
+
+      const int64 out_rows = GetTensorDim(output, data_format, 'H');
+      const int64 out_cols = GetTensorDim(output, data_format, 'W');
+      const int64 out_depths = GetTensorDim(output, data_format, 'C');
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+                         &out_bp_transposed));
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+                         &out_transposed));
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+                         &in_transposed));
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+                         &in_bp_transposed));
+
+
+      OP_REQUIRES_OK(ctx, VEDoTranspose(ctx, out_backprop, {0,3,1,2}, &out_bp_transposed));
+      OP_REQUIRES_OK(ctx, VEDoTranspose(ctx, output, {0,3,1,2}, &out_transposed));
+      OP_REQUIRES_OK(ctx, VEDoTranspose(ctx, input, {0,3,1,2}, &in_transposed));
+    }
+    else {
+      out_bp_transposed = out_backprop ;
+      out_transposed    = output ;
+      in_transposed     = input ;
+      in_bp_transposed = *in_backprop ;
     }
 
-    struct TensorParam {
-      int w, h, c, n;
-      TensorParam(const Tensor& t, TensorFormat f) :
-        w(GetTensorDim(t, f, 'W')),
-        h(GetTensorDim(t, f, 'H')),
-        c(GetTensorDim(t, f, 'C')),
-        n(GetTensorDim(t, f, 'N')) {}
-      TensorParam(int w_, int h_, int c_, int n_) : w(w_), h(h_), c(c_), n(n_) {}
-    };
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(out_bp_transposed) ;	// 0
+    args.addArg<Tensor>(out_transposed) ;	// 1
+    args.addArg<Tensor>(in_transposed) ;	// 2
+    args.addArg<Tensor>(in_bp_transposed) ;	// 3
 
-    struct PoolingGradParam {
-      uint64_t in;
-      uint64_t out;
-      uint64_t out_bp;
-      uint64_t in_bp;
+    /* pooling params */
+    args.addArg<int>(params.window_rows);   // 4
+    args.addArg<int>(params.window_cols);   // 5
+    args.addArg<int>(params.row_stride);    // 6
+    args.addArg<int>(params.col_stride);    // 7
+    args.addArg<int>(params.pad_rows);      // 8
+    args.addArg<int>(params.pad_cols);      // 9
 
-      TensorParam in_param;
-      TensorParam out_param;
-      TensorParam out_bp_param;
-      TensorParam in_bp_param;
+#if 0
+    args.addArg<int>(FORMAT_NHWC); // data_layout   : current vetfkernel supports NCHW only.
+#endif
 
-      int row_window;
-      int col_window;
-      int row_stride;
-      int col_stride;
-      int row_padding;
-      int col_padding;
-
-      int data_format;
-      int data_type;
-
-      PoolingGradParam(const Tensor& input, const Tensor& output, const Tensor& out_backprop,
-	  Tensor* in_backprop, TensorFormat f) :
-	in_param(input, f),
-	out_param(output, f),
-	out_bp_param(out_backprop, f),
-	in_bp_param(*in_backprop, f) {}
-    };
-
-    PoolingGradParam p(input, output, out_backprop, in_backprop, params.data_format) ;
-
-    p.in  = (uint64_t)DMAHelper::base(&input);
-    p.out = (uint64_t)DMAHelper::base(&output);
-    p.out_bp = (uint64_t)DMAHelper::base(&out_backprop);
-    p.in_bp = (uint64_t)DMAHelper::base(in_backprop);
-
-    p.data_format = params.data_format;
-    p.data_type = input.dtype();
-
-    p.row_window = params.window_rows ;
-    p.col_window = params.window_cols ;
-    p.row_stride = params.row_stride ;
-    p.col_stride = params.col_stride ;
-    p.row_padding = params.pad_rows ;
-    p.col_padding = params.pad_cols ;
+    VEOpKernelHelper::Call(ctx, "MaxPoolGrad", args);
 
 
-    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
-    Status s = vectx->Compute("MaxPoolingBackprop", (void*)&p, sizeof(p));
-    if (!s.ok())
-      ctx->SetStatus(s);
+    // if data_format is NHWC, then transpose in_backprop tensor
+    if ( data_format == FORMAT_NHWC ) {
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, in_bp_transposed, {0,2,3,1}, in_backprop));
+    }
   }
 };
 
@@ -1691,10 +1705,9 @@ public:
    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
                errors::InvalidArgument("Invalid data format"));
    OP_REQUIRES(
-       context, data_format_ == FORMAT_NCHW,
+       context, data_format_ == FORMAT_NCHW || data_format_ == FORMAT_NHWC,
        errors::InvalidArgument(
-           "MaxPoolingVEOp only supports NCHW on device type ",
-            DeviceTypeString(context->device_type())));
+           "MaxPoolingVEOp only supports NCHW or NHWC." )) ;
    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
    OP_REQUIRES(context, ksize_.size() == 4,
                errors::InvalidArgument("Sliding window ksize field must "
@@ -1707,6 +1720,19 @@ public:
    OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
                errors::Unimplemented(
                    "Pooling is not yet supported on the batch dimension."));
+
+   if( data_format_ == FORMAT_NCHW ) {
+	OP_REQUIRES(
+	    context, ksize_[1] == 1 && stride_[1] == 1,
+	    errors::Unimplemented(
+		"MaxPoolingOp is not yet supported on the depth dimension on VE."));
+   }
+   else { // data_fomat_ == FORMAT_NHWC
+	OP_REQUIRES(
+	    context, ksize_[3] == 1 && stride_[3] == 1,
+	    errors::Unimplemented(
+		"MaxPoolingOp is not yet supported on the depth dimension on VE."));
+   }
  }
 
  void Compute(OpKernelContext* context) override {
@@ -1718,11 +1744,8 @@ public:
      return;
    }
 
-   TensorShape out_shape({params.tensor_in_batch, params.depth,
-			  params.out_height, params.out_width});
-
    Tensor* output = nullptr;
-   OP_REQUIRES_OK(context, context->allocate_output(0, out_shape, &output));
+   OP_REQUIRES_OK(context, context->allocate_output(0, params.forward_output_shape(), &output));
 
    LaunchMaxPoolingVEOP<T>()(context, params, tensor_in, output);
  }
@@ -1745,11 +1768,8 @@ class MaxPoolingGradVEOp : public OpKernel {
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
                 errors::InvalidArgument("Invalid data format"));
     OP_REQUIRES(
-        context, data_format_ == FORMAT_NCHW,
-        errors::InvalidArgument("MaxPoolingGradVEOp only supports NCHW ",
-                                "on device type ",
-                                DeviceTypeString(context->device_type())));
-
+        context, data_format_ == FORMAT_NCHW || data_format_ == FORMAT_NHWC,
+        errors::InvalidArgument("MaxPoolingGradVEOp only supports NCHW ")) ;
     if (context->num_inputs() == 3) {
       OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
       OP_REQUIRES(context, ksize_.size() == 4,
@@ -1759,13 +1779,22 @@ class MaxPoolingGradVEOp : public OpKernel {
       OP_REQUIRES(context, stride_.size() == 4,
 		  errors::InvalidArgument("Sliding window strides field must "
 					  "specify 4 dimensions"));
+
       OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
 		  errors::Unimplemented(
 		      "Pooling is not yet supported on the batch dimension."));
-      OP_REQUIRES(
-	  context, ksize_[1] == 1 && stride_[1] == 1,
-	  errors::Unimplemented(
-	      "MaxPoolingGradVEOp is not yet supported on the depth dimension."));
+      if( data_format_ == FORMAT_NCHW ) {
+	OP_REQUIRES(
+	    context, ksize_[1] == 1 && stride_[1] == 1,
+	    errors::Unimplemented(
+		"MaxPoolingGradOp is not yet supported on the depth dimension on VE."));
+      }
+      else { // data_fomat_ == FORMAT_NHWC
+	OP_REQUIRES(
+	    context, ksize_[3] == 1 && stride_[3] == 1,
+	    errors::Unimplemented(
+		"MaxPoolingGradOp is not yet supported on the depth dimension on VE."));
+      }
     }
 
     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
@@ -1790,7 +1819,8 @@ class MaxPoolingGradVEOp : public OpKernel {
 
     std::vector<int32> ksize = ksize_;
     std::vector<int32> stride = stride_;
-    if (context->num_inputs() == 5) {
+#if 0
+    if (context->num_inputs() == 5) {	// for MaxPoolingGradV2
       const Tensor& tensor_ksize = context->input(3);
       auto value_ksize = tensor_ksize.flat<int32>();
       ksize.resize(tensor_ksize.shape().num_elements());
@@ -1801,9 +1831,10 @@ class MaxPoolingGradVEOp : public OpKernel {
       stride.resize(tensor_stride.shape().num_elements());
       std::copy_n(&value_stride(0), stride.size(), stride.begin());
     }
+#endif
 
     PoolParameters params{context,  ksize,      stride,
-                          padding_, FORMAT_NCHW, tensor_in.shape()};
+                          padding_, data_format_, tensor_in.shape()};
     if (!context->status().ok()) {
       return;
     }
