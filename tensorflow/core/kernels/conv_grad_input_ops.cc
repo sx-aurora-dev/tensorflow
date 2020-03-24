@@ -264,12 +264,19 @@ struct LaunchConv2DBackpropInputOp<VEDevice, T> {
 
     /* Filter */
     Tensor filter_transposed ;
-    OP_REQUIRES_OK(ctx,
-		   ctx->allocate_temp(
-		       reinterpret_cast<DataType>(in_backprop->dtype()),
-		       ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic),
-		       &filter_transposed));
-    OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, filter, {3,2,0,1}, &filter_transposed));
+    if( f_ic * f_oc == 1 ) {
+      OP_REQUIRES(ctx, filter_transposed.CopyFrom(filter, ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic)),
+                  errors::Internal("Error during reshape and copy."));
+    }
+    else {
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(filter.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic),
+			 &filter_transposed));
+
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, filter, {3,2,0,1}, &filter_transposed));
+    }
 
     /* Output_backprop, In_backprop */
     Tensor in_bp_transposed, out_bp_transposed;

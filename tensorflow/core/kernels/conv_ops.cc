@@ -314,7 +314,7 @@ struct LaunchConv2DOp<VEDevice, T> {
     Tensor filter_transposed ;
     if( f_ic * f_oc == 1 ) {
       OP_REQUIRES(ctx, filter_transposed.CopyFrom(filter, ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic)),
-                  errors::Internal("Error during reduction copy."));
+                  errors::Internal("Error during reshape copy."));
     }
     else {
       OP_REQUIRES_OK(ctx,
