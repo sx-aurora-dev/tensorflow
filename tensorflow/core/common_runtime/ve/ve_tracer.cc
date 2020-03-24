@@ -3,6 +3,7 @@
 
 //#include "tensorflow/core/platform/device_tracer.h"
 #include "tensorflow/core/profiler/internal/profiler_interface.h"
+#include "tensorflow/core/profiler/internal/profiler_factory.h"
 #include "tensorflow/core/common_runtime/step_stats_collector.h"
 #include "tensorflow/core/framework/step_stats.pb.h"
 #if 0
@@ -25,7 +26,9 @@ typedef void (*cb_t)(int nodeid, int kind, const void* data, void* self);
 extern Status ve_get_timestamp(int nodeid, uint64_t* ts, double* resolution);
 extern Status ve_set_trace_callback(int nodeid, cb_t cb, void* data);
 
-#if 1 // copy from device_tracer.cc
+namespace profiler {
+
+#if 0 // copy from device_tracer.cc
 #define TF_STATIC_THREAD_LOCAL_POD(_Type_, _var_)                  \
   static __thread _Type_ s_obj_##_var_;                            \
   namespace {                                                      \
@@ -119,6 +122,11 @@ class VEDeviceTracer : public profiler::ProfilerInterface {
     Status Stop() override;
     Status Collect(StepStatsCollector* collector);
     Status CollectData(RunMetadata* run_metadata) override;
+    Status CollectData(XSpace* space) override;
+
+    profiler::DeviceType GetDeviceType() override {
+      return profiler::DeviceType::kVe;
+    }
 
   private:
     struct KernelRecords {
@@ -187,8 +195,12 @@ void VEDeviceTracer::callback(int nodeid, int kind, const void* data)
     };
     const Tmp* tmp = reinterpret_cast<const Tmp*>(data);
     std::string str_type[] = {"MEMCPYHtoD", "MEMCPYDtoH"};
+#if 0
     const char* tls_annotation = tls_current_annotation.get();
     const char* annotation = tls_annotation ? tls_annotation : "unknown";
+#else
+    const char* annotation = "unknown";
+#endif
     std::string name = strings::StrCat(annotation, ":", str_type[tmp->type]);
 
     memcpy_records_.push_back(MemcpyRecords{nodeid, name, tmp->start, tmp->end});
@@ -216,14 +228,12 @@ Status VEDeviceTracer::Start() {
   if (!s.ok())
     return s;
 
-  GlobalDefaultTraceCollector()->Start();
   return Status::OK(); 
 }
 
 Status VEDeviceTracer::Stop() {
   VLOG(2) << "VEDeviceTracer::Stop";
   ve_set_trace_callback(0, nullptr, nullptr);
-  GlobalDefaultTraceCollector()->Stop();
   return Status::OK(); 
 }
 
@@ -232,6 +242,10 @@ Status VEDeviceTracer::CollectData(RunMetadata* run_metadata) {
   TF_RETURN_IF_ERROR(Collect(&collector));
   collector.Finalize();
   return Status::OK();
+}
+
+Status VEDeviceTracer::CollectData(XSpace* space) {
+    return errors::Unimplemented("Collect data into XSpace not yet implemented");
 }
 
 Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
@@ -270,7 +284,7 @@ Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
 #endif
     const string stream_device =
       strings::StrCat(prefix, "/device:VE:", s.nodeid, "/stream:");
-    collector->Save(strings::StrCat(stream_device, "all"), ns);
+    collector->Save(strings::StrCat(stream_device, "0"), ns);
   }
 
   kernel_records_.clear();
@@ -291,9 +305,10 @@ Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
   return Status::OK();
 }
 
+} // namespace profiler
 
-std::unique_ptr<profiler::ProfilerInterface> CreateDeviceTracer(
-        const ProfilerContext*) {
+std::unique_ptr<profiler::ProfilerInterface>
+CreateDeviceTracer(const profiler::ProfilerOptions&) {
   if (const char* tmp = getenv("VE_NODE_NUMBER")) {
     if (atoi(tmp) < 0) {
       return nullptr;
@@ -301,7 +316,7 @@ std::unique_ptr<profiler::ProfilerInterface> CreateDeviceTracer(
   }
   
   VLOG(2) << "CreateDeviceTracer(VE)";
-  std::unique_ptr<profiler::ProfilerInterface> tracer(new VEDeviceTracer());
+  std::unique_ptr<profiler::ProfilerInterface> tracer(new profiler::VEDeviceTracer());
   return tracer;
 }
 

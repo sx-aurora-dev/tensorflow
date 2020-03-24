@@ -33,7 +33,7 @@ namespace tensorflow {
 TF_CALL_REAL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
 #undef REGISTER_CPU_KERNELS
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #define REGISTER_GPU_KERNELS(type)                                             \
   REGISTER_KERNEL_BUILDER(                                                     \
@@ -119,5 +119,30 @@ REGISTER_KERNEL_BUILDER(
     ReductionOp<CPUDevice, int32, int64, Eigen::internal::MinReducer<int32>>);
 #undef REGISTER_SYCL_KERNELS
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+DEFINE_VE_REDUCTION_OP(Min);
+REGISTER_VE_REDUCTION_OP(Min, float);
+REGISTER_VE_REDUCTION_OP(Min, double);
+
+REGISTER_KERNEL_BUILDER(
+    Name("Min")
+        .Device(DEVICE_VE)
+        .TypeConstraint<int32>("T")
+        .TypeConstraint<int32>("Tidx")
+        .HostMemory("input")
+        .HostMemory("output")
+        .HostMemory("reduction_indices"),
+    ReductionOp<CPUDevice, int32, int32, Eigen::internal::MinReducer<int32>>);
+REGISTER_KERNEL_BUILDER(
+    Name("Min")
+        .Device(DEVICE_VE)
+        .TypeConstraint<int32>("T")
+        .TypeConstraint<int64>("Tidx")
+        .HostMemory("input")
+        .HostMemory("output")
+        .HostMemory("reduction_indices"),
+    ReductionOp<CPUDevice, int32, int64, Eigen::internal::MinReducer<int32>>);
+#endif  // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

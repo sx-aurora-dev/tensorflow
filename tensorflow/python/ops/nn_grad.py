@@ -40,23 +40,27 @@ def _Conv2DBackpropInputGrad(op, grad):
   Returns:
     the gradients w.r.t. the input and the filter
   """
+  # We call the gen_nn_ops backprop functions instead of nn_ops backprop
+  # functions for performance reasons in Eager mode. See _Conv2DGrad.
   return [
       None,
-      nn_ops.conv2d_backprop_filter(
+      gen_nn_ops.conv2d_backprop_filter(
           grad,
           array_ops.shape(op.inputs[1]),
           op.inputs[2],
           dilations=op.get_attr("dilations"),
           strides=op.get_attr("strides"),
           padding=op.get_attr("padding"),
+          explicit_paddings=op.get_attr("explicit_paddings"),
           use_cudnn_on_gpu=op.get_attr("use_cudnn_on_gpu"),
           data_format=op.get_attr("data_format").decode()),
-      nn_ops.conv2d(
+      gen_nn_ops.conv2d(
           grad,
           op.inputs[1],
           dilations=op.get_attr("dilations"),
           strides=op.get_attr("strides"),
           padding=op.get_attr("padding"),
+          explicit_paddings=op.get_attr("explicit_paddings"),
           use_cudnn_on_gpu=op.get_attr("use_cudnn_on_gpu"),
           data_format=op.get_attr("data_format").decode())
   ]
@@ -64,22 +68,26 @@ def _Conv2DBackpropInputGrad(op, grad):
 
 @ops.RegisterGradient("Conv2DBackpropFilter")
 def _Conv2DBackpropFilterGrad(op, grad):
+  # We call the gen_nn_ops backprop functions instead of nn_ops backprop
+  # functions for performance reasons in Eager mode. See _Conv2DGrad.
   return [
-      nn_ops.conv2d_backprop_input(
+      gen_nn_ops.conv2d_backprop_input(
           array_ops.shape(op.inputs[0]),
           grad,
           op.inputs[2],
           dilations=op.get_attr("dilations"),
           strides=op.get_attr("strides"),
           padding=op.get_attr("padding"),
+          explicit_paddings=op.get_attr("explicit_paddings"),
           use_cudnn_on_gpu=op.get_attr("use_cudnn_on_gpu"),
           data_format=op.get_attr("data_format").decode()), None,
-      nn_ops.conv2d(
+      gen_nn_ops.conv2d(
           op.inputs[0],
           grad,
           dilations=op.get_attr("dilations"),
           strides=op.get_attr("strides"),
           padding=op.get_attr("padding"),
+          explicit_paddings=op.get_attr("explicit_paddings"),
           use_cudnn_on_gpu=op.get_attr("use_cudnn_on_gpu"),
           data_format=op.get_attr("data_format").decode())
   ]
@@ -606,15 +614,17 @@ def _DepthwiseConv2dNativeGrad(op, grad):
           array_ops.shape(op.inputs[0]),
           op.inputs[1],
           grad,
-          op.get_attr("strides"),
-          op.get_attr("padding"),
+          dilations=op.get_attr("dilations"),
+          strides=op.get_attr("strides"),
+          padding=op.get_attr("padding"),
           data_format=op.get_attr("data_format")),
       nn_ops.depthwise_conv2d_native_backprop_filter(
           op.inputs[0],
           array_ops.shape(op.inputs[1]),
           grad,
-          op.get_attr("strides"),
-          op.get_attr("padding"),
+          dilations=op.get_attr("dilations"),
+          strides=op.get_attr("strides"),
+          padding=op.get_attr("padding"),
           data_format=op.get_attr("data_format"))
   ]
 
@@ -1128,4 +1138,4 @@ def _NthElementGrad(op, grad):
   grad = array_ops.expand_dims(grad, -1)
   num_selected = array_ops.expand_dims(math_ops.reduce_sum(indicators, -1), -1)
 
-  return [math_ops.div(indicators, num_selected) * grad, None]
+  return [math_ops.divide(indicators, num_selected) * grad, None]

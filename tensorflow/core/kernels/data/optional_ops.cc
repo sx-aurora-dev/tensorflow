@@ -12,6 +12,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+
+#define EIGEN_USE_THREADS
+
 #include "tensorflow/core/kernels/data/optional_ops.h"
 
 #include "tensorflow/core/common_runtime/dma_helper.h"
@@ -101,6 +104,7 @@ void OptionalGetValueOp::Compute(OpKernelContext* ctx) {
               errors::InvalidArgument(
                   "Input to OptionalHasValue must be a scalar tensor "
                   "containing an OptionalVariant object."));
+  VLOG(1) << optional_input->scalar<Variant>()().DebugString() ;
   const OptionalVariant* optional =
       optional_input->scalar<Variant>()().get<OptionalVariant>();
   OP_REQUIRES(
@@ -157,6 +161,42 @@ Status WriteOptionalNoneToOutput(OpKernelContext* ctx, int output_index) {
 
 namespace {
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("OptionalNone").Device(DEVICE_CPU).Priority(3),
+                        OptionalNoneOp);
+REGISTER_KERNEL_BUILDER(Name("OptionalNone").Device(DEVICE_GPU).Priority(2),
+                        OptionalNoneOp);
+REGISTER_KERNEL_BUILDER(Name("OptionalNone").Device(DEVICE_VE).Priority(1),
+                        OptionalNoneOp);
+REGISTER_KERNEL_BUILDER(
+    Name("OptionalFromValue").Device(DEVICE_CPU).Priority(3),
+    OptionalFromValueOp);
+REGISTER_KERNEL_BUILDER(
+    Name("OptionalFromValue").Device(DEVICE_GPU).Priority(2),
+    OptionalFromValueOp);
+REGISTER_KERNEL_BUILDER(
+    Name("OptionalFromValue").Device(DEVICE_VE).Priority(1),
+    OptionalFromValueOp);
+
+REGISTER_KERNEL_BUILDER(Name("OptionalHasValue").Device(DEVICE_CPU).Priority(3),
+                        OptionalHasValueOp);
+REGISTER_KERNEL_BUILDER(Name("OptionalHasValue")
+                            .Device(DEVICE_GPU)
+                            .HostMemory("has_value")
+                            .Priority(2),
+                        OptionalHasValueOp);
+REGISTER_KERNEL_BUILDER(Name("OptionalHasValue")
+                            .Device(DEVICE_VE)
+                            .HostMemory("has_value")
+                            .Priority(1),
+                        OptionalHasValueOp);
+REGISTER_KERNEL_BUILDER(Name("OptionalGetValue").Device(DEVICE_CPU).Priority(3),
+                        OptionalGetValueOp);
+REGISTER_KERNEL_BUILDER(Name("OptionalGetValue").Device(DEVICE_GPU).Priority(2),
+                        OptionalGetValueOp);
+REGISTER_KERNEL_BUILDER(Name("OptionalGetValue").Device(DEVICE_VE).Priority(1),
+                        OptionalGetValueOp);
+#else
 REGISTER_KERNEL_BUILDER(Name("OptionalNone").Device(DEVICE_CPU).Priority(2),
                         OptionalNoneOp);
 REGISTER_KERNEL_BUILDER(Name("OptionalNone").Device(DEVICE_GPU).Priority(1),
@@ -179,7 +219,7 @@ REGISTER_KERNEL_BUILDER(Name("OptionalGetValue").Device(DEVICE_CPU).Priority(2),
                         OptionalGetValueOp);
 REGISTER_KERNEL_BUILDER(Name("OptionalGetValue").Device(DEVICE_GPU).Priority(1),
                         OptionalGetValueOp);
-
+#endif
 }  // namespace
 
 REGISTER_UNARY_VARIANT_UNARY_OP_FUNCTION(ZEROS_LIKE_VARIANT_UNARY_OP,

@@ -30,7 +30,7 @@ REGISTER_KERNEL_BUILDER(
         .HostMemory("reduction_indices"),
     ReductionOp<CPUDevice, bool, int64, Eigen::internal::AndReducer>);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER_KERNEL_BUILDER(
     Name("All")
         .TypeConstraint<int32>("Tidx")
@@ -44,5 +44,21 @@ REGISTER_KERNEL_BUILDER(
         .HostMemory("reduction_indices"),
     ReductionOp<GPUDevice, bool, int64, Eigen::internal::AndReducer>);
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+DEFINE_VE_REDUCTION_OP(All);
+REGISTER_KERNEL_BUILDER(
+    Name("All")
+        .TypeConstraint<int32>("Tidx")
+        .Device(DEVICE_VE)
+        .HostMemory("reduction_indices"),
+    VEAllOp<bool, int32>) ;
+REGISTER_KERNEL_BUILDER(
+    Name("All")
+        .TypeConstraint<int64>("Tidx")
+        .Device(DEVICE_VE)
+        .HostMemory("reduction_indices"),
+    VEAllOp<bool, int64>) ;
+#endif  // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

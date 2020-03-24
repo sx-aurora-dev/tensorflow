@@ -15,7 +15,7 @@ limitations under the License.
 #define EIGEN_USE_THREADS
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/common_runtime/device.h"
 #include "tensorflow/core/framework/device_base.h"
 #endif
@@ -25,6 +25,7 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/threadpool.h"
+#include "tensorflow/core/platform/casts.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 
 namespace tensorflow {
@@ -39,21 +40,6 @@ namespace {
 Status Instantiate(FunctionLibraryRuntime* lib, const NameAttrList& func,
                    FunctionLibraryRuntime::Handle* handle) {
   return lib->Instantiate(func.name(), AttrSlice(&func.attr()), handle);
-}
-
-template <typename To, typename From>  // use like this: down_cast<T*>(foo);
-inline To down_cast(From* f) {         // so we only accept pointers
-  static_assert(
-      (std::is_base_of<From, typename std::remove_pointer<To>::type>::value),
-      "target type not derived from source type");
-
-  // We skip the assert and hence the dynamic_cast if RTTI is disabled.
-#if !defined(__GNUC__) || defined(__GXX_RTTI)
-  // Uses RTTI in dbg and fastbuild. asserts are disabled in opt builds.
-  assert(f == nullptr || dynamic_cast<To>(f) != nullptr);
-#endif  // !defined(__GNUC__) || defined(__GXX_RTTI)
-
-  return static_cast<To>(f);
 }
 
 // If "t" is a scalar of a supported type, returns t != 0 in "*v".
@@ -82,7 +68,7 @@ Status ToBool(gtl::ArraySlice<Tensor> t, bool* v) {
         *v = t[0].scalar<bool>()();
         break;
       case DT_STRING:
-        *v = !t[0].scalar<string>()().empty();
+        *v = !t[0].scalar<tstring>()().empty();
         break;
       default:
         return errors::InvalidArgument(DataTypeString(t[0].dtype()),
@@ -332,6 +318,17 @@ REGISTER_KERNEL_BUILDER(Name("StatelessIf").Device(DEVICE_CPU), IfOp);
 REGISTER_KERNEL_BUILDER(
     Name("StatelessIf").Device(DEVICE_GPU).HostMemory("cond"), IfOp);
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("_If").Device(DEVICE_VE).HostMemory("cond"),
+                        IfOp);
+REGISTER_KERNEL_BUILDER(Name("If").Device(DEVICE_VE).HostMemory("cond"), IfOp);
+REGISTER_KERNEL_BUILDER(
+    Name("Case").Device(DEVICE_VE).HostMemory("branch_index"), CaseOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name("StatelessIf").Device(DEVICE_VE).HostMemory("cond"), IfOp);
+#endif
+
 class WhileOp : public AsyncOpKernel {
  public:
   explicit WhileOp(OpKernelConstruction* ctx) : AsyncOpKernel(ctx) {
@@ -424,7 +421,7 @@ class WhileOp : public AsyncOpKernel {
         return Finish(s);
       }
       Tensor cond_t;
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       const DeviceBase::GpuDeviceInfo* gpu_device_info =
           ctx_->device()->tensorflow_gpu_device_info();
       const bool is_hostmem_dtype =
@@ -509,6 +506,12 @@ REGISTER_KERNEL_BUILDER(Name("While").Device(DEVICE_GPU), WhileOp);
 
 REGISTER_KERNEL_BUILDER(Name("StatelessWhile").Device(DEVICE_CPU), WhileOp);
 REGISTER_KERNEL_BUILDER(Name("StatelessWhile").Device(DEVICE_GPU), WhileOp);
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("_While").Device(DEVICE_VE), WhileOp);
+REGISTER_KERNEL_BUILDER(Name("While").Device(DEVICE_VE), WhileOp);
+REGISTER_KERNEL_BUILDER(Name("StatelessWhile").Device(DEVICE_VE), WhileOp);
+#endif
 
 Status GetScalar(OpKernelContext* ctx, int index, int32* value,
                  const char* label) {
@@ -655,6 +658,14 @@ REGISTER_KERNEL_BUILDER(Name("For")
                             .HostMemory("limit")
                             .HostMemory("delta"),
                         ForOp);
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("For")
+                            .Device(DEVICE_VE)
+                            .HostMemory("start")
+                            .HostMemory("limit")
+                            .HostMemory("delta"),
+                        ForOp);
+#endif
 
 // FakeParamOp allocates a tensor with a shape conforming to the expected
 // output. This is necessary if the value will be stored in a while_loop's
@@ -694,6 +705,9 @@ class FakeParamOp : public OpKernel {
 
 REGISTER_KERNEL_BUILDER(Name("FakeParam").Device(DEVICE_CPU), FakeParamOp);
 REGISTER_KERNEL_BUILDER(Name("FakeParam").Device(DEVICE_GPU), FakeParamOp);
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("FakeParam").Device(DEVICE_VE), FakeParamOp);
+#endif
 
 }  // namespace
 }  // namespace tensorflow

@@ -17,9 +17,9 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
-#ifdef GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #include <vector>
 
@@ -89,7 +89,7 @@ struct ReduceAndReshape {
 // Explicit instantiations are defined in tile_ops_{cpu,gpu}_impl.*,
 // below are their declarations.
 
-#ifdef GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 extern template struct Tile<GPUDevice, bool, int32>;
 extern template struct Tile<GPUDevice, bool, int64>;
 extern template struct Tile<GPUDevice, float, int32>;
@@ -111,9 +111,9 @@ extern template struct Tile<GPUDevice, int64, int64>;
 #define DECLARE_CUDA_DIM(T, NDIM)                      \
   extern template struct TileGrad<GPUDevice, T, NDIM>; \
   extern template struct ReduceAndReshape<GPUDevice, T, NDIM, 1>
-#else  // GOOGLE_CUDA
+#else  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define DECLARE_CUDA_DIM(T, NDIM)
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 #define DECLARE_TYPE(T)                              \
@@ -149,7 +149,7 @@ TF_CALL_int64(DECLARE_TYPE);
 TF_CALL_half(DECLARE_TYPE);
 TF_CALL_complex64(DECLARE_TYPE);
 TF_CALL_complex128(DECLARE_TYPE);
-TF_CALL_string(DECLARE_TYPE);
+TF_CALL_tstring(DECLARE_TYPE);
 #undef DECLARE_TYPE
 
 #define DECLARE_DIM(T, NDIM)                           \
@@ -248,7 +248,7 @@ class TileOp : public OpKernel {
     TF_CALL_int16(HANDLE_TYPE_NAME);
     TF_CALL_int64(HANDLE_TYPE_NAME);
     TF_CALL_half(HANDLE_TYPE_NAME);
-    TF_CALL_string(HANDLE_TYPE_NAME);  // when DEVICE=CPUDevice.
+    TF_CALL_tstring(HANDLE_TYPE_NAME);  // when DEVICE=CPUDevice.
     TF_CALL_complex64(HANDLE_TYPE_NAME);
     TF_CALL_complex128(HANDLE_TYPE_NAME);
 
@@ -329,9 +329,9 @@ TF_CALL_int64(HANDLE_TYPE_NAME_CPU);
 TF_CALL_half(HANDLE_TYPE_NAME_CPU);
 TF_CALL_complex64(HANDLE_TYPE_NAME_CPU);
 TF_CALL_complex128(HANDLE_TYPE_NAME_CPU);
-TF_CALL_string(HANDLE_TYPE_NAME_CPU);
+TF_CALL_tstring(HANDLE_TYPE_NAME_CPU);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 TF_CALL_bool(HANDLE_TYPE_NAME_GPU);
 TF_CALL_float(HANDLE_TYPE_NAME_GPU);
 TF_CALL_double(HANDLE_TYPE_NAME_GPU);
@@ -341,7 +341,7 @@ TF_CALL_int64(HANDLE_TYPE_NAME_GPU);
 TF_CALL_half(HANDLE_TYPE_NAME_GPU);
 TF_CALL_complex64(HANDLE_TYPE_NAME_GPU);
 TF_CALL_complex128(HANDLE_TYPE_NAME_GPU);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 TF_CALL_float(HANDLE_TYPE_NAME_SYCL);
@@ -597,7 +597,7 @@ TF_CALL_half(HANDLE_TYPE_NAME_CPU);
 TF_CALL_complex64(HANDLE_TYPE_NAME_CPU);
 TF_CALL_complex128(HANDLE_TYPE_NAME_CPU);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 TF_CALL_float(HANDLE_TYPE_NAME_GPU);
 TF_CALL_double(HANDLE_TYPE_NAME_GPU);
 TF_CALL_int16(HANDLE_TYPE_NAME_GPU);
@@ -606,7 +606,7 @@ TF_CALL_int64(HANDLE_TYPE_NAME_GPU);
 TF_CALL_half(HANDLE_TYPE_NAME_GPU);
 TF_CALL_complex64(HANDLE_TYPE_NAME_GPU);
 TF_CALL_complex128(HANDLE_TYPE_NAME_GPU);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #if TENSORFLOW_USE_SYCL
 #define HANDLE_TYPE_NAME_SYCL(T) \
@@ -646,7 +646,7 @@ REGISTER_KERNEL_BUILDER(Name("TileGrad")
                             .TypeConstraint<int64>("Tmultiples"),
                         TileGradientOp<CPUDevice, int64>);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU_TILE(type)                                    \
   REGISTER_KERNEL_BUILDER(Name("Tile")                             \
                               .Device(DEVICE_GPU)                  \
@@ -692,7 +692,7 @@ TF_CALL_complex128(REGISTER_GPU)
 #undef REGISTER_GPU_TILE
 #undef REGISTER_GPU_TILE_GRAD
 #undef REGISTER_GPU
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 #define REGISTER_SYCL(type)                                        \
@@ -728,9 +728,10 @@ TF_CALL_double(REGISTER_SYCL);
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-template<>
-template<>
-void TileOp<VEDevice, int32>::HandleCase<DataTypeToEnum<float>::value>(
+
+template <>
+template <DataType DT>
+inline void TileOp<VEDevice, int32>::HandleCase(
     OpKernelContext* context,
     const gtl::ArraySlice<int32>& multiples_array, Tensor* result) {
   const Tensor& input = context->input(0);
@@ -741,13 +742,53 @@ void TileOp<VEDevice, int32>::HandleCase<DataTypeToEnum<float>::value>(
 
   VEOpKernelHelper::Call(context, "Tile", args);
 }
+template <>
+template <DataType DT>
+inline void TileOp<VEDevice, int64>::HandleCase(
+    OpKernelContext* context,
+    const gtl::ArraySlice<int64>& multiples_array, Tensor* result) {
+  const Tensor& input = context->input(0);
 
-REGISTER_KERNEL_BUILDER(Name("Tile")
-                        .Device(DEVICE_VE)
-                        .TypeConstraint<float>("T")
-                        .TypeConstraint<int32>("Tmultiples")
-                        .HostMemory("multiples"),
-                        TileOp<VEDevice, int32>);
+  VEOpKernelHelper::ArgsImpl<> args;
+  args.addArg<Tensor>(input);
+  args.addArg<Tensor>(*result);
+
+  VEOpKernelHelper::Call(context, "Tile", args);
+}
+
+#define REGISTER_VE_TILE(type)                                     \
+  REGISTER_KERNEL_BUILDER(Name("Tile")                             \
+                              .Device(DEVICE_VE)                   \
+                              .TypeConstraint<type>("T")           \
+                              .TypeConstraint<int32>("Tmultiples") \
+                              .HostMemory("multiples"),            \
+                          TileOp<VEDevice, int32>);                \
+  REGISTER_KERNEL_BUILDER(Name("Tile")                             \
+                              .Device(DEVICE_VE)                   \
+                              .TypeConstraint<type>("T")           \
+                              .TypeConstraint<int64>("Tmultiples") \
+                              .HostMemory("multiples"),            \
+                          TileOp<VEDevice, int64>);
+
+// [todo] impl TileGrad for VE
+#define REGISTER_VE_TILE_GRAD(type)
+
+#define REGISTER_VE(type)	\
+  REGISTER_VE_TILE(type);	\
+  REGISTER_VE_TILE_GRAD(type);
+
+TF_CALL_bool(REGISTER_VE_TILE);
+TF_CALL_float(REGISTER_VE);
+//TF_CALL_double(REGISTER_VE);
+//TF_CALL_half(REGISTER_VE);
+//TF_CALL_int16(REGISTER_VE);
+TF_CALL_int32(REGISTER_VE);
+TF_CALL_int64(REGISTER_VE);
+//TF_CALL_complex64(REGISTER_VE);
+//TF_CALL_complex128(REGISTER_VE)
+
+#undef REGISTER_VE
+#undef REGISTER_VE_TILE
 #endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

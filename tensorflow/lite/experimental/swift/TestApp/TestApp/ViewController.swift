@@ -1,15 +1,25 @@
-import class TensorFlowLite.Interpreter
-import struct TensorFlowLite.InterpreterOptions
-import struct TensorFlowLite.Tensor
-import struct TensorFlowLite.TensorShape
-import enum TensorFlowLite.Runtime
+// Copyright 2019 Google Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import TensorFlowLite
 import UIKit
 
 class ViewController: UIViewController {
 
   // MARK: - Properties
 
-  /// TensorFlowLite interpreter object for performing inference from a given model.
+  /// TensorFlow Lite interpreter object for performing inference from a given model.
   private var interpreter: Interpreter?
 
   /// Serial dispatch queue for managing `Interpreter` calls.
@@ -108,7 +118,7 @@ class ViewController: UIViewController {
   private func setUpInterpreter(withModelPath modelPath: String) {
     interpreterQueue.async {
       do {
-        var options = InterpreterOptions()
+        var options = Interpreter.Options()
         options.threadCount = 2
         self.interpreter = try Interpreter(modelPath: modelPath, options: options)
       } catch let error {
@@ -197,7 +207,7 @@ class ViewController: UIViewController {
         return
       }
       do {
-        let shape = TensorShape(2)
+        let shape = Tensor.Shape(2)
         try (0..<interpreter.inputTensorCount).forEach { index in
           try interpreter.resizeInput(at: index, to: shape)
         }

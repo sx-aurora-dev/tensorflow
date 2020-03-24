@@ -25,10 +25,12 @@ import itertools
 from absl.testing import parameterized
 import six
 
-from tensorflow.python.compat import v2_compat
+from tensorflow.python import tf2
 from tensorflow.python.distribute import values as distributed_values
+from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.framework import ops
+from tensorflow.python.framework import test_util
 from tensorflow.python.keras import layers
 from tensorflow.python.keras import models
 from tensorflow.python.module import module
@@ -36,7 +38,7 @@ from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
 
 
-class TestModuleNaming(test.TestCase):
+class TestModuleNaming(test_util.TensorFlowTestCase):
 
   def test_single_name(self):
     mod = module.Module(name="simple")
@@ -44,7 +46,7 @@ class TestModuleNaming(test.TestCase):
     self.assertEqual(mod.name_scope.name, "simple/")
 
   def test_construct_in_scope(self):
-    with ops.name_scope("foo"):
+    with ops.name_scope("foo", skip_on_eager=False):
       mod = module.Module(name="bar")
     self.assertEqual(mod.name, "bar")
     self.assertEqual(mod.name_scope.name, "foo/bar/")
@@ -85,7 +87,7 @@ class TestModuleNaming(test.TestCase):
     self.assertEqual(mod.alternative_forward(), mod.name_scope.name)
 
   def test_patched_callable(self):
-    with ops.name_scope("foo"):
+    with ops.name_scope("foo", skip_on_eager=False):
       mod = module.Module(name="bar")
     mod.foo = get_name_scope
     # `foo` is not a method so we do not re-enter the name scope.
@@ -110,24 +112,31 @@ class TestModuleNaming(test.TestCase):
     with self.assertRaisesRegexp(ValueError, msg):
       module.Module(name="$Foo")
 
+  @test_util.run_in_graph_and_eager_modes
   def test_modules_not_numbered_in_eager(self):
-    mod = RecursiveModule(2)
-    self.assertEqual(mod.name_scope.name, "badger/")
-    self.assertEqual(mod.child.name_scope.name, "badger/badger/")
+    if not context.executing_eagerly():
+      self.skipTest("Eager specific")
 
     mod = RecursiveModule(2)
     self.assertEqual(mod.name_scope.name, "badger/")
     self.assertEqual(mod.child.name_scope.name, "badger/badger/")
 
+    mod = RecursiveModule(2)
+    self.assertEqual(mod.name_scope.name, "badger/")
+    self.assertEqual(mod.child.name_scope.name, "badger/badger/")
+
+  @test_util.run_in_graph_and_eager_modes
   def test_module_numbering_in_graph(self):
-    with ops.Graph().as_default():
-      mod = RecursiveModule(2)
-      self.assertEqual(mod.name_scope.name, "badger/")
-      self.assertEqual(mod.child.name_scope.name, "badger/badger/")
+    if context.executing_eagerly():
+      self.skipTest("Graph specific")
 
-      mod = RecursiveModule(2)
-      self.assertEqual(mod.name_scope.name, "badger_1/")
-      self.assertEqual(mod.child.name_scope.name, "badger_1/badger/")
+    mod = RecursiveModule(2)
+    self.assertEqual(mod.name_scope.name, "badger/")
+    self.assertEqual(mod.child.name_scope.name, "badger/badger/")
+
+    mod = RecursiveModule(2)
+    self.assertEqual(mod.name_scope.name, "badger_1/")
+    self.assertEqual(mod.child.name_scope.name, "badger_1/badger/")
 
   def test_ctor_error_closes_name_scope(self):
     with self.assertRaises(ErrorModuleError):
@@ -183,7 +192,7 @@ class TestModuleNaming(test.TestCase):
     self.assertIn(("does_not_exist", ""), scope_names)
 
 
-class VariableNamingTest(test.TestCase):
+class VariableNamingTest(test_util.TensorFlowTestCase):
 
   def test_variable_names(self):
     mod = RecursiveModule(3)
@@ -192,7 +201,30 @@ class VariableNamingTest(test.TestCase):
     self.assertEqual(mod.child.child.w.name, "badger/badger/badger/mushroom:0")
 
 
-class VariableTrackingTest(test.TestCase):
+class NameScopeTest(test_util.TensorFlowTestCase):
+
+  @test_util.run_deprecated_v1
+  def test_not_memoized_in_tf1(self):
+    if tf2.enabled():
+      self.skipTest("Requires TF1")
+
+    mod = module.Module(name="name")
+    name_scope_1 = mod.name_scope
+    name_scope_2 = mod.name_scope
+    self.assertIsNot(name_scope_1, name_scope_2)
+    self.assertEqual(name_scope_1.name, name_scope_2.name)
+
+  def test_memoized_in_tf2(self):
+    if not tf2.enabled():
+      self.skipTest("Requires TF2")
+
+    mod = module.Module(name="name")
+    name_scope_1 = mod.name_scope
+    name_scope_2 = mod.name_scope
+    self.assertIs(name_scope_1, name_scope_2)
+
+
+class VariableTrackingTest(test_util.TensorFlowTestCase):
 
   def test_variables(self):
     m = RecursiveModule(3)
@@ -215,13 +247,10 @@ class VariableTrackingTest(test.TestCase):
     self.assertEqual(len(m.child.child.trainable_variables), 0)
 
   def test_supports_distributed_variables(self):
-    device_map = distributed_values.SingleDeviceMap("/CPU:0")
     mirrored = distributed_values.MirroredVariable(
-        None, device_map, [variables.Variable(1.)],
-        variables.VariableAggregation.SUM)
+        None, [variables.Variable(1.)], variables.VariableAggregation.SUM)
     tpu = distributed_values.TPUMirroredVariable(
         strategy=None,
-        device_map=device_map,
         values=[variables.Variable(42.)],
         aggregation=None)
     aggregating = distributed_values.AggregatingVariable(
@@ -234,7 +263,7 @@ class VariableTrackingTest(test.TestCase):
     self.assertEqual(m.variables, (mirrored, tpu, aggregating))
 
 
-class ModuleTrackingTest(test.TestCase):
+class ModuleTrackingTest(test_util.TensorFlowTestCase):
 
   def test_submodules(self):
     m = RecursiveModule(3)
@@ -250,29 +279,29 @@ class ModuleTrackingTest(test.TestCase):
     self.assertEqual(set(m.submodules), {leaf1, leaf2})
 
 
-class ForwardMethodsTest(test.TestCase):
+class ForwardMethodsTest(test_util.TensorFlowTestCase):
 
   def testFunctionType(self):
     mod = ModuleWithFunctionAnnotatedCall()
-    self.assertTrue(isinstance(mod.forward, def_function.Function))
-    self.assertTrue(isinstance(mod.forward_ag, def_function.Function))
+    self.assertIsInstance(mod.forward, def_function.Function)
+    self.assertIsInstance(mod.forward_ag, def_function.Function)
 
   def testEntersNameScope_call(self):
     mod = ModuleWithFunctionAnnotatedCall()
-    self.assertEqual(mod.forward().numpy(),
+    self.assertEqual(self.evaluate(mod.forward()),
                      b"module_with_function_annotated_call/")
-    self.assertEqual(mod.forward_ag().numpy(),
+    self.assertEqual(self.evaluate(mod.forward_ag()),
                      b"module_with_function_annotated_call/")
 
   def testEntersNameScope_concreteFunction(self):
     mod = ModuleWithFunctionAnnotatedCall()
-    self.assertEqual(mod.forward.get_concrete_function()().numpy(),
+    self.assertEqual(self.evaluate(mod.forward.get_concrete_function()()),
                      b"module_with_function_annotated_call/")
-    self.assertEqual(mod.forward_ag.get_concrete_function()().numpy(),
+    self.assertEqual(self.evaluate(mod.forward_ag.get_concrete_function()()),
                      b"module_with_function_annotated_call/")
 
 
-class AbcTest(test.TestCase):
+class AbcTest(test_util.TensorFlowTestCase):
 
   def testAbstract(self):
     msg = "Can't instantiate .* abstract methods"
@@ -288,8 +317,9 @@ class AbcTest(test.TestCase):
 
 
 def get_name_scope():
-  with ops.name_scope("x") as ns:
-    return ns[:-2]
+  with ops.name_scope("x", skip_on_eager=False) as ns:
+    ns = "/".join(ns.split("/")[:-2])
+    return ns + "/" if ns else ""
 
 
 class ErrorModuleError(Exception):
@@ -376,7 +406,7 @@ class ModuleOverridingNameScope(ReturnsNameScopeModule):
 
   @property
   def name_scope(self):
-    return ops.name_scope("yolo/")
+    return ops.name_scope("yolo/", skip_on_eager=False)
 
 
 class ModuleWithFunctionAnnotatedCall(module.Module):
@@ -422,7 +452,7 @@ NamedPair = collections.namedtuple("NamedPair", ("first", "second"))
 mk_index_dict = lambda v: dict(enumerate(v))
 
 
-class FlattenTest(parameterized.TestCase, test.TestCase):
+class FlattenTest(parameterized.TestCase, test_util.TensorFlowTestCase):
 
   @parameterized.parameters(lambda v: NamedPair(*v), list, tuple, mk_index_dict)
   def test_flatten(self, container_type):
@@ -491,10 +521,10 @@ class FlattenTest(parameterized.TestCase, test.TestCase):
 
     variable_list = m.variables
     self.assertLen(variable_list, 4)
-    self.assertEqual(variable_list[0], m.a.kernel)
-    self.assertEqual(variable_list[1], m.a.bias)
-    self.assertEqual(variable_list[2], m.b.kernel)
-    self.assertEqual(variable_list[3], m.b.bias)
+    self.assertIs(variable_list[0], m.a.kernel)
+    self.assertIs(variable_list[1], m.a.bias)
+    self.assertIs(variable_list[2], m.b.kernel)
+    self.assertIs(variable_list[3], m.b.bias)
 
   def test_model_discover_submodule(self):
     m = models.Sequential(layers=[layers.Dense(1),
@@ -503,6 +533,29 @@ class FlattenTest(parameterized.TestCase, test.TestCase):
     self.assertEqual(m.submodules, (m.layers[0], m.layers[1]))
     m(layers.Input((1,)))
     self.assertLen(m.variables, 4)
+
+  def test_model_wrapped_in_module_discovers_submodules(self):
+    linear = models.Sequential([layers.Dense(units=1, input_shape=[1])])
+    linear.compile(optimizer="sgd", loss="mean_squared_error")
+    m = module.Module()
+    m.l = linear
+    self.assertNotEmpty(m.submodules)
+    self.assertLen(m.variables, 2)
+
+  def test_raises_error_with_path(self):
+    if six.PY2:
+      class NonOrderable(object):
+        __lt__ = None
+
+      non_orderable = NonOrderable
+    else:
+      non_orderable = object
+
+    m = module.Module()
+    m.layers = {non_orderable(): None, non_orderable(): None}
+    with self.assertRaisesRegexp(ValueError,
+                                 "Error processing property 'layers'"):
+      m.variables  # pylint: disable=pointless-statement
 
 
 class LayerModule(module.Module):
@@ -548,5 +601,4 @@ class SimpleModule(module.Module):
 is_member = lambda v: isinstance(v, MemberType)
 
 if __name__ == "__main__":
-  v2_compat.enable_v2_behavior()
   test.main()

@@ -22,14 +22,17 @@ import functools
 import itertools
 import threading
 
+from absl.testing import absltest
 import numpy as np
 
 from tensorflow.compiler.xla.python import custom_call_for_test
 from tensorflow.compiler.xla.python import xla_client
-import unittest
 
 
-class ComputationTest(unittest.TestCase):
+bfloat16 = xla_client.bfloat16
+
+
+class ComputationTest(absltest.TestCase):
   """Base class for running an XLA Computation through the local client."""
 
   def _NewComputation(self, name=None):
@@ -89,7 +92,7 @@ def NumpyArrayBool(*args, **kwargs):
   return np.array(*args, dtype=np.bool, **kwargs)
 
 
-class ComputationPrinting(unittest.TestCase):
+class ComputationPrinting(absltest.TestCase):
 
   def ExampleComputation(self):
     builder = xla_client.ComputationBuilder("acomputation")
@@ -109,6 +112,24 @@ class ComputationPrinting(unittest.TestCase):
     self.assertTrue(hlo_dot_graph.startswith("digraph "))
 
 
+class ComputationHashTest(absltest.TestCase):
+
+  def testHash(self):
+    builder0 = xla_client.ComputationBuilder("computation0")
+    p0 = builder0.ParameterFromNumpy(np.float32(0))
+    p1 = builder0.ParameterFromNumpy(np.zeros((4,), np.float32))
+    builder0.Mul(p0, p1)
+    computation0 = builder0.Build()
+
+    builder1 = xla_client.ComputationBuilder("computation1")
+    p0 = builder1.ParameterFromNumpy(np.float32(0))
+    p1 = builder1.ParameterFromNumpy(np.zeros((4,), np.float32))
+    builder1.Mul(p0, p1)
+    computation1 = builder1.Build()
+
+    self.assertEqual(computation0.Hash(), computation1.Hash())
+
+
 class ComputationsWithConstantsTest(ComputationTest):
   """Tests focusing on Constant ops."""
 
@@ -116,6 +137,11 @@ class ComputationsWithConstantsTest(ComputationTest):
     c = self._NewComputation()
     c.Add(c.Constant(np.int8(1)), c.Constant(np.int8(2)))
     self._ExecuteAndCompareExact(c, expected=np.int8(3))
+
+  def testConstantScalarSumBF16(self):
+    c = self._NewComputation()
+    c.Add(c.Constant(bfloat16(1.11)), c.Constant(bfloat16(3.14)))
+    self._ExecuteAndCompareClose(c, expected=bfloat16(4.25))
 
   def testConstantScalarSumF32(self):
     c = self._NewComputation()
@@ -311,7 +337,7 @@ class ComputationsWithConstantsTest(ComputationTest):
   def testCustomCall(self):
     c = self._NewComputation()
     for name, fn in custom_call_for_test.cpu_custom_call_targets.items():
-      xla_client.register_cpu_custom_call_target(name, fn)
+      xla_client.register_custom_call_target(name, fn, platform="cpu")
     c.CustomCall(
         b"test_subtract_f32",
         operands=(c.ConstantF32Scalar(1.25), c.ConstantF32Scalar(0.5)),
@@ -448,14 +474,14 @@ class BufferTest(ComputationTest):
     local_buffer = xla_client.Buffer.from_pyval(t)
     pieces = local_buffer.destructure()
     self.assertFalse(local_buffer.is_deleted())
-    self.assertEqual(len(pieces), 0)
+    self.assertEmpty(pieces)
 
   def testDestructureTupleOneArrayElement(self):
     t = (np.array([1, 2, 3, 4], dtype=np.int32),)
     local_buffer = xla_client.Buffer.from_pyval(t)
     pieces = local_buffer.destructure()
     self.assertFalse(local_buffer.is_deleted())
-    self.assertEqual(len(pieces), 1)
+    self.assertLen(pieces, 1)
     array = pieces[0]
     got = array.to_py()
     want = NumpyArrayS32([1, 2, 3, 4])
@@ -472,7 +498,7 @@ class BufferTest(ComputationTest):
     for _ in range(2):
       pieces = local_buffer.destructure()
       self.assertFalse(local_buffer.is_deleted())
-      self.assertEqual(len(pieces), 2)
+      self.assertLen(pieces, 2)
       array0, array1 = pieces
       got = array0.to_py()
       want = NumpyArrayF32([1.0, 2.0, 3.0, 4.0])
@@ -486,14 +512,14 @@ class BufferTest(ComputationTest):
     local_buffer = xla_client.Buffer.from_pyval(t)
     pieces = local_buffer.destructure()
     self.assertFalse(local_buffer.is_deleted())
-    self.assertEqual(len(pieces), 2)
+    self.assertLen(pieces, 2)
     tuple0, array1 = pieces
     got = array1.to_py()
     want = NumpyArrayS32([5])
     np.testing.assert_equal(want, got)
     got = tuple0.to_py()
     self.assertEqual(type(got), tuple)
-    self.assertEqual(len(got), 2)
+    self.assertLen(got, 2)
     np.testing.assert_equal(NumpyArrayF32([1.0, 2.0]), got[0])
     np.testing.assert_equal(NumpyArrayS32([3, 4]), got[1])
 
@@ -504,9 +530,10 @@ class BufferTest(ComputationTest):
     )
     b0 = xla_client.Buffer.from_pyval(t[0])
     b1 = xla_client.Buffer.from_pyval(t[1])
-    btup = xla_client.Buffer.make_tuple([b0, b1], device=0)
+    device = xla_client.get_local_backend().local_devices()[0]
+    btup = xla_client.Buffer.make_tuple([b0, b1], device=device)
     pieces = btup.destructure()
-    self.assertEqual(len(pieces), 2)
+    self.assertLen(pieces, 2)
     array0, array1 = pieces
     np.testing.assert_equal(
         np.array([1, 2, 3, 4], dtype=np.float32), array0.to_py())
@@ -519,6 +546,36 @@ class BufferTest(ComputationTest):
     xla_shape = local_buffer.shape()
     self.assertEqual(xla_shape.dimensions(), (1, 2))
     self.assertEqual(np.dtype(xla_shape.element_type()), np.dtype(np.float32))
+
+  def testBlockHostUntilReadyWorks(self):
+    arg = np.array([[1., 2.]], np.float32)
+    arg_buffer = xla_client.Buffer.from_pyval(arg)
+    arg_buffer.block_host_until_ready()
+    # This test merely checks that nothing goes awry when we call
+    # block_host_until_ready(); it's difficult to test anything else.
+
+  def testCopyToHost(self):
+    arg0 = np.array([[1., 2.]], np.float32)
+    arg1 = np.array([[3., 4.]], np.float32)
+    arg0_buffer = xla_client.Buffer.from_pyval(arg0)
+    arg1_buffer = xla_client.Buffer.from_pyval(arg1)
+    # Prefetch two buffers using copy_to_host_async, and then retrieve their
+    # values using to_py.
+    arg0_buffer.copy_to_host_async()
+    arg0_buffer.copy_to_host_async()  # Duplicate calls don't do anything.
+    arg1_buffer.copy_to_host_async()
+    np.testing.assert_equal(arg0, arg0_buffer.to_py())
+    np.testing.assert_equal(arg1, arg1_buffer.to_py())
+    # copy_to_host_async does nothing after to_py is called.
+    arg0_buffer.copy_to_host_async()
+    np.testing.assert_equal(arg0, arg0_buffer.to_py())
+
+  def testDevice(self):
+    x = np.arange(8)
+    for device in xla_client.get_local_backend().local_devices():
+      buf = xla_client.Buffer.from_pyval(x, device=device)
+      self.assertEqual(buf.device(), device)
+      np.testing.assert_equal(x, buf.to_py())
 
 
 class SingleOpTest(ComputationTest):
@@ -676,7 +733,7 @@ class SingleOpTest(ComputationTest):
     rhs = NumpyArrayF32(rng.randn(10, 4, 5))
     dimension_numbers = (([2], [1]), ([0], [0]))
     c.DotGeneral(c.Constant(lhs), c.Constant(rhs), dimension_numbers)
-    self._ExecuteAndCompareClose(c, expected=np.matmul(lhs, rhs))
+    self._ExecuteAndCompareClose(c, expected=np.matmul(lhs, rhs), rtol=1e-6)
 
   def testDotGeneralWithDotDimensionNumbersProto(self):
     c = self._NewComputation()
@@ -691,7 +748,23 @@ class SingleOpTest(ComputationTest):
     dimension_numbers.rhs_batch_dimensions.append(0)
 
     c.DotGeneral(c.Constant(lhs), c.Constant(rhs), dimension_numbers)
-    self._ExecuteAndCompareClose(c, expected=np.matmul(lhs, rhs))
+    self._ExecuteAndCompareClose(c, expected=np.matmul(lhs, rhs), rtol=1e-6)
+
+  def testDotGeneralWithPrecisionConfig(self):
+    c = self._NewComputation()
+    rng = np.random.RandomState(0)
+    lhs = NumpyArrayF32(rng.randn(10, 3, 4))
+    rhs = NumpyArrayF32(rng.randn(10, 4, 5))
+    dimension_numbers = (([2], [1]), ([0], [0]))
+    config = xla_client.PrecisionConfig()
+    config.operand_precision.append(config.Precision.HIGH)
+    config.operand_precision.append(config.Precision.HIGHEST)
+    c.DotGeneral(
+        c.Constant(lhs),
+        c.Constant(rhs),
+        dimension_numbers,
+        precision_config=config)
+    self._ExecuteAndCompareClose(c, expected=np.matmul(lhs, rhs), rtol=1e-6)
 
   def testConvF32Same(self):
     c = self._NewComputation()
@@ -753,6 +826,36 @@ class SingleOpTest(ComputationTest):
     c.ConvGeneralDilated(
         c.Constant(lhs), c.Constant(rhs), strides, pads, lhs_dilation,
         rhs_dilation, dimension_numbers)
+    result = np.array([[[
+        [0., 0., 0.],
+        [10., 20., 0.],
+        [0., 0., 0.],
+        [40., 50., 0.],
+    ]]])
+    self._ExecuteAndCompareClose(c, expected=result)
+
+  def testConvGeneralDilatedF32WithPrecisionConfig(self):
+    c = self._NewComputation()
+    a = lambda *dims: np.arange(np.prod(dims)).reshape(dims).astype("float32")
+    lhs = a(1, 1, 2, 3)
+    rhs = a(1, 1, 1, 2) * 10
+    strides = [1, 1]
+    pads = [(1, 0), (0, 1)]
+    lhs_dilation = (2, 1)
+    rhs_dilation = (1, 1)
+    dimension_numbers = ("NCHW", "OIHW", "NCHW")
+    config = xla_client.PrecisionConfig()
+    config.operand_precision.append(config.Precision.HIGHEST)
+    config.operand_precision.append(config.Precision.DEFAULT)
+    c.ConvGeneralDilated(
+        c.Constant(lhs),
+        c.Constant(rhs),
+        strides,
+        pads,
+        lhs_dilation,
+        rhs_dilation,
+        dimension_numbers,
+        precision_config=config)
     result = np.array([[[
         [0., 0., 0.],
         [10., 20., 0.],
@@ -1040,6 +1143,14 @@ class SingleOpTest(ComputationTest):
     self._ExecuteAndCompareExact(
         c, expected=[[[6, 5], [8, 7]], [[2, 1], [4, 3]]])
 
+  def testReducePrecision(self):
+    c = self._NewComputation()
+    c.ReducePrecision(
+        c.Constant(NumpyArrayF32([float.fromhex("0x1.32fffep-3")])),
+        exponent_bits=8,
+        mantissa_bits=7)
+    self._ExecuteAndCompareClose(c, expected=[float.fromhex("0x1.32p-3")])
+
   def testClampF32(self):
     c = self._NewComputation()
     c.Clamp(
@@ -1145,7 +1256,7 @@ class SingleOpTest(ComputationTest):
     result = xla_client.execute_with_python_values(c.Build().Compile())
     # since the result is random, we just check shape and uniqueness
     self.assertEqual(result.shape, shape)
-    self.assertEqual(len(np.unique(result)), np.prod(shape))
+    self.assertLen(np.unique(result), np.prod(shape))
 
   def testRngUniformF32(self):
     lo, hi = 2., 4.
@@ -1158,7 +1269,7 @@ class SingleOpTest(ComputationTest):
     result = xla_client.execute_with_python_values(c.Build().Compile())
     # since the result is random, we just check shape, uniqueness, and range
     self.assertEqual(result.shape, shape)
-    self.assertEqual(len(np.unique(result)), np.prod(shape))
+    self.assertLen(np.unique(result), np.prod(shape))
     self.assertTrue(np.all(lo <= result))
     self.assertTrue(np.all(result < hi))
 
@@ -1195,11 +1306,31 @@ class SingleOpTest(ComputationTest):
     keys = np.array([[2, 4, 1, 3], [3, 1, 4, 2]], dtype=np.float32)
     values = np.array([[0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int32)
     c = self._NewComputation()
-    c.SortKeyVal(c.Constant(keys), c.Constant(values), dimension=0)
+    c.Sort((c.Constant(keys), c.Constant(values)), dimension=0)
     result = xla_client.execute_with_python_values(c.Build().Compile())
     self.assertIsInstance(result, tuple)
     np.testing.assert_allclose(result[0], [[2, 1, 1, 2], [3, 4, 4, 3]])
     np.testing.assert_equal(result[1], [[0, 5, 2, 7], [4, 1, 6, 3]])
+
+  def testSortCustomComparator(self):
+    b = self._NewComputation("comparator")
+    p0 = b.ParameterFromNumpy(NumpyArrayF32(0))
+    q0 = b.ParameterFromNumpy(NumpyArrayF32(0))
+    p1 = b.ParameterFromNumpy(NumpyArrayS32(0))
+    q1 = b.ParameterFromNumpy(NumpyArrayS32(0))
+    b.Or(b.Lt(p0, q0), b.And(b.Eq(p0, q0), b.Gt(p1, q1)))
+    comparator = b.Build()
+
+    keys = np.array([[2, 3, 1, 3], [3, 1, 2, 2]], dtype=np.float32)
+    values = np.array([[0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int32)
+    c = self._NewComputation()
+    c.Sort((c.Constant(keys), c.Constant(values)),
+           dimension=1,
+           comparator=comparator)
+    result = xla_client.execute_with_python_values(c.Build().Compile())
+    self.assertIsInstance(result, tuple)
+    np.testing.assert_allclose(result[0], [[1, 2, 3, 3], [1, 2, 2, 3]])
+    np.testing.assert_equal(result[1], [[2, 0, 3, 1], [5, 7, 6, 4]])
 
   def testQR(self):
     a = np.array(
@@ -1307,6 +1438,25 @@ class SingleOpTest(ComputationTest):
     c.Fft(c.Constant(a), xla_client.FftType.IRFFT, [3, 4, 8])
     self._ExecuteAndCompareClose(c, expected=np.fft.irfftn(a, axes=(1, 2, 3)),
                                  rtol=1e-4)
+
+  def testNextAfter(self):
+    c = self._NewComputation()
+    c.NextAfter(
+        c.Constant(np.array([1, 2], dtype=np.float32)),
+        c.Constant(np.array([2, 1], dtype=np.float32)))
+    out = self._Execute(c, ())
+    eps = np.finfo(np.float32).eps
+    np.testing.assert_equal(np.array([eps + 1, 2 - eps], dtype=np.float32), out)
+
+  def testRegularizedIncompleteBeta(self):
+    x = np.array([0.53787335, 0.24015466, 0.47494545, 0.13567594, 0.95114538])
+    a = np.array([0.00753073, 0.34813385, 0.30485708, 1.29298632, 0.51472606])
+    b = np.array([0.55688389, 0.59794214, 0.42661022, 1.59748339, 0.95047677])
+    c = self._NewComputation()
+    c.RegularizedIncompleteBeta(c.Constant(a), c.Constant(b), c.Constant(x))
+    expected = np.array([0.98923271, 0.48575411, 0.57952568, 0.12579775,
+                         0.96989155])
+    self._ExecuteAndCompareClose(c, expected=expected, rtol=1e-4)
 
 
 class EmbeddedComputationsTest(ComputationTest):
@@ -1746,7 +1896,7 @@ class EmbeddedComputationsTest(ComputationTest):
   def testInfeedS32Values(self):
     to_infeed = NumpyArrayS32([1, 2, 3, 4])
     c = self._NewComputation()
-    c.Infeed(xla_client.shape_from_pyval(to_infeed[0]))
+    c.GetTupleElement(c.Infeed(xla_client.shape_from_pyval(to_infeed[0])), 0)
     compiled_c = c.Build().Compile()
     for item in to_infeed:
       xla_client.transfer_to_infeed(item)
@@ -1755,11 +1905,24 @@ class EmbeddedComputationsTest(ComputationTest):
       result = xla_client.execute_with_python_values(compiled_c)
       self.assertEqual(result, item)
 
+  def testInfeedTuple(self):
+    to_infeed = (NumpyArrayS32([1, 2, 3, 4]), NumpyArrayS32([[7], [8]]))
+    c = self._NewComputation()
+    c.GetTupleElement(c.Infeed(xla_client.shape_from_pyval(to_infeed)), 0)
+    compiled_c = c.Build().Compile()
+    xla_client.transfer_to_infeed(to_infeed)
+
+    result = xla_client.execute_with_python_values(compiled_c)
+    np.testing.assert_equal(result[0], to_infeed[0])
+    np.testing.assert_equal(result[1], to_infeed[1])
+
   def testInfeedThenOutfeedS32(self):
     to_round_trip = NumpyArrayS32([1, 2, 3, 4])
     c = self._NewComputation()
-    x = c.Infeed(xla_client.shape_from_pyval(to_round_trip[0]))
-    c.Outfeed(x)
+    x_and_token = c.Infeed(xla_client.shape_from_pyval(to_round_trip[0]))
+    x = c.GetTupleElement(x_and_token, 0)
+    token = c.GetTupleElement(x_and_token, 1)
+    c.Outfeed(x, token)
 
     compiled_c = c.Build().Compile()
 
@@ -1845,5 +2008,28 @@ class ComputationRootTest(ComputationTest):
     np.testing.assert_allclose(ans, 4.14)
 
 
+class SetShardingTest(ComputationTest):
+  """Tests related to set OpSharding."""
+
+  def testSetSharding(self):
+    c = self._NewComputation()
+    sharding = xla_client.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    sharding.tile_assignment_dimensions.extend([1])
+    sharding.tile_assignment_devices.extend([0])
+    # Set Sharding.
+    c.SetSharding(sharding)
+    x = c.ParameterFromNumpy(NumpyArrayF32(2.0))
+    # Clear Sharding.
+    c.ClearSharding()
+
+    result = c.Add(x, c.ConstantF32Scalar(3.14))
+    extra = c.Add(result, c.ConstantF32Scalar(1.618))  # pylint: disable=unused-variable
+    arg = NumpyArrayF32(1.0)
+    compiled_c = c.Build(result).Compile()
+    ans = xla_client.execute_with_python_values(compiled_c, [arg])
+    np.testing.assert_allclose(ans, 4.14)
+
+
 if __name__ == "__main__":
-  unittest.main()
+  absltest.main()

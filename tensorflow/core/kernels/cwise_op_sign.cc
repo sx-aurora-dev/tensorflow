@@ -18,7 +18,7 @@ limitations under the License.
 namespace tensorflow {
 REGISTER7(UnaryOp, CPU, "Sign", functor::sign, float, double, int32, int64,
           complex64, Eigen::half, complex128);
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER6(UnaryOp, GPU, "Sign", functor::sign, float, Eigen::half, double,
           int64, complex64, complex128);
 
@@ -43,4 +43,13 @@ REGISTER_KERNEL_BUILDER(Name("Sign")
                         UnaryOp<CPUDevice, functor::sign<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Sign, float);
+REGISTER_KERNEL_BUILDER(Name("Sign")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .TypeConstraint<int32>("T"),
+                        UnaryOp<CPUDevice, functor::sign<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

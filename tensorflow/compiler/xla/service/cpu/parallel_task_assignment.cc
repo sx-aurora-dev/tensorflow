@@ -77,7 +77,7 @@ class DefaultCostModel : public ParallelCostModel {
       // TODO(b/29630486) Develop system bandwidth model.
       max_parallelism = std::min<int64>(
           max_parallelism_,
-          std::ceil(std::sqrt(tensorflow::port::NumSchedulableCPUs())));
+          std::ceil(std::sqrt(tensorflow::port::MaxParallelism())));
       // Use shape size instruction cost and L2 cache size min per-thread cost.
       instruction_cost = shape_size_(instruction->shape());
       min_cost_per_thread = 256LL << 10;  // 256KB L2 Cache size.
@@ -193,7 +193,7 @@ bool ParallelTaskAssigner::AssignParallelTasksHelper(
                                             computation->instructions().end());
   for (auto* instruction : instructions) {
     // Assign parallel tasks to sub-computations for While and Call HLOs.
-    // TODO(b/27458679) Evaluate alternative intra-op parallelsim placement,
+    // TODO(b/27458679) Evaluate alternative intra-op parallelism placement,
     // and support other callable computations like reduce.
     if (instruction->opcode() == HloOpcode::kWhile) {
       changed |= AssignParallelTasksHelper(module, instruction->while_body(),

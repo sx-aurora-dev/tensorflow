@@ -23,19 +23,6 @@ limitations under the License.
 
 namespace tflite {
 
-void GuardedQuantizeMultiplier(double effective_output_scale,
-                               int32_t* significand, int* shift) {
-  QuantizeMultiplier(effective_output_scale, significand, shift);
-  // Additional guard to make sure RoundingDivideByPOT does not fail.
-  if (*shift < -31) {
-    // If shift is less than -31, RoundingDivideByPOT fails. This happens when
-    // min and max are close and small. For this particular case, both
-    // significand and shift are set to zero.
-    *significand = 0;
-    *shift = 0;
-  }
-}
-
 TfLiteStatus PopulateConvolutionQuantizationParams(
     TfLiteContext* context, const TfLiteTensor* input,
     const TfLiteTensor* filter, const TfLiteTensor* bias, TfLiteTensor* output,
@@ -79,7 +66,7 @@ TfLiteStatus PopulateConvolutionQuantizationParams(
                                           static_cast<double>(output_scale);
     int32_t significand;
     int shift;
-    GuardedQuantizeMultiplier(effective_output_scale, &significand, &shift);
+    QuantizeMultiplier(effective_output_scale, &significand, &shift);
     per_channel_multiplier[i] = significand;
     per_channel_shift[i] = shift;
   }
@@ -97,8 +84,11 @@ TfLiteStatus PopulateConvolutionQuantizationParams(
     // Populate quantization parameteters with multiplier and shift.
     QuantizeMultiplier(real_multiplier, multiplier, &exponent);
     *shift = -exponent;
-    CalculateActivationRangeUint8(activation, output, output_activation_min,
-                                  output_activation_max);
+  }
+  if (input->type == kTfLiteInt8 || input->type == kTfLiteUInt8) {
+    TF_LITE_ENSURE_STATUS(CalculateActivationRangeQuantized(
+        context, activation, output, output_activation_min,
+        output_activation_max));
   }
   return kTfLiteOk;
 }
@@ -187,26 +177,6 @@ TfLiteStatus CalculateActivationRangeQuantized(TfLiteContext* context,
   return kTfLiteOk;
 }
 
-void CalculateActivationRangeUint8(TfLiteFusedActivation activation,
-                                   TfLiteTensor* output, int32_t* act_min,
-                                   int32_t* act_max) {
-  const int32_t qmin = std::numeric_limits<uint8_t>::min();
-  const int32_t qmax = std::numeric_limits<uint8_t>::max();
-
-  CalculateActivationRangeQuantizedImpl(activation, qmin, qmax, output, act_min,
-                                        act_max);
-}
-
-void CalculateActivationRangeInt8(TfLiteFusedActivation activation,
-                                  TfLiteTensor* output, int32_t* act_min,
-                                  int32_t* act_max) {
-  const int32_t qmin = std::numeric_limits<int8_t>::min();
-  const int32_t qmax = std::numeric_limits<int8_t>::max();
-
-  CalculateActivationRangeQuantizedImpl(activation, qmin, qmax, output, act_min,
-                                        act_max);
-}
-
 bool HaveSameShapes(const TfLiteTensor* input1, const TfLiteTensor* input2) {
   return TfLiteIntArrayEqual(input1->dims, input2->dims);
 }
@@ -218,9 +188,9 @@ TfLiteStatus CalculateShapeForBroadcast(TfLiteContext* context,
                                         const TfLiteTensor* input1,
                                         const TfLiteTensor* input2,
                                         TfLiteIntArray** output_shape) {
-  int64_t dims1 = NumDimensions(input1);
-  int64_t dims2 = NumDimensions(input2);
-  int64_t out_dims = std::max(dims1, dims2);
+  int dims1 = NumDimensions(input1);
+  int dims2 = NumDimensions(input2);
+  int out_dims = std::max(dims1, dims2);
   if (NumElements(input1) == 0) {
     *output_shape = TfLiteIntArrayCopy(input1->dims);
     return kTfLiteOk;
@@ -228,10 +198,35 @@ TfLiteStatus CalculateShapeForBroadcast(TfLiteContext* context,
   std::unique_ptr<TfLiteIntArray, void (*)(TfLiteIntArray*)> shape(
       TfLiteIntArrayCreate(out_dims), TfLiteIntArrayFree);
   for (int i = 0; i < out_dims; ++i) {
-    int64_t d1 = i >= dims1 ? 1 : SizeOfDimension(input1, dims1 - i - 1);
-    int64_t d2 = i >= dims2 ? 1 : SizeOfDimension(input2, dims2 - i - 1);
+    int d1 = i >= dims1 ? 1 : SizeOfDimension(input1, dims1 - i - 1);
+    int d2 = i >= dims2 ? 1 : SizeOfDimension(input2, dims2 - i - 1);
     TF_LITE_ENSURE(context, d1 == d2 || d1 == 1 || d2 == 1);
     shape->data[out_dims - i - 1] = std::max(d1, d2);
+  }
+  *output_shape = shape.release();
+  return kTfLiteOk;
+}
+
+TfLiteStatus CalculateShapeForBroadcast(TfLiteContext* context,
+                                        const TfLiteTensor* input1,
+                                        const TfLiteTensor* input2,
+                                        const TfLiteTensor* input3,
+                                        TfLiteIntArray** output_shape) {
+  int dims1 = NumDimensions(input1);
+  int dims2 = NumDimensions(input2);
+  int dims3 = NumDimensions(input3);
+  int out_dims = std::max(std::max(dims1, dims2), dims3);
+  std::unique_ptr<TfLiteIntArray, void (*)(TfLiteIntArray*)> shape(
+      TfLiteIntArrayCreate(out_dims), TfLiteIntArrayFree);
+  for (int i = 0; i < out_dims; ++i) {
+    int d1 = i >= dims1 ? 1 : SizeOfDimension(input1, dims1 - i - 1);
+    int d2 = i >= dims2 ? 1 : SizeOfDimension(input2, dims2 - i - 1);
+    int d3 = i >= dims3 ? 1 : SizeOfDimension(input3, dims3 - i - 1);
+    int max_value = std::max(std::max(d1, d2), d3);
+    TF_LITE_ENSURE(context, d1 == 1 || d1 == max_value);
+    TF_LITE_ENSURE(context, d2 == 1 || d2 == max_value);
+    TF_LITE_ENSURE(context, d3 == 1 || d3 == max_value);
+    shape->data[out_dims - i - 1] = max_value;
   }
   *output_shape = shape.release();
   return kTfLiteOk;

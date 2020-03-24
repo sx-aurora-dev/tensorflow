@@ -59,6 +59,11 @@ class L2LossOp<CPUDevice, T> : public OpKernel {
 REGISTER_KERNEL(float);
 REGISTER_KERNEL(double);
 REGISTER_KERNEL(Eigen::half);
+#ifdef ENABLE_INTEL_MKL_BFLOAT16
+// Since Eigen backend does not support bfloat16 ops, we are selectively
+// enabling them for MKL backend.
+REGISTER_KERNEL(bfloat16);
+#endif
 #undef REGISTER_KERNEL
 
 #ifdef TENSORFLOW_USE_VE

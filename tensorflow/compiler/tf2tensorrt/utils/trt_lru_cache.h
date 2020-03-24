@@ -17,10 +17,12 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_TF2TENSORRT_UTILS_TRT_LRU_CACHE_H_
 
 #include <list>
+#include <thread>
 #include <unordered_map>
 
 #include "tensorflow/compiler/tf2tensorrt/convert/utils.h"
 #include "tensorflow/compiler/tf2tensorrt/utils/trt_allocator.h"
+#include "tensorflow/compiler/tf2tensorrt/utils/trt_int8_calibrator.h"
 #include "tensorflow/compiler/tf2tensorrt/utils/trt_logger.h"
 #include "tensorflow/core/framework/resource_mgr.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -112,14 +114,6 @@ class LRUCache {
   }
 };
 
-// Define a hash function for vector<TensorShape> because it is used as the key
-// for the engine cache.
-struct VectorTensorShapeHasher {
-  std::size_t operator()(const std::vector<TensorShape>& key) const {
-    return std::hash<std::string>()(TensorShapeUtils::ShapeListString(key));
-  }
-};
-
 #if GOOGLE_CUDA
 #if GOOGLE_TENSORRT
 
@@ -136,6 +130,31 @@ struct EngineContext {
   TrtUniquePtrType<nvinfer1::IExecutionContext> execution_context
       GUARDED_BY(mu);
 };
+
+// Contains the context required to build the calibration data.
+class CalibrationContext {
+ public:
+  string TerminateCalibration();
+
+  // Lookup table for temporary staging areas of input tensors for calibration.
+  std::unordered_map<string, std::pair<void*, size_t>> device_buffers_;
+
+  // Temporary staging areas for calibration inputs.
+  std::vector<PersistentTensor> device_tensors_;
+
+  std::unique_ptr<TRTInt8Calibrator> calibrator_;
+  TrtUniquePtrType<nvinfer1::IBuilder> builder_;
+  TrtUniquePtrType<nvinfer1::ICudaEngine> engine_;
+  // TODO(sami): Use threadpool threads!
+  std::unique_ptr<std::thread> thr_;
+
+ private:
+  mutex mu_;
+  bool terminated_ GUARDED_BY(mu_) = false;
+  std::string calibration_table_ GUARDED_BY(mu_);
+};
+
+ABSL_CONST_INIT extern const absl::string_view kTfTrtContainerName;
 
 class TRTEngineCacheResource : public ResourceBase {
  public:
@@ -159,6 +178,10 @@ class TRTEngineCacheResource : public ResourceBase {
   LRUCache<std::vector<TensorShape>, std::unique_ptr<EngineContext>,
            VectorTensorShapeHasher>
       cache_;
+
+  // TODO(hinsu): Use different calibration context for the available shapes and
+  // attach it to each item of the cache.
+  std::unique_ptr<CalibrationContext> calib_ctx_;
 };
 
 #endif  // GOOGLE_TENSORRT

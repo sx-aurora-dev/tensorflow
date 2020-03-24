@@ -7,13 +7,18 @@
 
 #include "tensorflow/core/common_runtime/ve/ve_device.h"
 
+#include "tensorflow/core/framework/variant_op_registry.h"
+
 #include "ve_offload.h"
 #include <sys/types.h>
 #include <sys/syscall.h>
 
 #define VEO_ASYNC
 
-#define LOCK_VEO2
+#define TF_VE_EXECUTOR
+#ifdef TF_VE_EXECUTOR
+#include "tensorflow/core/lib/strings/str_util.h"
+#endif
 
 #define USE_DMA
 #ifdef USE_DMA
@@ -180,11 +185,11 @@ class VEO {
 
     virtual Status compute(const std::string& name, const void* arg, size_t len,
                            const OpKernel* op) {
-      VLOG(2) << "VEO::compute: name=" << name;
+      VLOG(2) << "VEO::compute: name=" << name << " arg=" << arg << " len=" << len;
       uint64_t sym = find_kernel_sym(name);
 
       Args a;
-      veo_args_set_stack(a.args, VEO_INTENT_OUT, 0, (char*)arg, len);
+      veo_args_set_stack(a.args, VEO_INTENT_IN, 0, (char*)arg, len);
       veo_args_set_i64(a.args, 1, len);
       return call_and_wait(sym, a);
     }
@@ -297,53 +302,6 @@ class VEO {
 #endif
 };
 
-#ifdef LOCK_VEO2
-class VEOLock : public VEO {
-  public:
-    virtual uint64_t alloc_mem(size_t size) override {
-      //VLOG(2) << "VEOLock::alloc_mem: this=" << this;
-      mutex_lock guard(lock_);
-      return VEO::alloc_mem(size);
-    }
-
-    virtual int free_mem(uint64_t addr) override {
-      mutex_lock guard(lock_);
-      return VEO::free_mem(addr);
-    }
-
-    virtual Status write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) override {
-      mutex_lock guard(lock_);
-      return VEO::write_mem(ve_addr, vh_buff, len);
-    }
-
-    virtual Status read_mem(void* vh_buff, uint64_t ve_addr, size_t len) override {
-      mutex_lock guard(lock_);
-      return VEO::read_mem(vh_buff, ve_addr, len);
-    }
-
-    virtual Status compute(const std::string& name, const void* arg, size_t len,
-                   const OpKernel* op) override {
-      //VLOG(2) << "VEOLock::compute: this=" << this;
-      mutex_lock guard(lock_);
-      return VEO::compute(name, arg, len, op);
-    }
-
-  protected:
-    virtual uint64_t call(uint64_t sym, const Args& a) override {
-      mutex_lock guard(lock_);
-      return VEO::call(sym, a);
-    }
-
-    virtual Status wait(uint64_t req_id, uint64_t* pRetval = NULL) override {
-      mutex_lock guard(lock_);
-      return VEO::wait(req_id, pRetval);
-    }
-
-  private:
-    mutex lock_;
-};
-#endif
-
 class KernelStack
 {
   public:
@@ -419,7 +377,7 @@ class KernelStack
 };
 
 #ifdef VEO_ASYNC
-class VEOAsync : public VEOLock
+class VEOAsync : public VEO
 {
   public:
     VEOAsync()  {
@@ -430,6 +388,12 @@ class VEOAsync : public VEOLock
         }
         currStack_ = new KernelStack(stack_size_);
       }
+
+#ifdef TF_VE_EXECUTOR
+    ~VEOAsync() {
+      thread_done_ = true;
+    }
+#endif
 
     Status init(int nodeid) override {
       Status s = VEO::init(nodeid);
@@ -442,6 +406,18 @@ class VEOAsync : public VEOLock
       VLOG(2) << "VEOAsync: sym_noprof=" << std::hex << sym_noprof_;
       if (sym_prof_ == 0 || sym_noprof_ == 0)
         return errors::Internal("Failed to get symbol for vetfkl_entry");
+
+#ifdef TF_VE_EXECUTOR
+      if (char const* tmp = getenv("TF_VE_EXECUTOR")) {
+          ve_executor_enabled_ = true;
+          ve_executor_threshold_ = std::atoi(tmp);
+          VLOG(2) << "VEOAsync: StartThread: "
+            << " threshold=" << ve_executor_threshold_;
+          thread_.reset(tensorflow::Env::Default()->StartThread(
+            tensorflow::ThreadOptions(), "ve_sync_thread",
+            std::bind(&VEOAsync::Run, this)));
+      }
+#endif
       return Status::OK();
     }
 
@@ -464,12 +440,9 @@ class VEOAsync : public VEOLock
                            const OpKernel* op) override {
       mutex_lock guard(lock_stack_);
 
-#if 0
-      VLOG(2) << "VEOAsync::compute: this=" << this
-        << " currStack_=" << currStack_
-        << " num_kernels=" << currStack_->num_kernels()
-        << " name=" << name << " len=" << len;
-#endif
+      VLOG(2) << "VEOAsync::compute:"
+        << " name=" << name
+        << " num_kernels_in_stack=" << currStack_->num_kernels();
       uint64_t sym = find_kernel_sym(name);
       if (sym == 0)
         return errors::Internal("VEOAsync: VE kernel not found for ", name);
@@ -489,10 +462,18 @@ class VEOAsync : public VEOLock
       if (ret != 0)
         return errors::Internal("VEOAsync: Failed to push kernel");
 
+#ifdef TF_VE_EXECUTOR
+      if (ve_executor_enabled_
+          && currStack_->num_kernels() >= ve_executor_threshold_) {
+        VLOG(2) << "VEOAsync::compute: notify executor";
+        executor_cond_.notify_all();
+      }
+#endif
+
       return Status::OK();
     }
 
-    Status sync() override {
+    virtual Status sync() override {
       // Only one thread can sync at once.
       mutex_lock guard_sync(lock_sync_);
 
@@ -510,13 +491,7 @@ class VEOAsync : public VEOLock
 
       {
         mutex_lock guard_stack(lock_stack_);
-
         currStack_ = nextStack;
-#if 0
-        VLOG(2) << "VEOAsync::sync: this=" << this << " stack=" << stack
-          << " num_kernels=" << n
-          << " currStack_=" << currStack_;
-#endif
       }
 
       // here, curren thread is only one holder of the stack
@@ -560,10 +535,7 @@ class VEOAsync : public VEOLock
       stack->clear();
       stack_pool_.push_back(stack);
 
-#if 0
-      VLOG(2) << "VEOAsync::sync: done ok=" << s.ok() << " stack=" << stack
-        << " currStack_=" << currStack_;
-#endif
+      VLOG(2) << "VEOAsync::sync: done num_kernels=" << n;
       return s;
     }
 
@@ -577,6 +549,31 @@ class VEOAsync : public VEOLock
 
     uint64_t sym_prof_;
     uint64_t sym_noprof_;
+
+#ifdef TF_VE_EXECUTOR
+    bool ve_executor_enabled_ = false;
+    std::unique_ptr<Thread> thread_;
+    int ve_executor_threshold_ = 1;
+    bool thread_done_ = false;
+    condition_variable executor_cond_;
+    mutex executor_mutex_;
+
+    Status Run() {
+      VLOG(2) << "VEExecturo: begin";
+      while (!thread_done_) {
+        if (currStack_->num_kernels() >= ve_executor_threshold_) {
+          VLOG(2) << "VEExecutor: sync";
+          sync();
+        } else {
+          VLOG(2) << "VEExecutor: sleep";
+          mutex_lock l(executor_mutex_);
+          executor_cond_.wait(l);
+          VLOG(2) << "VEExecutor: woke";
+        }
+      }
+      return Status::OK();
+    }
+#endif
 };
 #endif
 
@@ -663,7 +660,7 @@ Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
     << " bytes. Can be changed by TF_DMA_BUF_SIZE";
 
   if (size == 0) {
-    VLOG(2) << "VEO::init: DMA is disabled by a user";
+    LOG(WARNING) << "VE: DMA is disabled because TF_DMA_BUF_SIZE is 0 byte";
     dma_.available = false;
     return Status::OK();
   }
@@ -674,7 +671,7 @@ Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
   VLOG(2) << "VEO::init: shmid=" << shmid;
   if (shmid == -1) {
     // When hugetable is not available, DMA is disabled.
-    VLOG(2) << "VEO:init: DMA is not avaiable";
+    LOG(WARNING) << "VE: DMA is disable because shmget with SHM_HUGETLB was failed";
     dma_.available = false;
     return Status::OK();
   }
@@ -895,6 +892,15 @@ class VEDevice : public LocalDevice {
   private:
     GpuDeviceInfo* gpu_device_info_;
     std::vector<VEDeviceContextImpl*> device_contexts_;
+
+    // This method returns an initialization status, in addition to
+    // calling the "done" StatusCallback, if there is a failure to
+    // allocate memory or if the tensor "from" is not DMA-copyable.
+    // If there is no error prior to enqueueing the copy, an OK status
+    // is returned.
+    Status MaybeCopyTensorToVE(const AllocatorAttributes& alloc_attrs,
+                               const Tensor& from, Tensor* to,
+                               StatusCallback done);
 };
 
 VEDevice::~VEDevice() {
@@ -915,37 +921,123 @@ Status VEDevice::Init(const SessionOptions& options, VEO* veo) {
   return Status::OK();
 }
 
+Status VEDevice::MaybeCopyTensorToVE(
+    const AllocatorAttributes& alloc_attrs, const Tensor& from, Tensor* to,
+    StatusCallback done) {
+  if (alloc_attrs.on_host()) {
+    *to = from;
+    done(Status::OK());
+    return Status::OK();
+  } else {
+    if (!DMAHelper::CanUseDMA(&from)) {
+      Status err = errors::Internal("VE copy from non-DMA ",
+                                    DataTypeString(from.dtype()), " tensor");
+      done(err);
+      return err;
+    }
+    AllocationAttributes allocation_attr;
+    uint64 safe_alloc_frontier = 0;
+    std::function<uint64()> freed_by_func = [this, &safe_alloc_frontier]() {
+      safe_alloc_frontier = SafeAllocFrontier(safe_alloc_frontier);
+      return safe_alloc_frontier;
+    };
+#if 0
+    if (timestamped_allocator_) {
+      allocation_attr.freed_by_func = &freed_by_func;
+    }
+#endif
+    auto* copy = new Tensor(GetAllocator(alloc_attrs), from.dtype(),
+                            from.shape(), allocation_attr);
+
+    // If the tensor is not initialized, we likely ran out of memory.
+    if (!copy->IsInitialized()) {
+      delete copy;
+      Status err = errors::ResourceExhausted(
+          "OOM when allocating tensor of shape ", from.shape().DebugString(),
+          " and type ", DataTypeString(from.dtype()));
+      done(err);
+      return err;
+    }
+
+    auto wrapped_done = [to, copy, done = std::move(done)](const Status& s) {
+      if (s.ok()) {
+        *to = std::move(*copy);
+      }
+      delete copy;
+      done(s);
+    };
+
+//    tracing::ScopedAnnotation annotation("MakeTensorFromProto");
+    device_contexts_[0]->CopyCPUTensorToDevice(
+        &from, this, copy, std::move(wrapped_done) );
+    return Status::OK();
+  }
+}
+
 Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
-                                     const AllocatorAttributes alloc_attrs,
-                                     Tensor* tensor) {
-  VLOG(2) << "VEDeviceContextImpl::MakeTensorFromProto";
+                                          const AllocatorAttributes alloc_attrs,
+                                          Tensor* tensor) {
+  MEMDEBUG_CACHE_OP(
+      (pending_op_name != nullptr ? pending_op_name : "MakeTensorFromProto"));
   AllocatorAttributes attr;
   attr.set_on_host(true);
+//  attr.set_gpu_compatible(true);
   Allocator* host_alloc = GetAllocator(attr);
-
   Tensor parsed(tensor_proto.dtype());
   if (!parsed.FromProto(host_alloc, tensor_proto)) {
     return errors::InvalidArgument("Cannot parse tensor from proto: ",
                                    tensor_proto.DebugString());
   }
-  Status status;
-  if (alloc_attrs.on_host()) {
-    *tensor = parsed;
-  } else {
-    Tensor copy(GetAllocator(alloc_attrs), parsed.dtype(), parsed.shape());
 
-    // If the tensor is not initialized, we likely ran out of memory.
-    if (!copy.IsInitialized()) {
-      return errors::ResourceExhausted(
-          "OOM when allocating tensor of shape ", parsed.shape().DebugString(),
-          " and type ", DataTypeString(parsed.dtype()));
+  if (parsed.dtype() == DT_VARIANT) {
+    const Variant* from = parsed.flat<Variant>().data();
+    int numa_node = attributes().locality().numa_node();
+    Tensor copy(cpu_allocator(numa_node), DT_VARIANT, parsed.shape());
+    Variant* copy_variant = copy.flat<Variant>().data();
+
+    std::list<Notification> notifications;
+    Status copy_status;
+    auto copier = [this, &alloc_attrs, &notifications, &copy_status](
+                      const Tensor& from, Tensor* to) {
+      // Copier isn't run in a multithreaded environment, so we don't
+      // have to worry about the notifications list being modified in parallel.
+      notifications.emplace_back();
+      Notification& n = *notifications.rbegin();
+      return MaybeCopyTensorToVE(alloc_attrs, from, to,
+                                  [&n, &copy_status](const Status& s) {
+                                    if (copy_status.ok()) {
+                                      copy_status.Update(s);
+                                    }
+                                    n.Notify();
+                                  });
+    };
+    Status s;
+    for (int64 ix = 0; ix < parsed.NumElements(); ++ix) {
+      s = VariantDeviceCopy(VariantDeviceCopyDirection::HOST_TO_DEVICE,
+                            from[ix], &copy_variant[ix], copier);
+      if (!s.ok()) {
+        break;
+      }
     }
-
-    device_contexts_[0]->CopyCPUTensorToDevice(
-        &parsed, this, &copy, [&status](const Status& s) { status = s; });
-    *tensor = copy;
+    for (auto& n : notifications) {
+      n.WaitForNotification();
+    }
+    if (!s.ok()) {
+      return s;
+    }
+    *tensor = std::move(copy);
+    return copy_status;
+  } else {
+    Notification n;
+    Status status;
+    TF_RETURN_IF_ERROR(MaybeCopyTensorToVE(alloc_attrs, parsed, tensor,
+                                            [&n, &status](const Status& s) {
+                                              status = s;
+                                              n.Notify();
+                                            }));
+    n.WaitForNotification();
+    return status;
   }
-  return status;
 }
 
 class VEOFactory {
@@ -955,14 +1047,11 @@ class VEOFactory {
 
       if (!veo_) {
 #if defined(VEO_ASYNC)
-        veo_ = new VEOAsync;
-#elif defined(LOCK_VEO2)
-        if (getenv("TF_NOLOCK_VEO2")) {
-          VLOG(2) << "VEOFactory: create VEO";
+        if (getenv("TF_VE_SYNC")) {
+          VLOG(2) << "use VEO (not VEOAsync) because TF_VEO_SYNC is set";
           veo_ = new VEO;
         } else {
-          VLOG(2) << "VEOFactory: create VEOLock";
-          veo_ = new VEOLock;
+          veo_ = new VEOAsync;
         }
 #else
         veo_ = new VEO;
@@ -1021,6 +1110,14 @@ class VEDeviceFactory : public DeviceFactory {
 
     //size_t total_memory = 20UL*1024*1024*1024;
     size_t total_memory = 44UL*1024*1024*1024;
+
+    size_t n = 1;
+    auto iter = options.config.device_count().find("VE");
+    if (iter != options.config.device_count().end()) {
+      n = iter->second;
+    }
+    if( n <= 0 ) return Status::OK();
+
     Allocator* ve_allocator = new VEBFCAllocator(total_memory, true, "VE_0_bfc", veo);
 
     int numa_node = 0;

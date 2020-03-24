@@ -13,11 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 
-package(default_visibility = ["//visibility:public"])
-
-licenses(["notice"])  # Apache 2.0
-
 load("//tensorflow/lite:build_def.bzl", "tflite_copts", "tflite_linkopts")
+
+package(
+    default_visibility = ["//visibility:public"],
+    licenses = ["notice"],  # Apache 2.0
+)
 
 exports_files(glob([
     "testdata/**",
@@ -28,7 +29,7 @@ cc_library(
     hdrs = ["evaluation_stage.h"],
     copts = tflite_copts(),
     deps = [
-        "//tensorflow/lite/c:c_api_internal",
+        "//tensorflow/lite/c:common",
         "//tensorflow/lite/tools/evaluation/proto:evaluation_config_cc_proto",
     ],
 )
@@ -44,7 +45,15 @@ cc_library(
         "//tensorflow/lite/delegates/nnapi:nnapi_delegate",
     ] + select({
         "//tensorflow:android": [
-            "//tensorflow/lite/delegates/gpu:gl_delegate",
+            "//tensorflow/lite/delegates/gpu:delegate",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//tensorflow:android_arm": [
+            "//tensorflow/lite/experimental/delegates/hexagon:hexagon_delegate",
+        ],
+        "//tensorflow:android_arm64": [
+            "//tensorflow/lite/experimental/delegates/hexagon:hexagon_delegate",
         ],
         "//conditions:default": [],
     }),

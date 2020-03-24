@@ -28,17 +28,12 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/types.h"
 
-#ifdef TENSORFLOW_USE_VE
-#include "tensorflow/core/common_runtime/ve/ve_device.h"
-#include "tensorflow/core/common_runtime/dma_helper.h"
-#endif
-
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 typedef Eigen::GpuDevice GPUDevice;
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
@@ -120,18 +115,24 @@ class PackOp : public OpKernel {
         inputs_flat.emplace_back(new typename TTypes<T, 2>::ConstMatrix(
             values[i].shaped<T, 2>({before_dim, after_dim})));
       }
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       if (std::is_same<Device, GPUDevice>::value) {
         ConcatGPU<T>(c, inputs_flat, output, &output_flat);
         return;
       }
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #ifdef TENSORFLOW_USE_SYCL
       if (std::is_same<Device, SYCLDevice>::value) {
         ConcatSYCL<T>(c->eigen_sycl_device(), inputs_flat, &output_flat);
         return;
       }
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+      if (std::is_same<Device, VEDevice>::value) {
+        ConcatVE<T>(c, inputs_flat, &output_flat);
+        return;
+      }
+#endif  // TENSORFLOW_USE_VE
       ConcatCPU<T>(c->device(), inputs_flat, &output_flat);
     }
   }
@@ -150,13 +151,13 @@ TF_CALL_QUANTIZED_TYPES(REGISTER_PACK);
 
 #if defined(IS_MOBILE_PLATFORM) && !defined(SUPPORT_SELECTIVE_REGISTRATION)
 // Primarily used for SavedModel support on mobile.
-REGISTER_PACK(string);
+REGISTER_PACK(tstring);
 #endif  // defined(IS_MOBILE_PLATFORM) &&
         // !defined(SUPPORT_SELECTIVE_REGISTRATION)
 
 #undef REGISTER_PACK
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #define REGISTER_GPU(type)                                       \
   REGISTER_KERNEL_BUILDER(                                       \
@@ -168,6 +169,8 @@ TF_CALL_bfloat16(REGISTER_GPU);
 TF_CALL_int64(REGISTER_GPU);
 TF_CALL_int16(REGISTER_GPU);
 TF_CALL_bool(REGISTER_GPU);
+TF_CALL_complex64(REGISTER_GPU);
+TF_CALL_complex128(REGISTER_GPU);
 #undef REGISTER_GPU
 
 // A special GPU kernel for int32.
@@ -180,7 +183,7 @@ REGISTER_KERNEL_BUILDER(Name("Pack")
                             .TypeConstraint<int32>("T"),
                         PackOp<CPUDevice, int32>);
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 #define REGISTER_SYCL(type)                                       \
@@ -199,112 +202,27 @@ REGISTER_KERNEL_BUILDER(Name("Pack")
 #endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
-template <typename T>
-class PackOp<VEDevice, T> : public OpKernel {
- public:
-  typedef std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>
-      ConstMatrixVector;
+#define REGISTER_VE(type)                                       \
+  REGISTER_KERNEL_BUILDER(                                      \
+      Name("Pack").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PackOp<VEDevice, type>)
 
-  explicit PackOp(OpKernelConstruction* context) : OpKernel(context) {
-    OP_REQUIRES_OK(context, context->GetAttr("axis", &axis_));
-    OP_REQUIRES(context, axis_ == 0,
-	errors::InvalidArgument("PackOp<VEDevice> only support axis==0")
-    ); // [todo] support axis != 0
-  }
+//TF_CALL_half(REGISTER_VE);
+TF_CALL_float(REGISTER_VE);
+TF_CALL_double(REGISTER_VE);
+//TF_CALL_bfloat16(REGISTER_VE);
+//TF_CALL_int64(REGISTER_VE);
+//TF_CALL_int16(REGISTER_VE);
+//TF_CALL_bool(REGISTER_VE);
 
-  void Compute(OpKernelContext* c) override {
-    OpInputList values;
-    OP_REQUIRES_OK(c, c->input_list("values", &values));
-    const int num = values.size();
+#undef REGISTER_VE
 
-    // Verify that all input shapes match
-    for (int i = 1; i < num; i++) {
-      OP_REQUIRES(c, values[0].shape().IsSameSize(values[i].shape()),
-                  errors::InvalidArgument(
-                      "Shapes of all inputs must match: values[0].shape = ",
-                      values[0].shape().DebugString(), " != values[", i,
-                      "].shape = ", values[i].shape().DebugString()));
-    }
-
-    int expanded_num_dims = values[0].dims() + 1;
-    int axis = axis_;
-    if (axis < 0) axis += expanded_num_dims;
-
-    OP_REQUIRES(c, 0 <= axis && axis < expanded_num_dims,
-                errors::InvalidArgument("axis = ", axis_, " not in [",
-                                        -expanded_num_dims, ", ",
-                                        expanded_num_dims, ")"));
-
-    TensorShape output_shape(values[0].shape());
-    output_shape.InsertDim(axis, num);
-
-    // In the num = 1 case, just reshape the input
-    if (num == 1) {
-      Tensor output;
-      CHECK(output.CopyFrom(values[0], output_shape));
-      c->set_output(0, output);
-      return;
-    }
-
-    // Allocate output
-    Tensor* output;
-    OP_REQUIRES_OK(c, c->allocate_output(0, output_shape, &output));
-
-    int64 before_dim = 1;
-    for (int i = 0; i < axis; ++i) {
-      before_dim *= output_shape.dim_size(i);
-    }
-
-    int64 after_dim = 1;
-    for (int i = axis + 1; i < output_shape.dims(); ++i) {
-      after_dim *= output_shape.dim_size(i);
-    }
-
-    const int64 axis_dim = output_shape.dim_size(axis);
-
-    const int64 output_size = output->NumElements();
-    if (output_size > 0) {
-      struct Args {
-	int dtype;
-	uint64_t n ;
-	uint64_t l ;
-	uint64_t out;
-	uint64_t in[1];
-      } ;
-
-      size_t len = sizeof(struct Args) + sizeof(uint64_t) * (num-1) ;
-      char *args_buf = new char[len] ;
-
-      struct Args *args = reinterpret_cast<struct Args*>(args_buf) ;
-
-      args->dtype = DataTypeToEnum<T>::v();
-      args->n     = num ;
-      args->l     = after_dim ;
-      args->out = (uint64_t)DMAHelper::base(output);
-      for (int i = 0; i < num; ++i) {
-	args->in[i] = (uint64_t)DMAHelper::base(&values[i]) ;
-      }
-
-      VEDeviceContext* vectx = c->op_device_context<VEDeviceContext>();
-      Status s = vectx->Compute("Pack", (void*)args, len);
-      if (!s.ok())
-	c->SetStatus(s);
-
-      delete[] args_buf ;
-    }
-  }
-
- private:
-  int axis_;
-};
-
-REGISTER_KERNEL_BUILDER(
-    Name("Pack").Device(DEVICE_VE).TypeConstraint<float>("T"),
-    PackOp<VEDevice, float>) ;
-
-REGISTER_KERNEL_BUILDER(
-    Name("Pack").Device(DEVICE_VE).TypeConstraint<int>("T"),
-    PackOp<VEDevice, int>) ;
+REGISTER_KERNEL_BUILDER(Name("Pack")
+                            .Device(DEVICE_VE)
+                            .HostMemory("values")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PackOp<CPUDevice, int32>);
 
 #endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

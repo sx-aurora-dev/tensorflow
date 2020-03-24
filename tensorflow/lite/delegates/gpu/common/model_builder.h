@@ -36,9 +36,15 @@ Status BuildModel(TfLiteContext* context,
                   const TfLiteDelegateParams* delegate_params,
                   GraphFloat32* graph);
 
+// Same as above but also apply all transformations on the final graph.
+// Prefer using this method instead of BuildModel.
+Status BuildFinalModel(TfLiteContext* context,
+                       const TfLiteDelegateParams* delegate_params,
+                       GraphFloat32* graph);
+
 // Module-internal converter, exposed for unit testing purpose only.
 Status ConvertTfLiteTensorToTensorRef(const TfLiteTensor& tflite_tensor,
-                                      TensorRefFloat32* tensor_ref);
+                                      TensorRef<BHWC>* tensor_ref);
 
 }  // namespace gpu
 }  // namespace tflite

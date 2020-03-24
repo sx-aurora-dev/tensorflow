@@ -15,9 +15,8 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_DEPTHWISECONV_FLOAT_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_DEPTHWISECONV_FLOAT_H_
 
-#include "profiling/instrumentation.h"
-#include "tensorflow/lite/kernels/cpu_backend_context.h"
-#include "tensorflow/lite/kernels/internal/common.h"
+#include "tensorflow/lite/experimental/ruy/profiler/instrumentation.h"
+#include "tensorflow/lite/kernels/internal/optimized/cpu_check.h"
 #include "tensorflow/lite/kernels/internal/types.h"
 
 namespace tflite {
@@ -769,9 +768,7 @@ void FloatDepthwiseConvAccumRow(int stride, int dilation_factor,
                                 const float* filter_data,
                                 int out_x_buffer_start, int out_x_buffer_end,
                                 int output_depth, float* acc_buffer) {
-#ifdef GEMMLOWP_PROFILING
-  gemmlowp::ScopedProfilingLabel label(__PRETTY_FUNCTION__);
-#endif
+  ruy::profiler::ScopeLabel label(__PRETTY_FUNCTION__);
   // Sanity check parameters. This is important in particular to ensure
   // that we keep the number of template instantiations minimal, so we don't
   // increase binary size unnecessarily.
@@ -846,7 +843,7 @@ inline void FloatDepthwiseConvAccumRowGeneric(
     const float* input_data, int pad_width, int depth_multiplier,
     int filter_width, const float* filter_data, int out_x_buffer_start,
     int out_x_buffer_end, int output_depth, float* acc_buffer) {
-  gemmlowp::ScopedProfilingLabel label("DepthwiseConvAccumRowGeneric (slow)");
+  ruy::profiler::ScopeLabel label("DepthwiseConvAccumRowGeneric (slow)");
   const float* filter_base_ptr = filter_data;
   for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
     const int out_x_loop_start = std::max(
@@ -897,7 +894,7 @@ inline void DepthwiseConvInitAccBuffer(int num_output_pixels, int output_depth,
 // For example, assume thread_start = 2, thread_end = 6, and thread_dim = 1, it
 // means that it will calculate DepthwiseConv for output_data[:, 2:5, :, :].
 //
-// The cpu_backend_context may be supplied as a nullptr by some callers. This
+// The cpu_flags is currently unused. This
 // parameter is included so that the signature matches that required by a
 // templated function. Other versions, such as quantized, need this parameter.
 inline void DepthwiseConvImpl(
@@ -905,9 +902,9 @@ inline void DepthwiseConvImpl(
     const float* input_data, const RuntimeShape& filter_shape,
     const float* filter_data, const RuntimeShape& bias_shape,
     const float* bias_data, const RuntimeShape& output_shape,
-    float* output_data, CpuBackendContext* cpu_backend_context,
-    int thread_start, int thread_end, int thread_dim) {
-  gemmlowp::ScopedProfilingLabel label("DepthwiseConv/float/DepthwiseConvImpl");
+    float* output_data, const CpuFlags& /* cpu_flags */, int thread_start,
+    int thread_end, int thread_dim) {
+  ruy::profiler::ScopeLabel label("DepthwiseConv/float/DepthwiseConvImpl");
 
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
@@ -1111,18 +1108,6 @@ inline void DepthwiseConvImpl(
   }
 }
 
-inline void DepthwiseConv(
-    const DepthwiseParams& params, const RuntimeShape& input_shape,
-    const float* input_data, const RuntimeShape& filter_shape,
-    const float* filter_data, const RuntimeShape& bias_shape,
-    const float* bias_data, const RuntimeShape& output_shape,
-    float* output_data, CpuBackendContext* cpu_backend_context) {
-  DepthwiseConvImpl(params, input_shape, input_data, filter_shape, filter_data,
-                    bias_shape, bias_data, output_shape, output_data,
-                    cpu_backend_context,
-                    /*thread_start=*/0,
-                    /*thread_end=*/output_shape.Dims(1), /*thread_dim=*/1);
-}
 
 }  // namespace optimized_ops
 }  // namespace tflite

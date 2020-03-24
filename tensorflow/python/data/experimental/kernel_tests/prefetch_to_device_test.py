@@ -17,10 +17,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from absl.testing import parameterized
+
 from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.data.experimental.ops import prefetching_ops
 from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
+from tensorflow.python.data.util import structure
+from tensorflow.python.framework import combinations
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
@@ -30,9 +34,9 @@ from tensorflow.python.platform import test
 
 
 # TODO(b/117581999): add eager coverage when supported.
-class PrefetchToDeviceTest(test_base.DatasetTestBase):
+class PrefetchToDeviceTest(test_base.DatasetTestBase, parameterized.TestCase):
 
-  @test_util.deprecated_graph_mode_only
+  @combinations.generate(test_base.graph_only_combinations())
   def testPrefetchToDevice(self):
     host_dataset = dataset_ops.Dataset.range(10)
     device_dataset = host_dataset.apply(
@@ -42,10 +46,9 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_one_shot_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+    self.assertTrue(structure.are_compatible(
+        dataset_ops.get_structure(host_dataset),
         dataset_ops.get_structure(device_dataset)))
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
-        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element.dtype)
     self.assertEqual([], next_element.shape)
@@ -57,7 +60,7 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         self.evaluate(next_element)
 
-  @test_util.deprecated_graph_mode_only
+  @combinations.generate(test_base.graph_only_combinations())
   def testPrefetchToSameDevice(self):
     host_dataset = dataset_ops.Dataset.range(10)
     device_dataset = host_dataset.apply(
@@ -68,10 +71,9 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_one_shot_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+    self.assertTrue(structure.are_compatible(
+        dataset_ops.get_structure(host_dataset),
         dataset_ops.get_structure(device_dataset)))
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
-        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element.dtype)
     self.assertEqual([], next_element.shape)
@@ -83,7 +85,7 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         self.evaluate(next_element)
 
-  @test_util.deprecated_graph_mode_only
+  @combinations.generate(test_base.graph_only_combinations())
   def testPrefetchDictToDevice(self):
     host_dataset = dataset_ops.Dataset.range(10).map(lambda x: {"a": x})
     device_dataset = host_dataset.apply(
@@ -93,10 +95,9 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_one_shot_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+    self.assertTrue(structure.are_compatible(
+        dataset_ops.get_structure(host_dataset),
         dataset_ops.get_structure(device_dataset)))
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
-        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element["a"].dtype)
     self.assertEqual([], next_element["a"].shape)
@@ -108,7 +109,7 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         self.evaluate(next_element)
 
-  @test_util.deprecated_graph_mode_only
+  @combinations.generate(test_base.graph_only_combinations())
   def testPrefetchSparseTensorsToDevice(self):
     def make_tensor(i):
       return sparse_tensor.SparseTensorValue(
@@ -122,10 +123,9 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_one_shot_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+    self.assertTrue(structure.are_compatible(
+        dataset_ops.get_structure(host_dataset),
         dataset_ops.get_structure(device_dataset)))
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
-        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element.dtype)
 
@@ -139,7 +139,7 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         self.evaluate(next_element)
 
-  @test_util.deprecated_graph_mode_only
+  @combinations.generate(test_base.graph_only_combinations())
   def testPrefetchToDeviceGpu(self):
     if not test_util.is_gpu_available():
       self.skipTest("No GPU available")
@@ -159,7 +159,7 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         self.evaluate(next_element)
 
-  @test_util.deprecated_graph_mode_only
+  @combinations.generate(test_base.graph_only_combinations())
   def testPrefetchToDeviceWithReInit(self):
     host_dataset = dataset_ops.Dataset.range(10)
     device_dataset = host_dataset.apply(
@@ -169,10 +169,9 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       iterator = dataset_ops.make_initializable_iterator(device_dataset)
       next_element = iterator.get_next()
 
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
+    self.assertTrue(structure.are_compatible(
+        dataset_ops.get_structure(host_dataset),
         dataset_ops.get_structure(device_dataset)))
-    self.assertTrue(dataset_ops.get_structure(host_dataset).is_compatible_with(
-        dataset_ops.get_structure(iterator)))
 
     self.assertEqual(dtypes.int64, next_element.dtype)
     self.assertEqual([], next_element.shape)
@@ -188,7 +187,7 @@ class PrefetchToDeviceTest(test_base.DatasetTestBase):
       with self.assertRaises(errors.OutOfRangeError):
         self.evaluate(next_element)
 
-  @test_util.deprecated_graph_mode_only
+  @combinations.generate(test_base.graph_only_combinations())
   def testPrefetchToDeviceGpuWithReInit(self):
     if not test_util.is_gpu_available():
       self.skipTest("No GPU available")

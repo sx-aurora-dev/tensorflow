@@ -17,9 +17,10 @@ limitations under the License.
 #define TENSORFLOW_LITE_TOOLS_ACCURACY_ILSVRC_IMAGENET_MODEL_EVALUATOR_H_
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-#include "tensorflow/lite/c/c_api_internal.h"
+#include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/tools/evaluation/proto/evaluation_stages.pb.h"
 
 namespace tensorflow {
@@ -62,6 +63,10 @@ class ImagenetModelEvaluator {
     // This file is a list of image indices in a sorted order.
     std::string blacklist_file_path;
 
+    // Delegate used to perform inference (if available).
+    // Valid values: 'nnapi', 'gpu'.
+    std::string delegate;
+
     // The maximum number of images to calculate accuracy.
     // 0 means all images, a positive number means only the specified
     // number of images.
@@ -69,6 +74,9 @@ class ImagenetModelEvaluator {
 
     // Number of ranks, top K.
     int num_ranks = 10;
+
+    // Number of interpreter threads.
+    int num_interpreter_threads = 1;
   };
 
   // An evaluation observer.
@@ -91,7 +99,7 @@ class ImagenetModelEvaluator {
     virtual void OnSingleImageEvaluationComplete(
         uint64_t shard_id,
         const tflite::evaluation::TopkAccuracyEvalMetrics& metrics,
-        const string& image) = 0;
+        const std::string& image) = 0;
 
     virtual ~Observer() = default;
   };
@@ -100,8 +108,10 @@ class ImagenetModelEvaluator {
       : params_(params), num_threads_(num_threads) {}
 
   // Factory method to create the evaluator by parsing command line arguments.
+  // Note argc and argv will be updated accordingly as matching arguments will
+  // be removed in argv.
   static TfLiteStatus Create(
-      int argc, char* argv[], int num_threads,
+      int* argc, char* argv[], int num_threads,
       std::unique_ptr<ImagenetModelEvaluator>* evaluator);
 
   // Adds an observer that can observe evaluation events..

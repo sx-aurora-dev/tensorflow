@@ -19,7 +19,7 @@ namespace tensorflow {
 REGISTER8(UnaryOp, CPU, "Square", functor::square, float, Eigen::half, double,
           int32, int64, complex64, complex128, bfloat16);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER4(UnaryOp, GPU, "Square", functor::square, float, Eigen::half, double,
           int64);
 
@@ -47,7 +47,7 @@ REGISTER_KERNEL_BUILDER(Name("Square")
 #ifdef TENSORFLOW_USE_VE
 REGISTER_VE_UNARY_OP(Square, float);
 REGISTER_KERNEL_BUILDER(Name("Square")
-                            .Device(DEVICE_SYCL)
+                            .Device(DEVICE_VE)
                             .HostMemory("x")
                             .HostMemory("y")
                             .TypeConstraint<int32>("T"),

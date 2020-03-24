@@ -44,6 +44,7 @@ limitations under the License.
 #include "tensorflow/core/framework/memory_types.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/graph/algorithm.h"
 #include "tensorflow/core/graph/control_flow.h"
@@ -82,6 +83,10 @@ class MarkForCompilationPassImpl {
   struct DebugOptions {
     // If true, do not respect the results of deadness analysis.
     bool ignore_deadness_checks;
+
+    // If true, do not do safety checks to preserve TensorFlow's resource
+    // variable concurrency semantics.
+    bool ignore_resource_variable_checks;
 
     // If true, do not respect the _XlaCompile=false attribute.
     bool ignore_xla_compile_attr;
@@ -203,8 +208,13 @@ class MarkForCompilationPassImpl {
         return absl::StrCat("NULL NODE IN #", cycles_graph_node_id());
       }
 
-      return absl::StrCat("<", node->name(), " + ", cluster_size(), " others #",
-                          cycles_graph_node_id(), ">");
+      if (cluster_size() == 1) {
+        return absl::StrCat("<", node->name(), " #", cycles_graph_node_id(),
+                            ">");
+      }
+
+      return absl::StrCat("<", node->name(), " + ", cluster_size() - 1,
+                          " others #", cycles_graph_node_id(), ">");
     }
 
    private:
@@ -222,39 +232,36 @@ class MarkForCompilationPassImpl {
     TF_DISALLOW_COPY_AND_ASSIGN(Cluster);
   };
 
+  // If `cluster` has only a single node then returns that, otherwise returns
+  // nullptr.
+  Node* GetOnlyNodeIn(const Cluster& cluster);
+
+  // Returns true if `cluster` is a trivial cluster containing a "sink like"
+  // node -- a NoOp node that only the Sink node control depends on.
+  bool IsSinkLike(const Cluster& cluster);
+
+  // Returns true if `cluster` looks like an "i++" operation on an integer
+  // scalar resource variable.
+  bool IsScalarIntegerResourceOperation(const Cluster& cluster);
+
   // ---------------------------------------------------------------------------
   // The pass proceeds in four steps, out of which `RunEdgeContractionLoop` and
   // `CreateClusters` do most of the heavy lifting.
 
-  // Initialize some internal data structures.
-  Status Initialize();
+  // Initializes some internal data structures.
+  //
+  // If this returns false then Initialize exited early (either because there is
+  // nothing to do or we saw a graph that we can't handle) and not all the
+  // fields in this MarkForCompilationPassImpl instance are set up.
+  StatusOr<bool> Initialize();
 
-  // Runs through all the nodes in `cycles_graph_` and tries to create clusters.
-  // Returns true if any new clusters were created.
-  StatusOr<bool> RunEdgeContractionLoopInPostOrderOnce();
-
-  // Runs through all the nodes in `cycles_graph_` and tries to contract high
-  // priority edges for clusters. Returns true if any new clusters were created.
+  // Runs through the entire cluster graph in post-order and calls `fn(from,
+  // to)` on each edge.  `fn(from, to)` is expected to return true if it was
+  // able to contract `from`->`to`.
   //
-  // There are potentially many maximal clustering results, but they will not
-  // all be equally performant. Some clustering decision are likely to improve
-  // performance much more than others, and we cannot order contractions on this
-  // cost function, nor can we look at global information while deciding on
-  // individual edges to contract. Instead, we will make decisions on these
-  // important edges then make decisions on all other edges, causing the highest
-  // chance of all most important edges to be contracted.
-  //
-  // An example of where this might occur is with a digraph:
-  // {A -> B, B -> C, A -> X, X -> C} where B is a Size operation and X is
-  // not-compilable. In this case, the valid clusterings are {A,B} or {B,C}. B
-  // should be clustered with A because it will prevent a potentially large
-  // tensor from A being computed and copied.
-  //
-  // This pass will ensure that contraction happens, which cannot be enforced in
-  // a single pass with the current algorithm.
-  // graph and prevent B->C from being clusterd in anticipation of a later A->B
-  // cluster.
-  StatusOr<bool> ContractPreferredEdges();
+  // Returns true if `fn` returned true for any edge.
+  template <typename FnTy>
+  StatusOr<bool> ForEachEdgeInPostOrder(FnTy fn);
 
   // Contracts as many edges as possible to create XLA clusters.  After this
   // finishes the clustering decisions made are implicitly stored in
@@ -275,10 +282,6 @@ class MarkForCompilationPassImpl {
   // Tries to contract the edge from cluster `from` to cluster `to`.  Returns
   // true if successful.
   StatusOr<bool> TryToContractEdge(Cluster* from, Cluster* to);
-
-  // Tries to contract each edge from `cluster_from`.  Returns true if any edges
-  // were contracted, false otherwise.
-  StatusOr<bool> TryToContractEdgesFrom(Cluster* cluster_from);
 
   // Nodes that XLA can compile are put in `compilation_candidates_`.
   Status FindCompilationCandidates();
@@ -590,7 +593,7 @@ Status IgnoreResourceOpForSafetyAnalysis(
   return Status::OK();
 }
 
-Status MarkForCompilationPassImpl::Initialize() {
+StatusOr<bool> MarkForCompilationPassImpl::Initialize() {
   TF_RET_CHECK(!initialized_ && !edges_contracted_ && !clusters_created_);
   initialized_ = true;
 
@@ -598,13 +601,15 @@ Status MarkForCompilationPassImpl::Initialize() {
 
   if (compilation_candidates_.empty()) {
     VLOG(2) << "No compilable candidates";
-    return Status::OK();
+    return false;
   }
 
   TF_ASSIGN_OR_RETURN(bool cycle_detection_graph_ok,
                       CreateCycleDetectionGraph(graph_, &cycles_graph_));
   if (!cycle_detection_graph_ok) {
-    return Status::OK();
+    // TODO(sanjoy): This should be logged via the XLA activity listener.
+    VLOG(2) << "Could not form cycle detection graph";
+    return false;
   }
 
   if (!debug_options_.ignore_deadness_checks) {
@@ -615,10 +620,12 @@ Status MarkForCompilationPassImpl::Initialize() {
   // Each compilation candidate belongs to a cluster. The cluster's
   // representative names the node in the 'cycles' graph that represents the
   // cluster.
-  return BuildInitialClusterSet();
+  TF_RETURN_IF_ERROR(BuildInitialClusterSet());
+  return true;
 }
 
-StatusOr<bool> MarkForCompilationPassImpl::ContractPreferredEdges() {
+template <typename FnTy>
+StatusOr<bool> MarkForCompilationPassImpl::ForEachEdgeInPostOrder(FnTy fn) {
   bool changed = false;
   for (int32 node : cycles_graph_.AllNodesInPostOrder()) {
     Cluster* cluster_from = GetClusterForCyclesGraphNode(node);
@@ -639,55 +646,64 @@ StatusOr<bool> MarkForCompilationPassImpl::ContractPreferredEdges() {
         continue;
       }
 
-      if (cluster_to->cluster_size() == 1) {
-        Node* n = graph_->FindNodeId(cluster_to->GetIdOfOnlyNode());
-
-        // Shape consuming operations are desirable to cluster with their
-        // operands because they return a small set of scalar values after
-        // consuming a large amount of data. For example, given a graph X -> Y
-        // -> Size -> Z, where the possible clustering is [{X, Y, Size}, {Z}] or
-        // [{X, Y}, {Size, Z}], the better clustering is Size with Y because the
-        // output of size will be a small tensor while Y is a potentially large
-        // tensor that must be computed and possible transposed/copied before
-        // the second cluster executes.
-        if (IsShapeConsumerOp(*n)) {
-          TF_ASSIGN_OR_RETURN(bool contracted_edge,
-                              TryToContractEdge(cluster_from, cluster_to));
-          changed |= contracted_edge;
-        }
-      }
+      TF_ASSIGN_OR_RETURN(bool contracted_edge, fn(cluster_from, cluster_to));
+      changed |= contracted_edge;
     }
   }
 
   return changed;
 }
 
-StatusOr<bool>
-MarkForCompilationPassImpl::RunEdgeContractionLoopInPostOrderOnce() {
-  bool changed = false;
-  // Iterating over the graph once in post-order is sufficient to produce a
-  // maximal clustering:
-  //
-  // A. We visit a cluster only after maximally clustering all its children.
-  // B. By the time we're done with `node` (in `TryToContractEdgesFrom`) all of
-  //    its children that could have been absorbed into `node` have been
-  //    absorbed.
-  // C. We have an invariant that making a cluster larger does not make edges
-  //    leaving it more contractable. That is, if we have
-  //    digraph { X->Y; Y->Z; } then collapsing X->Y does not make it possible
-  //    to contract Y->Z if Y->Z was not contractible originally.
-  for (int32 node : cycles_graph_.AllNodesInPostOrder()) {
-    Cluster* cluster_from = GetClusterForCyclesGraphNode(node);
-    if (!cluster_from) {
-      continue;
-    }
+Node* MarkForCompilationPassImpl::GetOnlyNodeIn(const Cluster& cluster) {
+  return cluster.cluster_size() == 1
+             ? graph_->FindNodeId(cluster.GetIdOfOnlyNode())
+             : nullptr;
+}
 
-    TF_ASSIGN_OR_RETURN(bool contracted_one_edge,
-                        TryToContractEdgesFrom(cluster_from));
-    changed |= contracted_one_edge;
+bool MarkForCompilationPassImpl::IsSinkLike(const Cluster& cluster) {
+  if (Node* n = GetOnlyNodeIn(cluster)) {
+    return n->type_string() == "NoOp" && n->out_edges().size() == 1 &&
+           (*n->out_edges().begin())->dst()->IsSink();
   }
 
-  return changed;
+  return false;
+}
+
+bool MarkForCompilationPassImpl::IsScalarIntegerResourceOperation(
+    const Cluster& cluster) {
+  Node* n = GetOnlyNodeIn(cluster);
+  if (!n) {
+    return false;
+  }
+
+  if (n->type_string() != "AssignAddVariableOp" &&
+      n->type_string() != "AssignSubVariableOp") {
+    return false;
+  }
+
+  DataType dtype;
+  if (!TryGetNodeAttr(n->def(), "dtype", &dtype) || !DataTypeIsInteger(dtype)) {
+    return false;
+  }
+
+  Node* const_input = nullptr;
+  for (const Edge* e : n->in_edges()) {
+    if (!e->IsControlEdge() && e->src()->IsConstant()) {
+      const_input = e->src();
+      break;
+    }
+  }
+
+  if (!const_input) {
+    return false;
+  }
+
+  const TensorProto* proto = nullptr;
+  if (!TryGetNodeAttr(const_input->def(), "value", &proto)) {
+    return false;
+  }
+
+  return TensorShapeUtils::IsScalar(proto->tensor_shape());
 }
 
 Status MarkForCompilationPassImpl::RunEdgeContractionLoop() {
@@ -697,18 +713,118 @@ Status MarkForCompilationPassImpl::RunEdgeContractionLoop() {
   // TODO(hpucha): Handle the case where kXlaClusterAttr is already set (for
   // example, from the Grappler fusion pass).
 
-  // Run twice, first only targeted at contracting very beneficial edges then
-  // without restrictions. This helps to minimize data output from clusters (and
-  // possible transpose operations before outputs) that might occur if a
-  // ShapeConsumingOp is on the edge of 2 clusters due to cycle considerations.
-  TF_ASSIGN_OR_RETURN(bool changed, ContractPreferredEdges());
+  // In general there are multiple maximal clusterings, but they are not all
+  // equally performant.  Some clustering decision are likely to improve
+  // performance much more than others, and we cannot order contractions on this
+  // cost function, nor can we look at global information while deciding on
+  // individual edges to contract.  Instead, we will make decisions on these
+  // important edges then make decisions on all other edges, causing the highest
+  // chance of all most important edges to be contracted.
+  //
+  // An example of where this might occur is with a digraph:
+  // {A -> B, B -> C, A -> X, X -> C} where B is a Size operation and X is
+  // not-compilable. In this case, the valid clusterings are {A,B} or {B,C}. B
+  // should be clustered with A because it will prevent a potentially large
+  // tensor from A being computed and copied.
+  //
+  // To choose better maximal clusterings we make multiple iterations over the
+  // graph in post-order, where each such iteration is called a "phase".
 
-  TF_ASSIGN_OR_RETURN(changed, RunEdgeContractionLoopInPostOrderOnce());
+  // Phase 0: contract metadata operations with their producer.
 
-  // Check that RunEdgeContractionLoopInPostOrderOnce is idempotent.  Once the
-  // linear time post-order scheme has been battle tested we can move this to
-  // happen only in debug builds.
-  TF_ASSIGN_OR_RETURN(changed, RunEdgeContractionLoopInPostOrderOnce());
+  VLOG(4) << "Running phase 0";
+  TF_RETURN_IF_ERROR(
+      ForEachEdgeInPostOrder([&](Cluster* from, Cluster* to) -> StatusOr<bool> {
+        // Shape consuming operations are desirable to cluster with their
+        // operands because they return a small set of scalar values after
+        // consuming a large amount of data.  For example, given a graph X -> Y
+        // -> Size -> Z, where the possible clustering is [{X, Y, Size}, {Z}] or
+        // [{X, Y}, {Size, Z}], the better clustering is Size with Y because the
+        // output of size will be a small tensor while Y is a potentially large
+        // tensor that must be computed and possible transposed/copied before
+        // the second cluster executes.
+        Node* n = GetOnlyNodeIn(*to);
+        bool is_shape_consumer_op = n && IsShapeConsumerOp(*n);
+        if (!is_shape_consumer_op) {
+          return false;
+        }
+
+        return TryToContractEdge(from, to);
+      }).status());
+
+  // Phase 1: apply a heuristic to ensure that we don't mess up clustering due
+  // to "group_deps".  After this phase most edges should have been contracted.
+
+  VLOG(4) << "Running phase 1";
+  TF_RETURN_IF_ERROR(
+      ForEachEdgeInPostOrder([&](Cluster* from, Cluster* to) -> StatusOr<bool> {
+        // We split out this phase to get good clustering in the presence of a
+        // specific pattern seen in some graphs:
+        //
+        // digraph {
+        //   ApplyWeightUpdates_0 -> "iteration++"
+        //   ApplyWeightUpdates_1 -> "iteration++"
+        //   ApplyWeightUpdates_2 -> "iteration++"
+        //   ApplyWeightUpdates_0 -> Computation_A
+        //   ApplyWeightUpdates_1 -> Computation_B
+        //   ApplyWeightUpdates_2 -> Computation_C
+        //   Computation_A -> NoOp
+        //   Computation_B -> NoOp
+        //   Computation_C -> NoOp
+        //   "iteration++" -> NoOp
+        // }
+        //
+        // In the graph above we can't cluster iteration++ with any of the
+        // gradient update operations since that will break the TF resource
+        // variable memory model.  Given that constraint the ideal clustering
+        // would be to put all the gradient updates and all of the Computation_*
+        // nodes in one cluster, and leave iteration++ and NoOp unclustered.
+        //
+        // A naive post-order traversal would not create this good clustering,
+        // however.  Instead it will first create a cluster that puts
+        // Computation_* nodes, the NoOp and iteration++ node in a single
+        // cluster, after which it will fail to put any of the
+        // ApplyWeightUpdates_* nodes into this cluster. To avoid this fate we
+        // instead run a pass that avoids contracting edges _into_ NoOps like
+        // the above, and avoid clustering edges _from_ "iteration++" like the
+        // above.  Then we run a second pass that contracts the edges we could
+        // not contract the first time around.
+
+        if (IsSinkLike(*to)) {
+          return false;
+        }
+
+        if (IsScalarIntegerResourceOperation(*from)) {
+          return false;
+        }
+
+        return TryToContractEdge(from, to);
+      }).status());
+
+  // Phase 2: contract any remaining edges.  After this phase we should have a
+  // maximal clustering:
+  //
+  // A. We visit a cluster only after maximally clustering all its children.
+  // B. By the time we're done with a node all of its children that could have
+  //    been absorbed into the node have been absorbed.
+  // C. We have an invariant that making a cluster larger does not make edges
+  //    leaving it more contractable. That is, if we have
+  //    digraph { X->Y; Y->Z; } then collapsing X->Y does not make it possible
+  //    to contract Y->Z if Y->Z was not contractible originally.
+  VLOG(4) << "Running phase 2";
+  TF_RETURN_IF_ERROR(ForEachEdgeInPostOrder([&](Cluster* from, Cluster* to) {
+                       return TryToContractEdge(from, to);
+                     }).status());
+
+  // Check that the conclusion made above (that iterating over the graph once in
+  // post order gives a maximal clustering) holds.  Once the linear time
+  // post-order scheme has been battle tested we can move this to happen only in
+  // debug builds.
+  VLOG(2) << "Checking idempotence";
+  TF_ASSIGN_OR_RETURN(bool changed,
+                      ForEachEdgeInPostOrder([&](Cluster* from, Cluster* to) {
+                        return TryToContractEdge(from, to);
+                      }));
   TF_RET_CHECK(!changed);
 
   return Status::OK();
@@ -812,20 +928,35 @@ MarkForCompilationPassImpl::ClusteringWillIntroduceInterDeviceDependency(
 }
 
 absl::optional<string> MarkForCompilationPassImpl::GetXlaScope(Node* node) {
-  // Look for an _XlaScope on both nodes.  If both nodes have a scope and the
-  // scopes do not match, do not cluster along this edge. This restriction is
-  // overridden if the global_jit_level_ is ON. If even one of the nodes lacks
-  // an _XlaScope attribute, then it is treated as a "bridge" and a cluster may
-  // be created along it.  We may want to restrict this behavior to require all
-  // nodes marked with _XlaCompile=true to also have a _XlaScope property set
-  // (and raise an error otherwise); but for now we don't do this.
-  if (global_jit_level_ != OptimizerOptions::OFF) {
-    return absl::nullopt;
-  }
+  // Look for either _XlaScope or _XlaInternalScope on both nodes to guide
+  // clustering.  If both nodes have a scope and the scopes do not match, do
+  // not cluster along this edge.  If even one of the nodes lacks a scope
+  // attribute, then it is treated as a "bridge" and a cluster may be created
+  // along it.
+  //
+  // The difference between _XlaScope and _XlaInternalScope is that _XlaScope is
+  // provided by users through jit_scope APIs, while _XlaInternalScope is
+  // automatically generated by the ClusterScopingPass when auto_jit is on.  As
+  // such, we respect _XlaScope only when auto_jit is off, while respecting
+  // _XlaInternalScope only when auto_jit is on.
+  //
+  // We may want to restrict the _XlaScope behavior to require all nodes marked
+  // with _XlaCompile=true to also have a _XlaScope property set (and raise an
+  // error otherwise); but for now we don't do this.
 
-  string scope;
-  if (GetNodeAttr(node->attrs(), kXlaScopeAttr, &scope).ok()) {
-    return scope;
+  if (global_jit_level_ != OptimizerOptions::OFF) {
+    // If global_jit_level_ is ON, respect only _XlaInternalScope.
+    const string& scope =
+        GetNodeAttrString(node->attrs(), kXlaInternalScopeAttr);
+    if (!scope.empty()) {
+      return scope;
+    }
+  } else {
+    // If global_jit_level_ is OFF, respect only _XlaScope.
+    const string& scope = GetNodeAttrString(node->attrs(), kXlaScopeAttr);
+    if (!scope.empty()) {
+      return scope;
+    }
   }
 
   return absl::nullopt;
@@ -858,8 +989,7 @@ Status MarkForCompilationPassImpl::BuildInitialClusterSet() {
     int effective_cluster_size =
         (node->IsIdentity() || node->IsConstant()) ? 0 : 1;
 
-    bool has_functional_control_flow =
-        node->type_string() == "While" || node->type_string() == "If";
+    bool has_functional_control_flow = node->IsWhileNode() || node->IsIfNode();
 
     absl::optional<DeadnessPredicate> deadness_predicate;
     if (deadness_analysis_) {
@@ -888,7 +1018,7 @@ Status MarkForCompilationPassImpl::BuildInitialClusterSet() {
     bool is_xla_compile_attr_true = false;
 
     bool xla_compile_attr;
-    if (GetNodeAttr(node->attrs(), kXlaCompileAttr, &xla_compile_attr).ok()) {
+    if (TryGetNodeAttr(node->attrs(), kXlaCompileAttr, &xla_compile_attr)) {
       is_xla_compile_attr_true |= xla_compile_attr;
     }
 
@@ -913,20 +1043,81 @@ Status MarkForCompilationPassImpl::BuildInitialClusterSet() {
   return Status::OK();
 }
 
+StatusOr<bool> IsIdentityDrivingConstsInLoop(Node* node) {
+  if (!node->IsIdentity()) {
+    return false;
+  }
+
+  // Check if the Identity is driven by a Switch on its true path.
+  auto it = absl::c_find_if(node->in_edges(), [](const Edge* e) {
+    return e->src()->IsSwitch() && e->src_output() == 1;
+  });
+  if (it == node->in_edges().end()) {
+    return false;
+  }
+  const Node* switch_node = (*it)->src();
+
+  // Check if the Switch is driven by LoopCond.
+  const Node* maybe_loop_cond;
+  TF_RETURN_IF_ERROR(switch_node->input_node(1, &maybe_loop_cond));
+  if (!maybe_loop_cond->IsLoopCond()) {
+    return false;
+  }
+
+  // Check if the Identity is driving any const nodes through a control edge.
+  bool driving_any_consts =
+      absl::c_any_of(node->out_edges(), [](const Edge* e) {
+        return e->dst()->IsConstant() && e->IsControlEdge();
+      });
+  if (!driving_any_consts) {
+    return false;
+  }
+
+  return true;
+}
+
+absl::flat_hash_set<string> GetOrCreateWhitelist() {
+  absl::flat_hash_map<string, std::vector<string>>* whitelist_table =
+      tensorflow::GetWhitelistTable();
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  absl::flat_hash_set<string> whitelist;
+
+  for (auto s : absl::StrSplit(flags->tf_xla_ops_to_cluster, ',')) {
+    if (s == "FUSIBLE") {
+      for (auto pair : *whitelist_table) {
+        whitelist.insert(pair.second.begin(), pair.second.end());
+      }
+    } else if (whitelist_table->contains(s)) {
+      auto v = whitelist_table->at(s);
+      whitelist.insert(v.begin(), v.end());
+    } else if (!s.empty()) {
+      // Should be a user provided TF operation.
+      whitelist.insert(string(s));
+    }
+  }
+
+  if (VLOG_IS_ON(2) && !whitelist.empty()) {
+    std::vector<string> vwhitelist(whitelist.begin(), whitelist.end());
+    absl::c_sort(vwhitelist);
+    VLOG(2) << "XLA clustering will only consider the following TF operations: "
+            << absl::StrJoin(vwhitelist, " ");
+  }
+  return whitelist;
+}
+
 Status MarkForCompilationPassImpl::FindCompilationCandidates() {
   OptimizerOptions opts;
   std::unique_ptr<ProcessFunctionLibraryRuntime> pflr(
-      new ProcessFunctionLibraryRuntime(nullptr, env_, TF_GRAPH_DEF_VERSION,
-                                        flib_def_, opts));
+      new ProcessFunctionLibraryRuntime(nullptr, env_, /*config=*/nullptr,
+                                        TF_GRAPH_DEF_VERSION, flib_def_, opts));
   FunctionLibraryRuntime* lib_runtime =
       pflr->GetFLR(ProcessFunctionLibraryRuntime::kDefaultFLRDevice);
   std::vector<bool> compile_time_const_nodes(graph_->num_node_ids(), false);
   TF_RETURN_IF_ERROR(BackwardsConstAnalysis(
       *graph_, /*compile_time_const_arg_indices=*/nullptr,
       &compile_time_const_nodes, lib_runtime));
-
   // Iterate over nodes in sorted order so that compiler fuel is deterministic.
-  // We can't simply pass op_nodes().begin() and op_nodes().end to the
+  // We can't simply pass op_nodes().begin() and op_nodes().end() to the
   // std::vector constructor because they're not proper iterators, with
   // iterator_traits defined and so on.
   std::vector<Node*> sorted_nodes;
@@ -944,6 +1135,19 @@ Status MarkForCompilationPassImpl::FindCompilationCandidates() {
   }
 
   VLOG(2) << "sorted_nodes.size() = " << sorted_nodes.size();
+
+  auto whitelist = GetOrCreateWhitelist();
+
+  std::vector<string> vall_ops = XlaOpRegistry::GetAllRegisteredOps();
+  absl::flat_hash_set<string> all_ops(vall_ops.begin(), vall_ops.end());
+  // Check that user's provided TF operation really exists.
+  for (auto s : whitelist) {
+    if (!all_ops.contains(string(s))) {
+      return errors::InvalidArgument(
+          "The operation '", s,
+          "' passed to --tf_xla_ops_to_cluster is not supported by XLA.");
+    }
+  }
 
   for (Node* node : sorted_nodes) {
     if (*debug_options_.fuel <= 0) {
@@ -979,6 +1183,12 @@ Status MarkForCompilationPassImpl::FindCompilationCandidates() {
 
     if (!RecursiveCompilabilityChecker{&op_filter, &jit_device_type}
              .IsCompilableNode(*node, lib_runtime)) {
+      continue;
+    }
+
+    if (!whitelist.empty() && !whitelist.contains(node->def().op())) {
+      VLOG(1) << "Rejecting TF operation " << node->def().op()
+              << " as it is not listed in --tf_xla_ops_to_cluster.";
       continue;
     }
 
@@ -1032,6 +1242,35 @@ Status MarkForCompilationPassImpl::FindCompilationCandidates() {
           continue;
         }
       }
+    }
+
+    // This is a heuristic to avoid creating dependency between while loop
+    // condition and body computations.  Dependency between them can be created
+    // if a special Identity node in the following pattern is clustered in.
+    // That is, an Identity node in the loop cond computation is used to drive
+    // const nodes consumed by the loop body.  If this Identity node goes into
+    // the same cluster with nodes from the loop body, extra dependency is
+    // created between the loop cond and body computations and it hinders the
+    // progression of the loop cond computation at runtime with significant
+    // overhead.  Specifically, we look for the below pattern and do not cluster
+    // in this Identity to avoid the described issue.  Since Identity has low
+    // execution cost in native TF, the fact that this heuristic gives up these
+    // special Identity nodes as candidates should not harm any performance.  If
+    // other considerations emerge in the future, we can revisit the heuristic
+    // and only disallow these Identities to go into the cluster with nodes from
+    // the loop body but still consider them candidates.
+    //
+    // LoopCond ->
+    // Merge    -> Switch -> Identity -> i++ -> ... -> NextIteration
+    //                               ..> Const -> LoopBody
+    //                            (control edge)
+    TF_ASSIGN_OR_RETURN(bool is_identity_driving_consts_in_loop,
+                        IsIdentityDrivingConstsInLoop(node));
+    if (is_identity_driving_consts_in_loop) {
+      VLOG(2) << "Rejecting " << node->name()
+              << ": including it can create dependencies between while loop "
+                 "condition and body computations with runtime overhead.";
+      continue;
     }
 
     compilation_candidates_.insert(node);
@@ -1124,53 +1363,29 @@ StatusOr<bool> MarkForCompilationPassImpl::TryToContractEdge(Cluster* from,
   // Check if contracting this edge will break the resource variable concurrency
   // semantics.  In theory this is quadratic in the number of nodes, but seems
   // to not be a problem in practice so far.
-  for (int resource_var_from : from->resource_var_operation_node_ids()) {
-    for (int resource_var_to : to->resource_var_operation_node_ids()) {
-      // If unsafe_resource_deps_ contains {A, B} then
-      //
-      //  a. A and B are resource operations.
-      //  b. A and B cannot be placed in the same cluster.
-      //  c. There is no path from B to A in the cycles graph (but there may be
-      //     a path from A to B).
-      //
-      // So check the legality of the edge contraction by checking if any of the
-      // n^2 pairs of resource variable operations are forbidden.
-      if (unsafe_resource_deps_.contains(
-              {resource_var_from, resource_var_to})) {
-        return LogNotContractableAndReturnFalse(
-            from, to,
-            "the new cluster would break resource variable semantics");
+  if (!debug_options_.ignore_resource_variable_checks) {
+    for (int resource_var_from : from->resource_var_operation_node_ids()) {
+      for (int resource_var_to : to->resource_var_operation_node_ids()) {
+        // If unsafe_resource_deps_ contains {A, B} then
+        //
+        //  a. A and B are resource operations.
+        //  b. A and B cannot be placed in the same cluster.
+        //  c. There is no path from B to A in the cycles graph (but there may
+        //     be a path from A to B).
+        //
+        // So check the legality of the edge contraction by checking if any of
+        // the n^2 pairs of resource variable operations are forbidden.
+        if (unsafe_resource_deps_.contains(
+                {resource_var_from, resource_var_to})) {
+          return LogNotContractableAndReturnFalse(
+              from, to,
+              "the new cluster would break resource variable semantics");
+        }
       }
     }
   }
 
   return MergeClusters(from, to);
-}
-
-StatusOr<bool> MarkForCompilationPassImpl::TryToContractEdgesFrom(
-    Cluster* cluster_from) {
-  bool changed = false;
-
-  // Make a copy of the set of successors because we may modify the graph in
-  // TryToContractEdge.
-  std::vector<int32> successors_copy =
-      cycles_graph_.SuccessorsCopy(cluster_from->cycles_graph_node_id());
-
-  for (int to : successors_copy) {
-    iteration_count_++;
-
-    Cluster* cluster_to = GetClusterForCyclesGraphNode(to);
-    if (!cluster_to) {
-      continue;
-    }
-
-    TF_ASSIGN_OR_RETURN(bool contracted_edge,
-                        TryToContractEdge(cluster_from, cluster_to));
-
-    changed |= contracted_edge;
-  }
-
-  return changed;
 }
 
 Status MarkForCompilationPassImpl::Run() {
@@ -1181,7 +1396,13 @@ Status MarkForCompilationPassImpl::Run() {
   // some one-time work.
   XLA_SCOPED_LOGGING_TIMER_LEVEL("MarkForCompilationPassImpl::Run", 1);
 
-  TF_RETURN_IF_ERROR(Initialize());
+  TF_ASSIGN_OR_RETURN(bool initialized, Initialize());
+  if (!initialized) {
+    // Initialization exited early which means this instance of
+    // MarkForCompilationPassImpl is not set up to run the subsequent phases.
+    return Status::OK();
+  }
+
   TF_RETURN_IF_ERROR(RunEdgeContractionLoop());
   TF_RETURN_IF_ERROR(CreateClusters());
   TF_RETURN_IF_ERROR(DumpDebugInfo());
@@ -1192,7 +1413,7 @@ Status MarkForCompilationPassImpl::Run() {
 void MarkForCompilationPassImpl::DumpPostClusteringGraphs() {
   DumpGraphToFile("mark_for_compilation", *graph_, flib_def_);
 
-  // We also dump out an annoated version of the TF graph where the nodes
+  // We also dump out an annotated version of the TF graph where the nodes
   // names are prefixed with the cluster names.  This can help visualizing the
   // clustering decisions on TensorBoard.
   Graph new_graph(graph_->op_registry());
@@ -1225,46 +1446,36 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
     return;
   }
 
-  std::map<absl::string_view, int> cluster_name_to_size;
-  std::map<absl::string_view, std::map<absl::string_view, int>>
-      cluster_name_to_op_histogram;
-  std::map<absl::string_view, int> unclustered_op_histogram;
-  int clustered_node_count = 0;
-
-  for (Node* n : graph_->nodes()) {
-    absl::optional<absl::string_view> cluster_name = GetXlaClusterForNode(*n);
-    if (cluster_name) {
-      clustered_node_count++;
-      cluster_name_to_size[*cluster_name]++;
-      cluster_name_to_op_histogram[*cluster_name][n->type_string()]++;
-    } else {
-      unclustered_op_histogram[n->type_string()]++;
-    }
-  }
-
-  int unclustered_node_count = graph_->num_nodes() - clustered_node_count;
+  XlaAutoClusteringSummary auto_clustering_info =
+      GetXlaAutoClusteringSummary(*graph_);
 
   VLOG(2) << "*** Clustering info for graph of size " << graph_->num_nodes();
-  VLOG(2) << " Built " << cluster_name_to_size.size() << " clusters, size "
-          << RatioToString(clustered_node_count, graph_->num_nodes());
+  VLOG(2) << " Built " << auto_clustering_info.clusters_size()
+          << " clusters, size "
+          << RatioToString(auto_clustering_info.clustered_node_count(),
+                           graph_->num_nodes());
 
-  for (const auto& cluster_name_size_pair : cluster_name_to_size) {
-    absl::string_view cluster_name = cluster_name_size_pair.first;
-    int size = cluster_name_size_pair.second;
+  for (XlaAutoClusteringSummary::Cluster cluster :
+       auto_clustering_info.clusters()) {
+    absl::string_view cluster_name = cluster.name();
+    int size = cluster.size();
     VLOG(2) << "  " << cluster_name << " "
             << RatioToString(size, graph_->num_nodes());
-    for (const auto& op_count_pair :
-         cluster_name_to_op_histogram[cluster_name]) {
-      VLOG(3) << "   " << op_count_pair.first << ": " << op_count_pair.second
+    for (const XlaAutoClusteringSummary::OpAndCount& op_count :
+         cluster.op_histogram()) {
+      VLOG(3) << "   " << op_count.op() << ": " << op_count.count()
               << " instances";
     }
   }
 
-  if (!unclustered_op_histogram.empty()) {
+  if (!auto_clustering_info.unclustered_op_histogram().empty()) {
     VLOG(2) << " Unclustered nodes: "
-            << RatioToString(unclustered_node_count, graph_->num_nodes());
-    for (const auto& pair : unclustered_op_histogram) {
-      VLOG(3) << "  " << pair.first << ": " << pair.second << " instances";
+            << RatioToString(auto_clustering_info.unclustered_node_count(),
+                             graph_->num_nodes());
+    for (const XlaAutoClusteringSummary::OpAndCount& op_count :
+         auto_clustering_info.unclustered_op_histogram()) {
+      VLOG(3) << "  " << op_count.op() << ": " << op_count.count()
+              << " instances";
     }
   }
 
@@ -1318,9 +1529,9 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
     }
   }
 
-  VLOG(2) << "*** Inter-Cluster edges:";
+  VLOG(4) << "*** Inter-Cluster edges:";
   if (cluster_names_to_print.empty()) {
-    VLOG(2) << "   [none]";
+    VLOG(4) << "   [none]";
   }
 
   auto print_edge_info_set_for_cluster = [&](absl::string_view cluster_name,
@@ -1328,19 +1539,19 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
                                              absl::string_view desc) {
     auto it = edge_info_map.find(cluster_name);
     if (it != edge_info_map.end()) {
-      VLOG(2) << "  " << it->second.size() << " " << desc << " edges";
+      VLOG(4) << "  " << it->second.size() << " " << desc << " edges";
       for (const auto& edge_info_count_pair : it->second) {
-        VLOG(2) << "   " << edge_info_count_pair.first.GetClusterName() << " "
+        VLOG(4) << "   " << edge_info_count_pair.first.GetClusterName() << " "
                 << edge_info_count_pair.first.node_name << " # "
                 << edge_info_count_pair.second;
       }
     } else {
-      VLOG(2) << "  No " << desc << " edges.";
+      VLOG(4) << "  No " << desc << " edges.";
     }
   };
 
   for (absl::string_view cluster_name : cluster_names_to_print) {
-    VLOG(2) << " ** Cluster " << cluster_name;
+    VLOG(4) << " ** Cluster " << cluster_name;
     print_edge_info_set_for_cluster(cluster_name, incoming_edge_infos,
                                     "incoming");
     print_edge_info_set_for_cluster(cluster_name, outgoing_edge_infos,
@@ -1403,9 +1614,7 @@ StatusOr<bool> MarkForCompilationPassImpl::ShouldCompileClusterImpl(
            XlaOpRegistry::AutoclusteringPolicy::kIfEnabledGlobally &&
        global_jit_level_ != OptimizerOptions::OFF);
 
-  if (!should_compile &&
-      registration->autoclustering_policy ==
-          XlaOpRegistry::AutoclusteringPolicy::kIfExplicitlyRequested &&
+  if (!should_compile && global_jit_level_ != OptimizerOptions::OFF &&
       device_type.type_string() == DEVICE_CPU) {
     static std::once_flag once;
     std::call_once(once, [] {
@@ -1482,7 +1691,9 @@ std::atomic<int64>* GetPointerToFuel(int64 initial_value) {
 }
 }  // anonymous namespace
 
-bool IsCompilable(FunctionLibraryRuntime* flr, const NodeDef& ndef) {
+bool IsCompilable(FunctionLibraryRuntime* flr, const NodeDef& ndef,
+                  RecursiveCompilabilityChecker::UncompilableNodesMap*
+                      uncompilable_node_info) {
   Device* device = flr->device();
   const XlaOpRegistry::DeviceRegistration* registration;
   CHECK(XlaOpRegistry::GetCompilationDevice(device->device_type(),
@@ -1499,10 +1710,19 @@ bool IsCompilable(FunctionLibraryRuntime* flr, const NodeDef& ndef) {
   op_filter.allow_control_trigger = true;
   op_filter.allow_eliding_assert_and_checknumerics_ops = true;
   op_filter.allow_ops_producing_or_consuming_variant = true;
-  op_filter.allow_slow_and_inaccurate_ops = true;
+  op_filter.allow_slow_ops = true;
+  op_filter.allow_inaccurate_ops = true;
 
-  return RecursiveCompilabilityChecker{&op_filter, &jit_device_type}
-      .IsCompilableCall(ndef, flr);
+  RecursiveCompilabilityChecker checker{&op_filter, &jit_device_type};
+  if (!uncompilable_node_info) {
+    // We do not need uncompilable node info. Just return the result.
+    return checker.IsCompilableCall(ndef, flr);
+  }
+
+  RecursiveCompilabilityChecker::UncompilableNodesMap uncompilable_node_result =
+      checker.FindUncompilableNodes(ndef, flr);
+  uncompilable_node_info->swap(uncompilable_node_result);
+  return uncompilable_node_info->empty();
 }
 
 Status MarkForCompilationPass::Run(
@@ -1512,6 +1732,8 @@ Status MarkForCompilationPass::Run(
   MarkForCompilationPassImpl::DebugOptions debug_options;
   debug_options.ignore_deadness_checks =
       flags->tf_xla_disable_deadness_safety_checks_for_debugging;
+  debug_options.ignore_resource_variable_checks =
+      flags->tf_xla_disable_resource_variable_safety_checks_for_debugging;
   debug_options.ignore_xla_compile_attr = false;
   debug_options.max_cluster_size = flags->tf_xla_max_cluster_size;
   debug_options.min_cluster_size = flags->tf_xla_min_cluster_size;
@@ -1528,6 +1750,8 @@ Status MarkForCompilationPass::RunForTest(
 
   MarkForCompilationPassImpl::DebugOptions debug_options;
   debug_options.ignore_deadness_checks = disable_deadness_analysis;
+  debug_options.ignore_resource_variable_checks =
+      flags->tf_xla_disable_resource_variable_safety_checks_for_debugging;
   debug_options.ignore_xla_compile_attr = true;
   debug_options.max_cluster_size = flags->tf_xla_max_cluster_size;
   debug_options.min_cluster_size = flags->tf_xla_min_cluster_size;
@@ -1537,7 +1761,303 @@ Status MarkForCompilationPass::RunForTest(
   return MarkForCompilation(options, debug_options);
 }
 
+absl::flat_hash_map<string, std::vector<string>>* GetWhitelistTable() {
+  // Table format: category name: {list of TF operations in that category}
+  static absl::flat_hash_map<string, std::vector<string>>* result =
+      new absl::flat_hash_map<string, std::vector<string>>{
+          // Unary
+          {"PW",
+           {"ComplexAbs", "Angle", "Conj", "Abs", "Acos", "Acosh", "Asin",
+            "Atan", "Atanh", "Ceil", "Cos", "Cosh", "Sin", "Exp", "Expm1",
+            "Floor", "IsFinite", "IsInf", "IsNan", "Inv", "Reciprocal", "Log",
+            "Log1p", "Invert", "LogicalNot", "Ndtri", "Neg", "Rint", "Round",
+            "Rsqrt", "Sigmoid", "Sign", "Sinh", "Softplus", "Softsign", "Sqrt",
+            "Square", "Tan", "Tanh", "Real", "Imag", "Erf", "Erfc", "Erfinv",
+            "Lgamma", "Digamma",
+            // Binary
+            "Add", "AddV2", "Sub", "Mul", "Div", "Atan2", "Complex", "DivNoNan",
+            "MulNoNan", "FloorDiv", "Xlogy", "Xlog1py", "Xdivy", "FloorMod",
+            "BitwiseAnd", "BitwiseOr", "BitwiseXor", "LeftShift", "RightShift",
+            "LogicalAnd", "LogicalOr", "Mod", "Maximum", "Minimum", "RealDiv",
+            "ReciprocalGrad", "RsqrtGrad", "SqrtGrad", "TruncateDiv",
+            "TruncateMod", "Equal", "NotEqual", "Greater", "GreaterEqual",
+            "Less", "LessEqual", "SigmoidGrad", "SoftplusGrad", "SoftsignGrad",
+            "TanhGrad", "Pow", "SquaredDifference", "ApproximateEqual",
+            // Others
+            "AddN", "Bitcast", "Cast", "ClipByValue", "Const", "Empty",
+            "Identity", "IdentityN", "Relu", "Relu6", "ReluGrad", "Relu6Grad",
+            "LeakyReluGrad", "Elu", "EluGrad", "Selu", "SeluGrad", "Select",
+            "SelectV2", "Transpose", "ConjugateTranspose",
+            "_UnaryOpsComposition",
+            // The following 4 operations are converted to identity
+            "PlaceholderWithDefault", "PreventGradient", "StopGradient",
+            "Snapshot"}},
+          // clang-format off
+    {"RED",
+     {"All", "Any", "Min", "Max", "Mean", "Prod", "Sum"}},
+          // clang-format on
+          {"PWRED",
+           {"ArgMax", "ArgMin", "DiagPart", "Softmax",
+            "SparseSoftmaxCrossEntropyWithLogits", "LogSoftmax"}},
+          {"REDUCEWINDOW",
+           {"ArgMax", "ArgMin", "DiagPart", "Softmax",
+            "SparseSoftmaxCrossEntropyWithLogits", "LogSoftmax"}},
+          {"REDUCEWINDOWPW", {"BiasAddGrad", "LRN", "LRNGrad"}},
+          {"BN",
+           {"FusedBatchNorm", "FusedBatchNormV2", "FusedBatchNormV3",
+            "_FusedBatchNormEx", "FusedBatchNormGrad", "FusedBatchNormGradV2",
+            "FusedBatchNormGradV3"}},
+          {"SORT", {"TopKV2"}},  // XLA version much faster then TF version.
+          {"MISC",
+           // clang-format off
+     {"BroadcastTo", "ExpandDims", "Fill", "NoOp",
+      "Range", "Rank", "Reshape", "Shape", "ShapeN", "Size", "Squeeze",
+      "Transpose", "ZerosLike", "OnesLike", "BiasAdd" /*PW + Broadcast*/,
+      "BroadcastArgs", "BroadcastGradientArgs", "OneHot", "Concat", "ConcatV2",
+      "ConcatOffset", "Const", "MirrorPad", "Pack", "Pad", "PadV2", "Reverse",
+      "ReverseV2", "ReverseSequence", "Slice", "Split", "SplitV",
+      "StridedSlice", "StridedSliceGrad", "ResourceStridedSliceAssign",
+      "Tile", "Transpose", "InvertPermutation", "Unpack"}}};
+  // clang-format on
+  return result;
+}
+
 namespace testing {
 void ResetClusterSequenceNumber() { cluster_sequence_num = 0; }
+
+absl::flat_hash_set<string> GetKnownXLAWhitelistOp() {
+  absl::flat_hash_set<string> result{"AdjustContrastv2",
+                                     "AdjustHue",
+                                     "AdjustSaturation",
+                                     "Asinh",
+                                     "Assert",
+                                     "AssignAddVariableOp",
+                                     "AssignSubVariableOp",
+                                     "AssignVariableOp",
+                                     "AvgPool",
+                                     "AvgPool3D",
+                                     "AvgPool3DGrad",
+                                     "AvgPoolGrad",
+                                     "BatchMatMul",
+                                     "BatchMatMulV2",
+                                     "BatchToSpace",
+                                     "BatchToSpaceND",
+                                     "BesselI0e",
+                                     "BesselI1e",
+                                     "Betainc",
+                                     "BiasAddV1",
+                                     "Bucketize",
+                                     "Case",
+                                     "CheckNumerics",
+                                     "Cholesky",
+                                     "ControlTrigger",
+                                     "Conv2D",
+                                     "Conv2DBackpropFilter",
+                                     "Conv2DBackpropInput",
+                                     "Conv3D",
+                                     "Conv3DBackpropFilterV2",
+                                     "Conv3DBackpropInputV2",
+                                     "Cross",
+                                     "Cumprod",
+                                     "Cumsum",
+                                     "DataFormatDimMap",
+                                     "DataFormatVecPermute",
+                                     "DepthToSpace",
+                                     "DepthwiseConv2dNative",
+                                     "DepthwiseConv2dNativeBackpropFilter",
+                                     "DepthwiseConv2dNativeBackpropInput",
+                                     "Dequantize",
+                                     "Diag",
+                                     "DynamicStitch",
+                                     "Einsum",
+                                     "EmptyTensorList",
+                                     "ExtractImagePatches",
+                                     "FFT",
+                                     "FFT2D",
+                                     "FFT3D",
+                                     "FakeParam",
+                                     "FakeQuantWithMinMaxArgs",
+                                     "FakeQuantWithMinMaxArgsGradient",
+                                     "FakeQuantWithMinMaxVars",
+                                     "FakeQuantWithMinMaxVarsGradient",
+                                     "Gather",
+                                     "GatherNd",
+                                     "GatherV2",
+                                     "HSVToRGB",
+                                     "IFFT",
+                                     "IFFT2D",
+                                     "IFFT3D",
+                                     "IRFFT",
+                                     "IRFFT2D",
+                                     "IRFFT3D",
+                                     "If",
+                                     "InTopKV2",
+                                     "L2Loss",
+                                     "LeakyRelu",
+                                     "LinSpace",
+                                     "ListDiff",
+                                     "LogMatrixDeterminant",
+                                     "MatMul",
+                                     "MatrixBandPart",
+                                     "MatrixDiag",
+                                     "MatrixDiagPart",
+                                     "MatrixDiagPartV2",
+                                     "MatrixDiagPartV3",
+                                     "MatrixDiagV2",
+                                     "MatrixDiagV3",
+                                     "MatrixInverse",
+                                     "MatrixSetDiag",
+                                     "MatrixSetDiagV2",
+                                     "MatrixSetDiagV3",
+                                     "MatrixSolve",
+                                     "MatrixTriangularSolve",
+                                     "MaxPool",
+                                     "MaxPool3D",
+                                     "MaxPool3DGrad",
+                                     "MaxPool3DGradGrad",
+                                     "MaxPoolGrad",
+                                     "MaxPoolGradGrad",
+                                     "MaxPoolGradGradV2",
+                                     "MaxPoolGradV2",
+                                     "MaxPoolV2",
+                                     "Multinomial",
+                                     "NextAfter",
+                                     "NonMaxSuppressionV4",
+                                     "ParallelDynamicStitch",
+                                     "ParameterizedTruncatedNormal",
+                                     "PartitionedCall",
+                                     "Qr",
+                                     "QuantizeAndDequantizeV2",
+                                     "QuantizeAndDequantizeV3",
+                                     "RFFT",
+                                     "RFFT2D",
+                                     "RFFT3D",
+                                     "RGBToHSV",
+                                     "RandomShuffle",
+                                     "RandomStandardNormal",
+                                     "RandomUniform",
+                                     "RandomUniformInt",
+                                     "ReadVariableOp",
+                                     "ResizeBilinear",
+                                     "ResizeBilinearGrad",
+                                     "ResizeNearestNeighbor",
+                                     "ResourceApplyAdaMax",
+                                     "ResourceApplyAdadelta",
+                                     "ResourceApplyAdagrad",
+                                     "ResourceApplyAdagradDA",
+                                     "ResourceApplyAdagradV2",
+                                     "ResourceApplyAdam",
+                                     "ResourceApplyAddSign",
+                                     "ResourceApplyCenteredRMSProp",
+                                     "ResourceApplyFtrl",
+                                     "ResourceApplyFtrlV2",
+                                     "ResourceApplyGradientDescent",
+                                     "ResourceApplyKerasMomentum",
+                                     "ResourceApplyMomentum",
+                                     "ResourceApplyPowerSign",
+                                     "ResourceApplyProximalAdagrad",
+                                     "ResourceApplyProximalGradientDescent",
+                                     "ResourceApplyRMSProp",
+                                     "ResourceGather",
+                                     "ResourceScatterAdd",
+                                     "ResourceScatterDiv",
+                                     "ResourceScatterMax",
+                                     "ResourceScatterMin",
+                                     "ResourceScatterMul",
+                                     "ResourceScatterNdAdd",
+                                     "ResourceScatterNdSub",
+                                     "ResourceScatterNdUpdate",
+                                     "ResourceScatterSub",
+                                     "ResourceScatterUpdate",
+                                     "Roll",
+                                     "ScatterNd",
+                                     "SelfAdjointEigV2",
+                                     "SoftmaxCrossEntropyWithLogits",
+                                     "SpaceToBatch",
+                                     "SpaceToBatchND",
+                                     "SpaceToDepth",
+                                     "SparseMatMul",
+                                     "SparseToDense",
+                                     "StackCloseV2",
+                                     "StackPopV2",
+                                     "StackPushV2",
+                                     "StackV2",
+                                     "StatefulPartitionedCall",
+                                     "StatefulStandardNormalV2",
+                                     "StatefulTruncatedNormal",
+                                     "StatefulUniform",
+                                     "StatefulUniformFullInt",
+                                     "StatefulUniformInt",
+                                     "StatelessIf",
+                                     "StatelessMultinomial",
+                                     "StatelessRandomNormal",
+                                     "StatelessRandomUniform",
+                                     "StatelessRandomUniformInt",
+                                     "StatelessTruncatedNormal",
+                                     "StatelessWhile",
+                                     "Svd",
+                                     "SymbolicGradient",
+                                     "TensorArrayCloseV3",
+                                     "TensorArrayConcatV3",
+                                     "TensorArrayGatherV3",
+                                     "TensorArrayGradV3",
+                                     "TensorArrayReadV3",
+                                     "TensorArrayScatterV3",
+                                     "TensorArraySizeV3",
+                                     "TensorArraySplitV3",
+                                     "TensorArrayV3",
+                                     "TensorArrayWriteV3",
+                                     "TensorListElementShape",
+                                     "TensorListFromTensor",
+                                     "TensorListGather",
+                                     "TensorListGetItem",
+                                     "TensorListLength",
+                                     "TensorListPopBack",
+                                     "TensorListPushBack",
+                                     "TensorListReserve",
+                                     "TensorListSetItem",
+                                     "TensorListStack",
+                                     "TensorScatterAdd",
+                                     "TensorScatterSub",
+                                     "TensorScatterUpdate",
+                                     "TridiagonalSolve",
+                                     "TruncatedNormal",
+                                     "UnsortedSegmentMax",
+                                     "UnsortedSegmentMin",
+                                     "UnsortedSegmentProd",
+                                     "UnsortedSegmentSum",
+                                     "VarIsInitializedOp",
+                                     "VariableShape",
+                                     "While",
+                                     "XlaBroadcastHelper",
+                                     "XlaConv",
+                                     "XlaDequantize",
+                                     "XlaDot",
+                                     "XlaDynamicSlice",
+                                     "XlaDynamicUpdateSlice",
+                                     "XlaEinsum",
+                                     "XlaGather",
+                                     "XlaIf",
+                                     "XlaKeyValueSort",
+                                     "XlaPad",
+                                     "XlaRecv",
+                                     "XlaReduce",
+                                     "XlaReduceWindow",
+                                     "XlaReplicaId",
+                                     "XlaScatter",
+                                     "XlaSelectAndScatter",
+                                     "XlaSelfAdjointEig",
+                                     "XlaSend",
+                                     "XlaSharding",
+                                     "XlaSort",
+                                     "XlaSvd",
+                                     "XlaWhile",
+                                     "_Arg",
+                                     "_ArrayToList",
+                                     "_ListToArray",
+                                     "_Retval"};
+  return result;
+}
+
 }  // namespace testing
 }  // namespace tensorflow

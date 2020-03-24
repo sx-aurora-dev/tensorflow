@@ -19,11 +19,14 @@ namespace tensorflow {
 REGISTER5(UnaryOp, CPU, "Tan", functor::tan, Eigen::half, float, double,
           complex64, complex128);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER3(UnaryOp, GPU, "Tan", functor::tan, Eigen::half, float, double);
 #endif
 
 #ifdef TENSORFLOW_USE_SYCL
 REGISTER2(UnaryOp, SYCL, "Tan", functor::tan, float, double);
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Tan, float);
+#endif
 }  // namespace tensorflow

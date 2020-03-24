@@ -20,11 +20,11 @@ limitations under the License.
 // So accessing feature values is not very convenient.
 //
 // For example, to read a first value of integer feature "tag":
-//   int id = example.features().feature().at("tag").int64_list().value(0)
+//   int id = example.features().feature().at("tag").int64_list().value(0);
 //
 // to add a value:
 //   auto features = example->mutable_features();
-//   (*features->mutable_feature())["tag"].mutable_int64_list()->add_value(id)
+//   (*features->mutable_feature())["tag"].mutable_int64_list()->add_value(id);
 //
 // For float features you have to use float_list, for string - bytes_list.
 //
@@ -67,7 +67,8 @@ limitations under the License.
 //         feature { float_list { value: [4.0] } }
 //         feature { float_list { value: [5.0, 3.0] } }
 //       }
-//     } }
+//     }
+//   }
 //
 // Functions exposed by this library:
 //   HasFeature<[FeatureType]>(key, proto) -> bool
@@ -148,6 +149,13 @@ struct RepeatedFieldTrait<float> {
   using Type = protobuf::RepeatedField<float>;
 };
 
+#ifdef USE_TSTRING
+template <>
+struct RepeatedFieldTrait<tstring> {
+  using Type = protobuf::RepeatedPtrField<string>;
+};
+#endif
+
 template <>
 struct RepeatedFieldTrait<string> {
   using Type = protobuf::RepeatedPtrField<string>;
@@ -184,6 +192,11 @@ struct is_string<string> : std::true_type {};
 
 template <>
 struct is_string<::tensorflow::StringPiece> : std::true_type {};
+
+#ifdef USE_TSTRING
+template <>
+struct is_string<tstring> : std::true_type {};
+#endif
 
 template <typename ValueType>
 struct FeatureTrait<

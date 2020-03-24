@@ -25,6 +25,10 @@ limitations under the License.
 #include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/util/bcast.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 namespace functor {
@@ -97,6 +101,46 @@ struct BroadcastTo {
     }
   }
 };
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+struct VEBroadcastTo {
+  // PRECONDITION: rank(input_shape) > 0 &&
+  //               rank(input_shape) <= rank(output_shape)  &&
+  //               output_shape.num_elements() > 0.
+  void operator()(OpKernelContext *ctx,
+                  Tensor &output_tensor, const TensorShape &output_shape,
+                  const Tensor &input_tensor, const TensorShape &input_shape,
+                  const BCast &bcast) const {
+    const int ndims = bcast.y_reshape().size();
+    if( ndims > 5 ) {
+        ctx->SetStatus(errors::Unimplemented(
+            "Broadcast between ", input_shape.DebugString(), " and ",
+            output_shape.DebugString(), " is not supported yet."));
+    }
+
+    Tensor output_reshaped;
+    OP_REQUIRES(
+        ctx,
+	output_reshaped.CopyFrom(output_tensor, TensorShape(bcast.y_reshape())),
+        errors::Internal("Failed to reshape Output from ",
+                          output_shape.DebugString()));
+
+    Tensor input_reshaped;
+    OP_REQUIRES(
+        ctx,
+	input_reshaped.CopyFrom(input_tensor, TensorShape(bcast.x_reshape())),
+        errors::Internal("Failed to reshape Input from ",
+                          input_shape.DebugString()));
+
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(output_reshaped);
+    args.addArg<Tensor>(input_reshaped);
+    VEOpKernelHelper::Call(ctx, "BroadcastTo", args);
+  }
+};
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace functor
 }  // namespace tensorflow

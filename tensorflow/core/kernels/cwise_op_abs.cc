@@ -16,12 +16,12 @@ limitations under the License.
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 
 namespace tensorflow {
-REGISTER5(UnaryOp, CPU, "Abs", functor::abs, float, Eigen::half, double, int32,
-          int64);
+REGISTER8(UnaryOp, CPU, "Abs", functor::abs, Eigen::half, bfloat16, float,
+          double, int8, int16, int32, int64);
 REGISTER2(UnaryOp, CPU, "ComplexAbs", functor::abs, complex64, complex128);
 
-#if GOOGLE_CUDA
-REGISTER4(UnaryOp, GPU, "Abs", functor::abs, float, Eigen::half, double, int64);
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+REGISTER4(UnaryOp, GPU, "Abs", functor::abs, Eigen::half, float, double, int64);
 REGISTER2(UnaryOp, GPU, "ComplexAbs", functor::abs, complex64, complex128);
 
 // A special GPU kernel for int32.
@@ -44,4 +44,14 @@ REGISTER_KERNEL_BUILDER(Name("Abs")
                             .TypeConstraint<int32>("T"),
                         UnaryOp<CPUDevice, functor::abs<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#if TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Abs, float);
+REGISTER_KERNEL_BUILDER(Name("Abs")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .TypeConstraint<int32>("T"),
+                        UnaryOp<CPUDevice, functor::abs<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

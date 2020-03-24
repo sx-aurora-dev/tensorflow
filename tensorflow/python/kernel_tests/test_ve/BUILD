@@ -8,9 +8,8 @@ tf_py_test(
     name = "conv_ops_test",
     size = "medium",
     srcs = ["conv_ops_test.py"],
-    additional_deps = [
+    deps = [
         "//third_party/py/numpy",
-        "//tensorflow/contrib/layers:layers_py",
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client",
         "//tensorflow/python:client_testlib",
@@ -26,8 +25,6 @@ tf_py_test(
     ],
     shard_count = 1,
     tags = [
-        # TODO(b/118887316): Re-enable this test in Kokoro.
-        "no_oss",
         "optonly",  # times out
     ],
 )
@@ -36,7 +33,7 @@ tf_py_test(
     name = "matmul_op_test",
     size = "large",
     srcs = ["matmul_op_test.py"],
-    additional_deps = [
+    deps = [
         "//third_party/py/numpy",
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
@@ -48,4 +45,3 @@ tf_py_test(
     ],
     shard_count = 1,
 )
-

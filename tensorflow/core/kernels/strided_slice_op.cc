@@ -15,11 +15,12 @@ limitations under the License.
 
 // See docs in ../ops/array_ops.cc.
 
+#include "tensorflow/core/lib/core/refcount.h"
 #define EIGEN_USE_THREADS
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #include "tensorflow/core/kernels/strided_slice_op.h"
 
@@ -173,6 +174,7 @@ class StridedSliceOp : public OpKernel {
       HANDLE_DIM(5);
       HANDLE_DIM(6);
       HANDLE_DIM(7);
+      HANDLE_DIM(8);
 
 #undef HANDLE_DIM
 
@@ -271,6 +273,7 @@ class StridedSliceGradOp : public OpKernel {
     HANDLE_DIM(5);
     HANDLE_DIM(6);
     HANDLE_DIM(7);
+    HANDLE_DIM(8);
 
 #undef HANDLE_DIM
   }
@@ -327,12 +330,11 @@ class StridedSliceAssignOp : public OpKernel {
       }
     } else {
       if (context->input_dtype(0) == DT_RESOURCE) {
-        Var* v;
+        core::RefCountPtr<Var> v;
         OP_REQUIRES_OK(
             context, LookupResource(context, HandleFromInput(context, 0), &v));
-        core::ScopedUnref scoped_unref(v);
         OP_REQUIRES_OK(context,
-                       EnsureSparseVariableAccess<Device, T>(context, v));
+                       EnsureSparseVariableAccess<Device, T>(context, v.get()));
         mutex_lock ml(*v->mu());
         old_lhs = v->tensor();
         OP_REQUIRES(context, old_lhs->dtype() == DataTypeToEnum<T>::value,
@@ -388,6 +390,7 @@ class StridedSliceAssignOp : public OpKernel {
       HANDLE_DIM(5);
       HANDLE_DIM(6);
       HANDLE_DIM(7);
+      HANDLE_DIM(8);
 #undef HANDLE_DIM
 
       OP_REQUIRES(context, false,
@@ -441,10 +444,12 @@ class StridedSliceAssignOp : public OpKernel {
                           StridedSliceAssignOp<CPUDevice, type, true>)
 
 TF_CALL_ALL_TYPES(REGISTER_STRIDED_SLICE);
+TF_CALL_uint32(REGISTER_STRIDED_SLICE);
+TF_CALL_uint64(REGISTER_STRIDED_SLICE);
 
 #undef REGISTER_STRIDED_SLICE
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #define REGISTER_GPU(type)                                              \
   REGISTER_KERNEL_BUILDER(Name("StridedSlice")                          \
@@ -540,7 +545,7 @@ REGISTER_KERNEL_BUILDER(Name("TensorStridedSliceUpdate")
                         StridedSliceAssignOp<CPUDevice, int32, true>);
 #undef REGISTER_GPU
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 #define REGISTER_SYCL(type)                                              \
@@ -693,7 +698,7 @@ class VEStridedSliceOp : public VEOpKernel {
     const int processing_dims = processing_shape.dims();
 
     if (processing_shape.num_elements() > 0) {
-#define MAX_HANDLE_DIM 3
+#define MAX_HANDLE_DIM 7
 
       // FIXME : implement larger dim
       if( processing_dims <= MAX_HANDLE_DIM ) {
@@ -825,7 +830,7 @@ class VEStridedSliceGradOp : public VEOpKernel {
     }
 
 
-#define MAX_HANDLE_DIM 3
+#define MAX_HANDLE_DIM 7
     // FIXME : implement larger dim
     if( processing_dims <= MAX_HANDLE_DIM ) {
 

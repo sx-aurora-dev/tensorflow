@@ -15,9 +15,9 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #include "tensorflow/core/framework/bounds_check.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -249,6 +249,15 @@ class SelectV2Op : public OpKernel {
       case 5:
         HANDLE_DIM(5);
         break;
+      case 6:
+        HANDLE_DIM(6);
+        break;
+      case 7:
+        HANDLE_DIM(7);
+        break;
+      case 8:
+        HANDLE_DIM(8);
+        break;
       default:
         ctx->SetStatus(errors::Unimplemented(
             "Broadcast between ", ctx->input(0).shape().DebugString(), " and ",
@@ -272,7 +281,7 @@ class SelectV2Op : public OpKernel {
 
 TF_CALL_ALL_TYPES(REGISTER_SELECT);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 // Registration of the GPU implementations.
 #define REGISTER_SELECT_GPU(type)                                    \
@@ -294,7 +303,7 @@ REGISTER_SELECT_GPU(complex128);
 
 #undef REGISTER_SELECT_GPU
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_SYCL
 // Registration of the SYCL implementations.
@@ -342,9 +351,12 @@ class VESelectOp : public VEOpKernel {
     }
 };
 
-#define REGISTER_SELECT_VE(type)                                  \
+#define REGISTER_SELECT_VE(type)                                    \
   REGISTER_KERNEL_BUILDER(                                          \
-      Name("Select").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      Name("Select").Device(DEVICE_VE).TypeConstraint<type>("T"),   \
+      VESelectOp);                                                  \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("SelectV2").Device(DEVICE_VE).TypeConstraint<type>("T"), \
       VESelectOp);
 
 REGISTER_SELECT_VE(float);

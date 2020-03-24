@@ -30,14 +30,18 @@ class KernelUtilTest : public ::testing::Test {
 
     memset(&tensor1_, 0, sizeof(TfLiteTensor));
     memset(&tensor2_, 0, sizeof(TfLiteTensor));
+    memset(&tensor3_, 0, sizeof(TfLiteTensor));
     tensor1_.dims = nullptr;
     tensor2_.dims = nullptr;
+    tensor3_.dims = nullptr;
     tensor1_.allocation_type = kTfLiteMmapRo;
     tensor2_.allocation_type = kTfLiteMmapRo;
+    tensor3_.allocation_type = kTfLiteMmapRo;
   }
   ~KernelUtilTest() override {
     TfLiteTensorFree(&tensor1_);
     TfLiteTensorFree(&tensor2_);
+    TfLiteTensorFree(&tensor3_);
   }
 
   void SetShape(TfLiteTensor* tensor, std::initializer_list<int> dims) {
@@ -62,6 +66,7 @@ class KernelUtilTest : public ::testing::Test {
   TfLiteContext context_;
   TfLiteTensor tensor1_;
   TfLiteTensor tensor2_;
+  TfLiteTensor tensor3_;
 };
 
 TEST_F(KernelUtilTest, SameShapeEmpty) {
@@ -144,9 +149,98 @@ TEST_F(KernelUtilTest, BroadcastShapeDifferentSizes) {
   TfLiteIntArrayFree(output);
 }
 
+TEST_F(KernelUtilTest, BroadcastShapeIncompatibleDimOnThreeTensors) {
+  TfLiteIntArray* output = nullptr;
+  SetShape(&tensor1_, {1, 2});
+  SetShape(&tensor2_, {1, 3});
+  SetShape(&tensor3_, {1, 4});
+  EXPECT_NE(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  EXPECT_EQ(output, nullptr);
+}
+
+TEST_F(KernelUtilTest, BroadcastShapeOnesOnThreeTensors) {
+  TfLiteIntArray* output = nullptr;
+  SetShape(&tensor1_, {1, 1});
+  SetShape(&tensor2_, {1, 1});
+  SetShape(&tensor3_, {1, 3});
+  EXPECT_EQ(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  TfLiteIntArrayFree(output);
+
+  SetShape(&tensor1_, {1, 2});
+  SetShape(&tensor2_, {1, 1});
+  SetShape(&tensor3_, {1, 1});
+  EXPECT_EQ(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  TfLiteIntArrayFree(output);
+
+  SetShape(&tensor1_, {1, 1});
+  SetShape(&tensor2_, {1, 4});
+  SetShape(&tensor3_, {1, 1});
+  EXPECT_EQ(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  TfLiteIntArrayFree(output);
+}
+
+TEST_F(KernelUtilTest, BroadcastShapeScalarsOnThreeTensors) {
+  TfLiteIntArray* output = nullptr;
+  SetShape(&tensor1_, {1, 2});
+  SetShape(&tensor2_, {});
+  SetShape(&tensor3_, {});
+  EXPECT_EQ(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  EXPECT_THAT(GetShape(output), ::testing::ElementsAre(1, 2));
+  TfLiteIntArrayFree(output);
+
+  SetShape(&tensor1_, {});
+  SetShape(&tensor2_, {2});
+  SetShape(&tensor3_, {});
+  EXPECT_EQ(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  EXPECT_THAT(GetShape(output), ::testing::ElementsAre(2));
+  TfLiteIntArrayFree(output);
+
+  SetShape(&tensor1_, {});
+  SetShape(&tensor2_, {});
+  SetShape(&tensor3_, {3, 2, 1});
+  EXPECT_EQ(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  EXPECT_THAT(GetShape(output), ::testing::ElementsAre(3, 2, 1));
+  TfLiteIntArrayFree(output);
+}
+
+TEST_F(KernelUtilTest, BroadcastShapeDifferentSizesOnThreeTensors) {
+  TfLiteIntArray* output = nullptr;
+  SetShape(&tensor1_, {1, 2});
+  SetShape(&tensor2_, {3, 1, 1});
+  SetShape(&tensor3_, {3, 1});
+  EXPECT_EQ(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  EXPECT_THAT(GetShape(output), ::testing::ElementsAre(3, 3, 2));
+  TfLiteIntArrayFree(output);
+
+  SetShape(&tensor1_, {3, 4});
+  SetShape(&tensor2_, {1, 3, 1});
+  SetShape(&tensor3_, {1, 2, 1, 1});
+  EXPECT_EQ(kTfLiteOk,
+            CalculateShapeForBroadcast(&context_, &tensor1_, &tensor2_,
+                                       &tensor3_, &output));
+  EXPECT_THAT(GetShape(output), ::testing::ElementsAre(1, 2, 3, 4));
+  TfLiteIntArrayFree(output);
+}
+
 TEST_F(KernelUtilTest, CheckAndPopulate) {
   // Create input.
-  TfLiteTensor input;
+  TfLiteTensor input = {};
   input.type = kTfLiteInt8;
   input.allocation_type = kTfLiteArenaRw;
   input.dims = TfLiteIntArrayCreate(1);
@@ -163,7 +257,7 @@ TEST_F(KernelUtilTest, CheckAndPopulate) {
   input.quantization.params = reinterpret_cast<void*>(input_params);
 
   // Create filter.
-  TfLiteTensor filter;
+  TfLiteTensor filter = {};
   filter.type = kTfLiteInt8;
   filter.allocation_type = kTfLiteArenaRw;
   filter.dims = TfLiteIntArrayCreate(4);
@@ -188,7 +282,7 @@ TEST_F(KernelUtilTest, CheckAndPopulate) {
   filter.quantization.params = reinterpret_cast<void*>(filter_params);
 
   // Create bias.
-  TfLiteTensor bias;
+  TfLiteTensor bias = {};
   bias.type = kTfLiteInt32;
   bias.allocation_type = kTfLiteArenaRw;
   bias.dims = TfLiteIntArrayCreate(4);
@@ -208,7 +302,7 @@ TEST_F(KernelUtilTest, CheckAndPopulate) {
   bias.quantization.params = reinterpret_cast<void*>(bias_params);
 
   // Create output.
-  TfLiteTensor output;
+  TfLiteTensor output = {};
   output.type = kTfLiteInt8;
   output.allocation_type = kTfLiteArenaRw;
   output.dims = nullptr;
@@ -252,7 +346,7 @@ TEST_F(KernelUtilTest, CheckAndPopulate) {
 
 TEST_F(KernelUtilTest, CheckAndPopulateShift) {
   // Create input of type kTfLiteUInt8.
-  TfLiteTensor input;
+  TfLiteTensor input = {};
   input.type = kTfLiteUInt8;
   input.allocation_type = kTfLiteArenaRw;
   input.dims = TfLiteIntArrayCreate(1);
@@ -269,7 +363,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateShift) {
   input.quantization.params = reinterpret_cast<void*>(input_params);
 
   // Create filter of type kTfLiteUInt8.
-  TfLiteTensor filter;
+  TfLiteTensor filter = {};
   filter.type = kTfLiteUInt8;
   filter.allocation_type = kTfLiteArenaRw;
   filter.dims = TfLiteIntArrayCreate(4);
@@ -291,7 +385,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateShift) {
   filter.quantization.params = reinterpret_cast<void*>(filter_params);
 
   // Create bias for kTfLiteUInt8.
-  TfLiteTensor bias;
+  TfLiteTensor bias = {};
   bias.type = kTfLiteUInt8;
   bias.allocation_type = kTfLiteArenaRw;
   bias.dims = TfLiteIntArrayCreate(4);
@@ -311,7 +405,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateShift) {
   bias.quantization.params = reinterpret_cast<void*>(bias_params);
 
   // Create output for kTfLiteUInt8.
-  TfLiteTensor output;
+  TfLiteTensor output = {};
   output.type = kTfLiteUInt8;
   output.allocation_type = kTfLiteArenaRw;
   output.dims = nullptr;
@@ -356,9 +450,10 @@ TEST_F(KernelUtilTest, CheckAndPopulateShift) {
   TfLiteTensorFree(&output);
 }
 
+#ifndef __APPLE__  // Some Apple toolchains don't support std::ldexp
 TEST_F(KernelUtilTest, CheckAndPopulateZeroValue) {
   // Create input.
-  TfLiteTensor input;
+  TfLiteTensor input = {};
   input.type = kTfLiteInt8;
   input.allocation_type = kTfLiteArenaRw;
   input.dims = TfLiteIntArrayCreate(1);
@@ -375,7 +470,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateZeroValue) {
   input.quantization.params = reinterpret_cast<void*>(input_params);
 
   // Create filter.
-  TfLiteTensor filter;
+  TfLiteTensor filter = {};
   filter.type = kTfLiteInt8;
   filter.allocation_type = kTfLiteArenaRw;
   filter.dims = TfLiteIntArrayCreate(4);
@@ -389,15 +484,9 @@ TEST_F(KernelUtilTest, CheckAndPopulateZeroValue) {
   auto* filter_params = reinterpret_cast<TfLiteAffineQuantization*>(
       malloc(sizeof(TfLiteAffineQuantization)));
   filter_params->scale = TfLiteFloatArrayCreate(3);
-  int32_t two_pow_neg_31 = 0x30000000;  // 2^-31 so shift = -30.
-  int32_t two_pow_neg_32 = 0x2F800000;  // 2^-32 so shift = -31.
-  int32_t two_pow_neg_33 = 0x2F000000;  // 2^-33 so shift = -32.
-  float* scale_date = reinterpret_cast<float*>(&two_pow_neg_31);
-  filter_params->scale->data[0] = *scale_date;
-  scale_date = reinterpret_cast<float*>(&two_pow_neg_32);
-  filter_params->scale->data[1] = *scale_date;
-  scale_date = reinterpret_cast<float*>(&two_pow_neg_33);
-  filter_params->scale->data[2] = *scale_date;
+  filter_params->scale->data[0] = std::ldexp(1.0f, -31);
+  filter_params->scale->data[1] = std::ldexp(1.0f, -32);
+  filter_params->scale->data[2] = std::ldexp(1.0f, -33);
   filter_params->zero_point = TfLiteIntArrayCreate(3);
   filter_params->zero_point->data[0] = 0;
   filter_params->zero_point->data[1] = 0;
@@ -406,7 +495,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateZeroValue) {
   filter.quantization.params = reinterpret_cast<void*>(filter_params);
 
   // Create bias.
-  TfLiteTensor bias;
+  TfLiteTensor bias = {};
   bias.type = kTfLiteInt32;
   bias.allocation_type = kTfLiteArenaRw;
   bias.dims = TfLiteIntArrayCreate(4);
@@ -416,9 +505,9 @@ TEST_F(KernelUtilTest, CheckAndPopulateZeroValue) {
   auto* bias_params = reinterpret_cast<TfLiteAffineQuantization*>(
       malloc(sizeof(TfLiteAffineQuantization)));
   bias_params->scale = TfLiteFloatArrayCreate(3);
-  bias_params->scale->data[0] = 4.6566129e-10;  // 2^-31
-  bias_params->scale->data[1] = 2.3283064e-10;  // 2^-32
-  bias_params->scale->data[2] = 1.1641532e-10;  // 2^-33
+  bias_params->scale->data[0] = std::ldexp(1.0f, -31);
+  bias_params->scale->data[1] = std::ldexp(1.0f, -32);
+  bias_params->scale->data[2] = std::ldexp(1.0f, -33);
   bias_params->zero_point = TfLiteIntArrayCreate(3);
   bias_params->zero_point->data[0] = 11;
   bias_params->zero_point->data[1] = 12;
@@ -426,7 +515,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateZeroValue) {
   bias.quantization.params = reinterpret_cast<void*>(bias_params);
 
   // Create output.
-  TfLiteTensor output;
+  TfLiteTensor output = {};
   output.type = kTfLiteInt8;
   output.allocation_type = kTfLiteArenaRw;
   output.dims = nullptr;
@@ -467,10 +556,11 @@ TEST_F(KernelUtilTest, CheckAndPopulateZeroValue) {
   TfLiteTensorFree(&bias);
   TfLiteTensorFree(&output);
 }
+#endif
 
 TEST_F(KernelUtilTest, CheckAndPopulateUint8) {
   // Create input.
-  TfLiteTensor input;
+  TfLiteTensor input = {};
   input.type = kTfLiteUInt8;
   input.allocation_type = kTfLiteArenaRw;
   input.dims = TfLiteIntArrayCreate(1);
@@ -487,7 +577,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateUint8) {
   input.quantization.params = reinterpret_cast<void*>(input_params);
 
   // Create filter.
-  TfLiteTensor filter;
+  TfLiteTensor filter = {};
   filter.type = kTfLiteUInt8;
   filter.allocation_type = kTfLiteArenaRw;
   filter.dims = TfLiteIntArrayCreate(4);
@@ -509,7 +599,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateUint8) {
   filter.quantization.params = reinterpret_cast<void*>(filter_params);
 
   // Create bias.
-  TfLiteTensor bias;
+  TfLiteTensor bias = {};
   bias.type = kTfLiteInt32;
   bias.allocation_type = kTfLiteArenaRw;
   bias.dims = TfLiteIntArrayCreate(4);
@@ -525,7 +615,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateUint8) {
   bias.quantization.params = reinterpret_cast<void*>(bias_params);
 
   // Create output.
-  TfLiteTensor output;
+  TfLiteTensor output = {};
   output.type = kTfLiteUInt8;
   output.allocation_type = kTfLiteArenaRw;
   output.dims = nullptr;
@@ -568,7 +658,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateUint8) {
 
 TEST_F(KernelUtilTest, CheckAndPopulateWithoutBias) {
   // Create input.
-  TfLiteTensor input;
+  TfLiteTensor input = {};
   input.type = kTfLiteUInt8;
   input.allocation_type = kTfLiteArenaRw;
   input.dims = TfLiteIntArrayCreate(1);
@@ -585,7 +675,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateWithoutBias) {
   input.quantization.params = reinterpret_cast<void*>(input_params);
 
   // Create filter.
-  TfLiteTensor filter;
+  TfLiteTensor filter = {};
   filter.type = kTfLiteUInt8;
   filter.allocation_type = kTfLiteArenaRw;
   filter.dims = TfLiteIntArrayCreate(4);
@@ -607,7 +697,7 @@ TEST_F(KernelUtilTest, CheckAndPopulateWithoutBias) {
   filter.quantization.params = reinterpret_cast<void*>(filter_params);
 
   // Create output.
-  TfLiteTensor output;
+  TfLiteTensor output = {};
   output.type = kTfLiteUInt8;
   output.allocation_type = kTfLiteArenaRw;
   output.dims = nullptr;

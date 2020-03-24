@@ -21,12 +21,13 @@ limitations under the License.
 #include <memory>
 #include <queue>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "tensorflow/c/c_api.h"
 #include "tensorflow/c/c_api_internal.h"
 #include "tensorflow/c/eager/c_api.h"
+#include "tensorflow/c/eager/c_api_experimental.h"
+#include "tensorflow/c/eager/tensor_handle_interface.h"
 #include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/common_runtime/eager/attr_builder.h"
 #include "tensorflow/core/common_runtime/eager/context.h"
@@ -36,11 +37,12 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/eager/tensor_handle.h"
 #include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/rendezvous_mgr.h"
+#include "tensorflow/core/framework/cancellation.h"
 #include "tensorflow/core/framework/rendezvous.h"
+#include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/stringpiece.h"
 #include "tensorflow/core/lib/gtl/inlined_vector.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
-#include "tensorflow/core/lib/gtl/stl_util.h"
 #include "tensorflow/core/lib/monitoring/counter.h"
 #include "tensorflow/core/lib/monitoring/gauge.h"
 #include "tensorflow/core/lib/monitoring/sampler.h"
@@ -53,45 +55,34 @@ struct TFE_ContextOptions {
   TF_SessionOptions session_options;
   // true if async execution is enabled.
   bool async = false;
-  TFE_ContextDevicePlacementPolicy policy{TFE_DEVICE_PLACEMENT_SILENT};
+  TFE_ContextDevicePlacementPolicy device_placement_policy{
+      TFE_DEVICE_PLACEMENT_SILENT};
+  TFE_ContextMirroringPolicy mirroring_policy{TFE_MIRRORING_NONE};
+  // If true, lazily copy the remote inputs of a function to the target devices.
+  bool lazy_remote_inputs_copy = true;
 };
 
 struct TFE_Context {
-  TFE_Context(const tensorflow::SessionOptions& opts,
-              TFE_ContextDevicePlacementPolicy default_policy, bool async,
-              const tensorflow::DeviceMgr* device_mgr, bool device_mgr_owned,
-              tensorflow::Rendezvous* rendezvous,
-              const tensorflow::CustomKernelCreator* custom_kernel_creator)
-      : context(new tensorflow::EagerContext(
-            opts,
-            static_cast<tensorflow::ContextDevicePlacementPolicy>(
-                default_policy),
-            async, device_mgr, device_mgr_owned, rendezvous,
-            custom_kernel_creator)) {}
-
-  ~TFE_Context() { context->Unref(); }
-
   tensorflow::EagerContext* context;
 };
 
 struct TFE_TensorHandle {
-  TFE_TensorHandle(const tensorflow::Tensor& t, tensorflow::Device* d,
-                   tensorflow::Device* op_device)
-      : handle(new tensorflow::TensorHandle(t, d, op_device, nullptr)) {}
+  static TFE_TensorHandle* CreateLocalHandle(const class tensorflow::Tensor& t,
+                                             TF_Status* s) {
+    tensorflow::TensorHandle* handle;
+    s->status = tensorflow::TensorHandle::CreateLocalHandle(t, &handle);
+    if (!s->status.ok()) {
+      return nullptr;
+    }
+    return new TFE_TensorHandle{
+        std::make_unique<tensorflow::TensorHandleInterface>(handle)};
+  }
 
-  TFE_TensorHandle(tensorflow::TensorHandle* handle) : handle(handle) {}
-
-  tensorflow::TensorHandle* handle;
-
-  // Create a symbolic tensor.
-  TFE_TensorHandle(TF_Output t, TF_DataType dtype)
-      : handle(new tensorflow::TensorHandle(
-            tensorflow::OutputGraphNode{t.oper, t.index},
-            static_cast<tensorflow::DataType>(dtype))) {}
+  std::unique_ptr<AbstractTensorHandleInterface> handle;
 };
 
 struct TFE_TensorDebugInfo {
-  TFE_TensorDebugInfo(const std::vector<tensorflow::int64>& dims)
+  explicit TFE_TensorDebugInfo(const std::vector<tensorflow::int64>& dims)
       : dev_dims(dims) {}
 
   // Fully-padded, minor-to-major.
@@ -110,22 +101,39 @@ struct TFE_OpInferenceContext {
 struct TFE_Op {
   TFE_Op(TFE_Context* ctx, const char* op, bool is_function,
          const tensorflow::AttrTypeMap* t,
-         TFE_OpInferenceContext* inference_ctx)
-      : operation(ctx->context, op, is_function, t),
-        inference_ctx(inference_ctx) {}
+         std::unique_ptr<TFE_OpInferenceContext> inference_ctx)
+      : ctx(ctx),
+        operation(ctx->context, op, is_function, t),
+        inference_ctx(std::move(inference_ctx)) {}
 
+  void Clear() {
+    operation.Clear();
+    inference_ctx.reset();
+  }
+
+  tensorflow::Status Reset(const char* op, bool is_function,
+                           const tensorflow::AttrTypeMap* t,
+                           const char* raw_device_name,
+                           std::unique_ptr<TFE_OpInferenceContext> infer_ctx) {
+    inference_ctx = std::move(infer_ctx);
+    return operation.Reset(ctx->context, op, is_function, t, raw_device_name,
+                           nullptr);
+  }
+
+  void AddInput(TFE_TensorHandle* input, TF_Status* status);
+  void Execute(TFE_TensorHandle** retvals, int* num_retvals, TF_Status* status);
+
+  TFE_Context* ctx;
   tensorflow::EagerOperation operation;
   std::unique_ptr<TFE_OpInferenceContext> inference_ctx;
 };
 
-struct TFE_ProfilerContext {
-  tensorflow::ProfilerContext profiler_context;
-};
+TFE_Op* NewOrResetOp(TFE_Context* ctx, const char* op_or_function_name,
+                     const char* raw_device_name, TF_Status* status,
+                     TFE_Op* op_to_reset = nullptr);
 
 struct TFE_Profiler {
-  TFE_Profiler(TFE_ProfilerContext* ctx) {
-    profiler = tensorflow::ProfilerSession::Create(&ctx->profiler_context);
-  }
+  explicit TFE_Profiler() { profiler = tensorflow::ProfilerSession::Create(); }
 
   std::unique_ptr<tensorflow::ProfilerSession> profiler;
 };
@@ -210,7 +218,7 @@ struct TFE_MonitoringBoolGauge2 : TFE_MonitoringGauge<bool, 2> {
 };
 
 struct TFE_MonitoringBuckets {
-  TFE_MonitoringBuckets(
+  explicit TFE_MonitoringBuckets(
       std::function<std::unique_ptr<tensorflow::monitoring::Buckets>(void)>
           fn) {
     create_buckets = fn;
@@ -255,24 +263,23 @@ void SetOpAttrValueScalar(TFE_Context* ctx, TFE_Op* op,
                           const char* attr_name, TF_Status* status);
 }  // namespace tensorflow
 
-struct TFE_TraceContext {
-  TF_Graph* const graph;
+struct TFE_CancellationManager {
+  tensorflow::CancellationManager cancellation_manager;
+};
 
-  unsigned int node_counter = 0;
-  // Each tensor handle will have its ref count incremented when it's added as a
-  // map key, and decremented when this object is destroyed.
-  std::map<tensorflow::TensorHandle*, TF_Output> input_tensor_map;
-  std::vector<std::pair<tensorflow::TensorHandle*, TF_Output>>* input_tensors =
-      nullptr;
+struct TFE_Executor {
+  explicit TFE_Executor(bool async)
+      : owned_executor(new tensorflow::EagerExecutor(async)) {}
 
-  TFE_TraceContext(TF_Graph* graph) : graph(graph) {}
+  explicit TFE_Executor(tensorflow::EagerExecutor* executor)
+      : owned_executor(nullptr), unowned_executor(executor) {}
 
-  ~TFE_TraceContext() {
-    delete input_tensors;
-    for (auto input : input_tensor_map) {
-      input.first->Unref();
-    }
+  tensorflow::EagerExecutor* executor() {
+    return owned_executor == nullptr ? unowned_executor : owned_executor.get();
   }
+
+  std::unique_ptr<tensorflow::EagerExecutor> owned_executor;
+  tensorflow::EagerExecutor* unowned_executor;
 };
 
 #endif  // TENSORFLOW_C_EAGER_C_API_INTERNAL_H_

@@ -34,17 +34,42 @@ and the following optional parameters:
 *   `run_delay`: `float` (default=-1.0) \
     The delay in seconds between subsequent benchmark runs. Non-positive values
     mean use no delay.
+*   `use_hexagon`: `bool` (default=false) \
+    Whether to use the Hexagon delegate. Not all devices may support the Hexagon
+    delegate, refer to the TensorFlow Lite documentation for more information
+    about which devices/chipsets are supported and about how to get the
+    required libraries. To use the Hexagon delegate also build the
+    hexagon_nn:libhexagon_interface.so target and copy the library to the
+    device. All libraries should be copied to /data/local/tmp on the device.
 *   `use_nnapi`: `bool` (default=false) \
     Whether to use [Android NNAPI](https://developer.android.com/ndk/guides/neuralnetworks/).
-    This API is available on recent Android devices.
+    This API is available on recent Android devices. Note that some Android P
+    devices will fail to use NNAPI for models in `/data/local/tmp/` and this
+    benchmark tool will not correctly use NNAPI. When on Android Q+, will also
+    print the names of NNAPI accelerators accessible through the
+    `nnapi_accelerator_name` flag.
+*   `nnapi_accelerator_name`: `str` (default="") \
+    The name of the NNAPI accelerator to use (requires Android Q+). If left
+    blank, NNAPI will automatically select which of the available accelerators
+    to use.
+*   `nnapi_execution_preference`: `string` (default="") \
+    Which [NNAPI execution preference](https://developer.android.com/ndk/reference/group/neural-networks.html#group___neural_networks_1gga034380829226e2d980b2a7e63c992f18af727c25f1e2d8dcc693c477aef4ea5f5)
+    to use when executing using NNAPI. Should be one of the
+    following: fast_single_answer, sustained_speed, low_power, undefined.
 *   `use_legacy_nnapi`: `bool` (default=false) \
     Whether to use the legacy
     [Android NNAPI](https://developer.android.com/ndk/guides/neuralnetworks/)
     TFLite path, which requires the graph to be fully compatible with NNAPI.
-    This is available on recent Android devices.
+    This is available on recent Android devices. Note that some Android P
+    devices will fail to use NNAPI for models in `/data/local/tmp/` and this
+    benchmark tool will not correctly use NNAPI.
 *   `use_gpu`: `bool` (default=false) \
     Whether to use the [GPU accelerator delegate](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/lite/delegates/gpu).
-    This option is currently only available on Android devices.
+    This option is currently only available on Android and iOS devices.
+*   `gpu_wait_type`: `str` (default="") \
+    Which GPU wait_type option to use, when using GPU delegate on iOS. Should be
+    one of the following: passive, active, do_not_wait, aggressive. When left
+    blank, passive mode is used by default.
 *   `enable_op_profiling`: `bool` (default=false) \
     Whether to enable per-operator profiling measurement.
 
@@ -82,7 +107,18 @@ adb shell chmod +x /data/local/tmp/benchmark_model
 adb push mobilenet_quant_v1_224.tflite /data/local/tmp
 ```
 
-(5) Run the benchmark. For example:
+(5) Optionally, install Hexagon libraries on device.
+
+That step is only needed when using the Hexagon delegate.
+
+```
+bazel build --config=android_arm \
+  tensorflow/lite/experimental/delegates/hexagon/hexagon_nn:libhexagon_interface.so
+adb push bazel-bin/tensorflow/lite/experimental/delegates/hexagon/hexagon_nn/libhexagon_interface.so /data/local/tmp
+adb push libhexagon_nn_skel*.so /data/local/tmp
+```
+
+(6) Run the benchmark. For example:
 
 ```
 adb shell /data/local/tmp/benchmark_model \
@@ -207,5 +243,24 @@ Memory (bytes): count=0
 31 nodes observed
 
 
-Average inference timings in us: Warmup: 83235, Init: 38467, no stats: 79760.9
+Average inference timings in us: Warmup: 83235, Init: 38467, Inference: 79760.9
 ```
+
+## Benchmark multiple performance options in a single run
+
+A convenient and simple C++ binary is also provided to benchmark multiple
+performance options in a single run. This binary is built based on the
+aforementioned benchmark tool that could only benchmark a single performance
+option at a time. They share the same build/install/run process, but the BUILD
+target name of this binary is `benchmark_model_performance_options` and it takes
+some additional parameters as detailed below.
+
+### Additional Parameters
+*   `perf_options_list`: `string` (default='all') \
+    A comma-separated list of TFLite performance options to benchmark.
+*   `option_benchmark_run_delay`: `float` (default=-1.0) \
+    The delay between two consecutive runs of benchmarking performance options
+    in seconds.
+*   `random_shuffle_benchmark_runs`: `bool` (default=true) \
+    Whether to perform all benchmark runs, each of which has different
+    performance options, in a random order.

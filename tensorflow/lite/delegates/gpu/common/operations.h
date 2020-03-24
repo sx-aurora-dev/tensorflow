@@ -46,14 +46,15 @@ enum class OperationType {
   DEPTHWISE_CONVOLUTION,
   DIV,
   FULLY_CONNECTED,
+  HARD_SWISH,
   LOG,
   LSTM,
   MAX_UNPOOLING_2D,
   MUL,
   MULTIPLY_SCALAR,
+  PAD,
   POOLING_2D,
   POW,
-  PAD,
   PRELU,
   RELU,
   RESHAPE,
@@ -62,13 +63,14 @@ enum class OperationType {
   SIGMOID,
   SIN,
   SLICE,
-  SOFT_MAX,
+  SOFTMAX,
   SPACE_TO_BATCH,
   SQRT,
   SQUARE,
   SQUARED_DIFF,
   SUB,
   TANH,
+  TRANSPOSE,
   UPSAMPLE_2D,
 };
 
@@ -88,6 +90,20 @@ struct Padding2D {
   // of the corresponding axis.
   HW prepended = HW(-1, -1);
   HW appended = HW(-1, -1);
+};
+
+struct Padding3D {
+  Padding3D() = default;
+  Padding3D& operator=(const Padding3D& value);
+  bool operator==(const Padding3D& value);
+  bool operator!=(const Padding3D& value);
+  Padding3D& operator-(const Padding3D& value);
+
+  // Padding values for every axis (if needed), where 'prepended' defines
+  // padding for the beginning of each axis and 'appended' represents end part
+  // of the corresponding axis.
+  HWD prepended = HWD(0, 0, 0);
+  HWD appended = HWD(0, 0, 0);
 };
 
 struct Crop2D : public Padding2D {};
@@ -124,11 +140,30 @@ struct Pooling2DAttributes {
   bool output_indices = false;
 };
 
+struct Pooling3DAttributes {
+  PoolingType type = PoolingType::UNDEFINED;
+  // Strides for every axis.
+  HWD strides = HWD(0, 0, 0);
+  HWD kernel = HWD(0, 0, 0);
+  Padding3D padding;
+  // NOTE(akulik): technically the number of outputs from Pooling node indicates
+  // whether indices are needed or not, but I decided to keep it inside
+  // attributes to simplify processing.
+  bool output_indices = false;
+};
+
 struct MaxUnpooling2DAttributes {
   // Strides for every axis.
   HW strides = HW(-1, -1);
   HW kernel = HW(-1, -1);
   Padding2D padding;
+};
+
+struct MaxUnpooling3DAttributes {
+  // Strides for every axis.
+  HWD strides = HWD(0, 0, 0);
+  HWD kernel = HWD(0, 0, 0);
+  Padding3D padding;
 };
 
 struct ConcatAttributes {
@@ -141,9 +176,18 @@ struct ConcatAttributes {
 BHWC CalculateOutputShape(const BHWC& input,
                           const MaxUnpooling2DAttributes& attr);
 
+// @return shape of a tensor after MaxUnpooling3D operation is applied to
+//         the given input.
+BHWDC CalculateOutputShape(const BHWDC& input,
+                           const MaxUnpooling3DAttributes& attr);
+
 // @return shape of a tensor after Pooling2D operation is applied to the given
 //         input.
 BHWC CalculateOutputShape(const BHWC& input, const Pooling2DAttributes& attr);
+
+// @return shape of a tensor after Pooling3D operation is applied to the given
+//         input.
+BHWDC CalculateOutputShape(const BHWDC& input, const Pooling3DAttributes& attr);
 
 // @return shape of a tensor after Concat operation is applied to the given
 //         input.
@@ -155,10 +199,20 @@ Status CalculateOutputShape(const std::vector<BHWC>& input,
 Padding2D CalculateSamePadding(const BHWC& input,
                                const Pooling2DAttributes& attr);
 
+// @return padding for pooling operation to make sure output keep the same shape
+// as the given input.
+Padding3D CalculateSamePadding(const BHWDC& input,
+                               const Pooling3DAttributes& attr);
+
 // @return padding for max unpooling operation to make sure output keep the same
 // shape as the given input.
 Padding2D CalculateSamePadding(const BHWC& input,
                                const MaxUnpooling2DAttributes& attr);
+
+// @return padding for max unpooling operation to make sure output keep the same
+// shape as the given input.
+Padding3D CalculateSamePadding(const BHWDC& input,
+                               const MaxUnpooling3DAttributes& attr);
 
 struct Convolution2DAttributes {
   HW strides = HW(1, 1);    // Along each axis.
@@ -169,15 +223,34 @@ struct Convolution2DAttributes {
   Tensor<Linear, DataType::FLOAT32> bias;  // optional
 };
 
+struct Convolution3DAttributes {
+  HWD strides = HWD(0, 0, 0);    // Along each axis.
+  HWD dilations = HWD(0, 0, 0);  // Along each axis.
+  Padding3D padding;
+
+  Tensor<OHWDI, DataType::FLOAT32> weights;
+  Tensor<Linear, DataType::FLOAT32> bias;  // optional
+};
+
 // @return shape of a tensor after Convolution2D operation is applied to
 //         the given input.
 BHWC CalculateOutputShape(const BHWC& input,
                           const Convolution2DAttributes& attr);
 
+// @return shape of a tensor after Convolution3D operation is applied to
+//         the given input.
+BHWDC CalculateOutputShape(const BHWDC& input,
+                           const Convolution3DAttributes& attr);
+
 // @return padding for convolution operation to make sure output keep the same
 // shape as the given input.
 Padding2D CalculateSamePadding(const BHWC& input,
                                const Convolution2DAttributes& attr);
+
+// @return padding for convolution operation to make sure output keep the same
+// shape as the given input.
+Padding3D CalculateSamePadding(const BHWDC& input,
+                               const Convolution3DAttributes& attr);
 
 struct ConvolutionTransposedAttributes {
   HW stride = HW(1, 1);  // Along each axis.
@@ -188,28 +261,53 @@ struct ConvolutionTransposedAttributes {
   Tensor<Linear, DataType::FLOAT32> bias;  // optional
 };
 
+struct ConvolutionTransposed3DAttributes {
+  HWD stride = HWD(0, 0, 0);  // Along each axis.
+  Padding3D padding;
+
+  Tensor<OHWDI, DataType::FLOAT32> weights;
+  Tensor<Linear, DataType::FLOAT32> bias;  // optional
+};
+
 Padding2D CalculateSamePadding(const BHWC& input,
                                const ConvolutionTransposedAttributes& attr);
+
+Padding3D CalculateSamePadding(const BHWDC& input,
+                               const ConvolutionTransposed3DAttributes& attr);
 
 // @return shape of a tensor after ConvolutionTransposed operation is applied to
 //         the given input.
 BHWC CalculateOutputShape(const BHWC& input,
                           const ConvolutionTransposedAttributes& attr);
 
+// @return shape of a tensor after ConvolutionTransposed3D operation is applied
+// to
+//         the given input.
+BHWDC CalculateOutputShape(const BHWDC& input,
+                           const ConvolutionTransposed3DAttributes& attr);
+
 struct DepthwiseConvolution2DAttributes : public Convolution2DAttributes {};
+struct DepthwiseConvolution3DAttributes : public Convolution3DAttributes {};
 
 // @return shape of a tensor after DepthwiseConvolution2D operation is applied
 //         to the given input.
 BHWC CalculateOutputShape(const BHWC& input,
                           const DepthwiseConvolution2DAttributes& attr);
 
+// @return shape of a tensor after DepthwiseConvolution3D operation is applied
+//         to the given input.
+BHWDC CalculateOutputShape(const BHWDC& input,
+                           const DepthwiseConvolution3DAttributes& attr);
+
 // @return padding for depthwise convolution operation to make sure output keep
 // the same shape as the given input.
 Padding2D CalculateSamePadding(const BHWC& input,
                                const DepthwiseConvolution2DAttributes& attr);
 
-BHWC CalculateOutputShape(const BHWC& input,
-                          const DepthwiseConvolution2DAttributes& attr);
+// @return padding for depthwise convolution operation to make sure output keep
+// the same shape as the given input.
+Padding3D CalculateSamePadding(const BHWDC& input,
+                               const DepthwiseConvolution3DAttributes& attr);
 
 // f(x):= {
 //   if x < 0  : x -> alpha * x
@@ -238,7 +336,7 @@ struct PReLUAttributes {
       alpha;
 };
 
-struct SoftMaxAttributes {
+struct SoftmaxAttributes {
   Axis axis = Axis::UNKNOWN;
 };
 
@@ -271,12 +369,30 @@ struct Upsample2DAttributes {
   bool align_corners = false;
 };
 
+struct Upsample3DAttributes {
+  HWD new_shape;
+
+  UpsamplingType type = UpsamplingType::NEAREST;
+
+  // If true, the centers of the 8 corner pixels of the input and output tensors
+  // are aligned, preserving the values at the corner pixels. Defaults to false.
+  bool align_corners = false;
+};
+
 float CalculateResizeScale(int32_t input_size, int32_t output_size,
                            const Upsample2DAttributes& attr);
+
+float CalculateResizeScale(int32_t input_size, int32_t output_size,
+                           const Upsample3DAttributes& attr);
 
 // @return shape of a tensor after upscale operation is applied to the given
 // input.
 BHWC CalculateOutputShape(const BHWC& input, const Upsample2DAttributes& attr);
+
+// @return shape of a tensor after upscale operation is applied to the given
+// input.
+BHWDC CalculateOutputShape(const BHWDC& input,
+                           const Upsample3DAttributes& attr);
 
 enum class PaddingContentType {
   ZEROS = 0,
@@ -287,8 +403,8 @@ enum class PaddingContentType {
 struct PadAttributes {
   PaddingContentType type = PaddingContentType::ZEROS;
 
-  HWC prepended;
-  HWC appended;
+  BHWC prepended;
+  BHWC appended;
 };
 
 // @return shape of a tensor after Pad operation is applied to the given input.
@@ -301,11 +417,11 @@ struct ConstTensorAttributes {
 // Simple slicing without advanced support for shrinking, reverse slicing etc.
 struct SliceAttributes {
   // Specifies start and end dimensions for slicing.
-  HWC starts;
-  HWC ends;
+  BHWC starts;
+  BHWC ends;
 
   // Stride should be >= 1.
-  HWC strides;
+  BHWC strides;
 };
 
 // @return shape of a tensor after Slice2D operation is applied to the given
@@ -330,6 +446,15 @@ BHWC CalculateOutputShape(const BHWC& input,
 struct ReshapeAttributes {
   BHWC new_shape;
 };
+
+struct TransposeAttributes {
+  // A permutation of the dimensions of input tensor
+  BHWC perm;
+};
+
+// @return shape of a tensor after Transpose operation is applied to
+// the given input.
+BHWC CalculateOutputShape(const BHWC& input, const TransposeAttributes& attr);
 
 }  // namespace gpu
 }  // namespace tflite

@@ -23,6 +23,7 @@ limitations under the License.
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/kernels/fill_functor.h"
+#include "tensorflow/core/lib/bfloat16/bfloat16.h"
 
 
 #ifdef TENSORFLOW_USE_VE
@@ -187,6 +188,7 @@ REGISTER_KERNELS_CPU(double);
 REGISTER_KERNELS_CPU(int32);
 REGISTER_KERNELS_CPU(complex64);
 REGISTER_KERNELS_CPU(complex128);
+REGISTER_KERNELS_CPU(bfloat16);
 
 
 
@@ -376,7 +378,7 @@ REGISTER_KERNEL_BUILDER(                       \
 
 
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace functor {
 #define DECLARE_GPU_SPEC(T, Tindices, ADJ_A, ADJ_B)                       \
@@ -423,7 +425,7 @@ DECLARE_ADJOINT_GPU_SPEC(float);
 REGISTER_KERNELS_GPU(float);
 #undef REGISTER_GPU
 #undef REGISTER_KERNELS_GPU
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace functor {
 

@@ -160,12 +160,12 @@ TEST_F(ArithmeticOptimizerTest, OpDeduppingAssertAndCheckNumerics) {
   OptimizeTwice(&optimizer, &item, &output);
   NodeMap node_map(&output);
 
-  EXPECT_EQ(output.node_size(), 5);
+  EXPECT_EQ(output.node_size(), 6);
   const NodeDef* new_div = node_map.GetNode("div");
   ASSERT_NE(new_div, nullptr);
   ASSERT_EQ(new_div->input_size(), 3);
   EXPECT_EQ(new_div->input(0), "check1");
-  EXPECT_EQ(new_div->input(1), "check1");
+  EXPECT_EQ(new_div->input(1), "check2");
   EXPECT_EQ(new_div->input(2), "^assert1");
 
   auto tensors = EvaluateNodes(output, item.fetch, {{"Placeholder", bool_t}});
@@ -818,7 +818,8 @@ TEST_F(ArithmeticOptimizerTest, FuseTransposeAndConj) {
 }
 
 TEST_F(ArithmeticOptimizerTest, FoldTransposeIntoMatMul) {
-  for (const string matmul_type : {"MatMul", "SparseMatMul", "BatchMatMul"}) {
+  for (const string matmul_type :
+       {"MatMul", "SparseMatMul", "BatchMatMul", "BatchMatMulV2"}) {
     tensorflow::Scope s = tensorflow::Scope::NewRootScope();
 
     Output a = ops::Const(s.WithOpName("a"), {1.0f, 2.0f, 3.0f, 4.0f}, {2, 2});
@@ -835,6 +836,8 @@ TEST_F(ArithmeticOptimizerTest, FoldTransposeIntoMatMul) {
       matmul = ops::SparseMatMul(matmul_op, trans_a, trans_b);
     } else if (matmul_type == "BatchMatMul") {
       matmul = ops::BatchMatMul(matmul_op, trans_a, trans_b);
+    } else if (matmul_type == "BatchMatMulV2") {
+      matmul = ops::BatchMatMulV2(matmul_op, trans_a, trans_b);
     }
 
     auto identity = ops::Identity(s.WithOpName("identity"), matmul);
@@ -863,7 +866,7 @@ TEST_F(ArithmeticOptimizerTest, FoldTransposeIntoMatMul) {
     EXPECT_EQ(matmul_fused_node->input(0), "a");
     EXPECT_EQ(matmul_fused_node->input(1), "b");
 
-    if (matmul_type == "BatchMatMul") {
+    if (matmul_type == "BatchMatMul" || matmul_type == "BatchMatMulV2") {
       EXPECT_TRUE(matmul_fused_node->attr().at("adj_x").b());
       EXPECT_TRUE(matmul_fused_node->attr().at("adj_y").b());
     } else {
@@ -2728,6 +2731,7 @@ TEST_F(ArithmeticOptimizerTest, ConvertPow) {
   tensorflow::Scope s = tensorflow::Scope::NewRootScope();
   auto x = ops::Const(s.WithOpName("x"), {1.0f, 2.0f}, {1, 2});
   auto y2 = ops::Const(s.WithOpName("y2"), {2.0f, 2.0f}, {1, 2});
+  auto y3 = ops::Const(s.WithOpName("y3"), {3.0f, 3.0f}, {1, 2});
   auto y1 = ops::Const(s.WithOpName("y1"), {1.0f, 1.0f}, {1, 2});
   auto yPoint5 = ops::Const(s.WithOpName("y.5"), {0.5f, 0.5f}, {1, 2});
   auto y0 = ops::Const(s.WithOpName("y0"), {0.0f, 0.0f}, {1, 2});
@@ -2738,6 +2742,8 @@ TEST_F(ArithmeticOptimizerTest, ConvertPow) {
   auto ones = ops::Const(s.WithOpName("ones"), {1.0f, 1.0f, 1.0f}, {1, 3});
   auto zeros = ops::Const(s.WithOpName("zeros"), {0.0f, 0.0f, 0.0f}, {1, 3});
   Output out2 = ops::Pow(s.WithOpName("out2"), x, y2);
+  Output out3 =
+      ops::Pow(s.WithOpName("out3").WithDevice("/device:CPU:0"), x, y3);
   Output out1 = ops::Pow(s.WithOpName("out1"), x, y1);
   Output outPoint5 = ops::Pow(s.WithOpName("out.5"), x, yPoint5);
   Output out0 = ops::Pow(s.WithOpName("out0"), x, y0);
@@ -2748,18 +2754,18 @@ TEST_F(ArithmeticOptimizerTest, ConvertPow) {
   Output out_bcast2 = ops::Pow(s.WithOpName("out_bcast2"), z, zeros);
 
   GrapplerItem item;
-  item.fetch = {"out2",  "out1", "out.5",      "out0",      "out_.5",
-                "out_1", "out",  "out_bcast1", "out_bcast2"};
+  item.fetch = {"out2",   "out3",  "out1", "out.5",      "out0",
+                "out_.5", "out_1", "out",  "out_bcast1", "out_bcast2"};
   TF_CHECK_OK(s.ToGraphDef(&item.graph));
   auto tensors_expected = EvaluateNodes(item.graph, item.fetch);
-  ASSERT_EQ(tensors_expected.size(), 9);
+  ASSERT_EQ(tensors_expected.size(), 10);
 
   GraphDef got;
   ArithmeticOptimizer optimizer;
   EnableOnlyConvertPow(&optimizer);
   OptimizeAndPrune(&optimizer, &item, &got);
   auto tensors = EvaluateNodes(got, item.fetch);
-  ASSERT_EQ(tensors.size(), 9);
+  ASSERT_EQ(tensors.size(), 10);
 
   for (int i = 0; i < tensors.size(); ++i) {
     EXPECT_EQ(tensors[i].NumElements(), tensors_expected[i].NumElements());
@@ -2773,6 +2779,12 @@ TEST_F(ArithmeticOptimizerTest, ConvertPow) {
   AddNode("ones", "Const", {}, {}, &want);
   AddNode("zeros", "Const", {}, {}, &want);
   AddNode("out2", "Square", {"x"}, {}, &want);
+  AddNode("ArithmeticOptimizer/ConvertPow__inner_out3", "Square", {"x"}, {},
+          &want)
+      ->set_device("/device:CPU:0");
+  AddNode("out3", "Mul", {"x", "ArithmeticOptimizer/ConvertPow__inner_out3"},
+          {}, &want)
+      ->set_device("/device:CPU:0");
   AddNode("out1", "Identity", {"x"}, {}, &want);
   AddNode("out.5", "Sqrt", {"x"}, {}, &want);
   AddNode("out0", "Const", {AsControlDependency("x")}, {}, &want);
@@ -3063,6 +3075,47 @@ TEST_F(ArithmeticOptimizerTest, MinimizeBroadcasts_BuildTreeUp) {
   auto tensors = EvaluateNodes(output, item.fetch, feed);
   ASSERT_EQ(tensors.size(), 1);
   test::ExpectTensorNear<float>(tensors[0], tensors_expected[0], 1e-6);
+}
+
+TEST_F(ArithmeticOptimizerTest, DoNotHoistReluFromConcat) {
+  tensorflow::Scope s = tensorflow::Scope::NewRootScope();
+  Output weights1 = ops::Const(s.WithOpName("weights1"),
+                               Input::Initializer(1.0f, {5, 5, 3, 4}));
+  Output weights2 = ops::Const(s.WithOpName("weights2"),
+                               Input::Initializer(2.0f, {5, 5, 3, 4}));
+  Output biases =
+      ops::Const(s.WithOpName("biases"), Input::Initializer(2.0f, {4}));
+  Output axis = ops::Const(s.WithOpName("axis"), 3, {});
+  Output input = ops::Const(s.WithOpName("input"),
+                            Input::Initializer(1.0f, {1, 28, 28, 3}));
+  Output branch1 =
+      ops::Conv2D(s.WithOpName("conv1"), input, weights1, {1, 1, 1, 1}, "SAME");
+  branch1 = ops::BiasAdd(s.WithOpName("biasadd1"), branch1, biases);
+  branch1 = ops::Relu(s.WithOpName("relu1"), branch1);
+  Output branch2 =
+      ops::Conv2D(s.WithOpName("conv2"), input, weights2, {1, 1, 1, 1}, "SAME");
+  branch2 = ops::BiasAdd(s.WithOpName("biasadd2"), branch2, biases);
+  branch2 = ops::Relu(s.WithOpName("relu2"), branch2);
+  Output concat = ops::Concat(s.WithOpName("concat"), {branch1, branch2}, axis);
+  Output output = ops::Identity(s.WithOpName("output"), concat);
+
+  GrapplerItem item;
+  item.fetch = {"output"};
+  TF_CHECK_OK(s.ToGraphDef(&item.graph));
+
+  auto tensors_expected = EvaluateNodes(item.graph, item.fetch);
+
+  GraphDef new_graph;
+  ArithmeticOptimizer optimizer;
+  OptimizeAndPrune(&optimizer, &item, &new_graph);
+
+  // Verify that the two Relus are not hoisted.
+  EXPECT_EQ(CountOpNodes(new_graph, "Relu"), 2);
+
+  auto tensors = EvaluateNodes(new_graph, item.fetch);
+  for (int i = 0; i < item.fetch.size(); ++i) {
+    test::ExpectTensorNear<float>(tensors[i], tensors_expected[i], 1e-6);
+  }
 }
 
 TEST_F(ArithmeticOptimizerTest, HoistCWiseUnaryFromConcat) {
@@ -3650,6 +3703,41 @@ TEST_F(ArithmeticOptimizerTest,
   VerifyGraphsMatch(item.graph, output, __LINE__);
 
   auto tensors = EvaluateNodes(output, item.fetch);
+  ASSERT_EQ(tensors.size(), 1);
+  test::ExpectTensorNear<float>(tensors[0], tensors_expected[0], 1e-6);
+}
+
+TEST_F(ArithmeticOptimizerTest, OptimizeMaxOrMinOfMonotonicBiasAddReluMaxPool) {
+  tensorflow::Scope s = tensorflow::Scope::NewRootScope();
+  Output weights = ops::Const(s.WithOpName("weights"),
+                              Input::Initializer(1.0f, {5, 5, 3, 4}));
+  Output biases =
+      ops::Const(s.WithOpName("biases"), Input::Initializer(2.0f, {4}));
+  Output input = ops::Const(s.WithOpName("input"),
+                            Input::Initializer(1.0f, {1, 28, 28, 3}));
+  Output output =
+      ops::Conv2D(s.WithOpName("conv"), input, weights, {1, 1, 1, 1}, "SAME");
+  output = ops::BiasAdd(s.WithOpName("biasadd"), output, biases);
+  output = ops::Relu(s.WithOpName("relu"), output);
+  output = ops::MaxPool(s.WithOpName("max_pool"), output, {1, 2, 2, 1},
+                        {1, 2, 2, 1}, "VALID");
+  output = ops::Identity(s.WithOpName("output"), output);
+
+  GrapplerItem item;
+  item.fetch = {"output"};
+  TF_CHECK_OK(s.ToGraphDef(&item.graph));
+  auto tensors_expected = EvaluateNodes(item.graph, item.fetch);
+  ASSERT_EQ(tensors_expected.size(), 1);
+
+  GraphDef new_graph;
+  ArithmeticOptimizer optimizer;
+  EnableOnlyOptimizeMaxOrMinOfMonotonic(&optimizer);
+  OptimizeTwice(&optimizer, &item, &new_graph);
+
+  // Should be a NoOp
+  VerifyGraphsMatch(item.graph, new_graph, __LINE__);
+
+  auto tensors = EvaluateNodes(new_graph, item.fetch);
   ASSERT_EQ(tensors.size(), 1);
   test::ExpectTensorNear<float>(tensors[0], tensors_expected[0], 1e-6);
 }

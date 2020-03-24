@@ -81,13 +81,36 @@ def isnamedtuple(f):
 
 def isbuiltin(f):
   """Returns True if the argument is a built-in function."""
-  if f in six.moves.builtins.__dict__.values():
+  if any(f is builtin for builtin in six.moves.builtins.__dict__.values()):
     return True
-  if isinstance(f, types.BuiltinFunctionType):
+  elif isinstance(f, types.BuiltinFunctionType):
     return True
-  if tf_inspect.isbuiltin(f):
+  elif inspect.isbuiltin(f):
     return True
-  return False
+  elif f is eval:
+    return True
+  else:
+    return False
+
+
+def isconstructor(cls):
+  """Returns True if the argument is an object constructor.
+
+  In general, any object of type class is a constructor, with the exception
+  of classes created using a callable metaclass.
+  See below for why a callable metaclass is not a trivial combination:
+  https://docs.python.org/2.7/reference/datamodel.html#customizing-class-creation
+
+  Args:
+    cls: Any
+  Returns:
+    Bool
+  """
+  return (
+      inspect.isclass(cls)
+      and not (issubclass(cls.__class__, type)
+               and hasattr(cls.__class__, '__call__')
+               and cls.__class__.__call__ is not type.__call__))
 
 
 def _fix_linecache_record(obj):
@@ -213,6 +236,8 @@ def getqualifiedname(namespace, object_, max_depth=5, visited=None):
 def _get_unbound_function(m):
   # TODO(mdan): Figure out why six.get_unbound_function fails in some cases.
   # The failure case is for tf.keras.Model.
+  if hasattr(m, '__func__'):
+    return m.__func__
   if hasattr(m, 'im_func'):
     return m.im_func
   return m
@@ -222,7 +247,7 @@ def getdefiningclass(m, owner_class):
   """Resolves the class (e.g. one of the superclasses) that defined a method."""
   # Normalize bound functions to their respective unbound versions.
   m = _get_unbound_function(m)
-  for superclass in owner_class.__bases__:
+  for superclass in reversed(inspect.getmro(owner_class)):
     if hasattr(superclass, m.__name__):
       superclass_m = getattr(superclass, m.__name__)
       if _get_unbound_function(superclass_m) is m:
@@ -238,7 +263,9 @@ def istfmethodtarget(m):
   # See eager.function.TfMethodTarget for more details.
   return (hasattr(m, '__self__') and
           hasattr(m.__self__, 'weakrefself_target__') and
-          hasattr(m.__self__, 'weakrefself_func__'))
+          hasattr(m.__self__, 'weakrefself_func__') and
+          hasattr(m, '__module__') and
+          (m.__module__ != 'mock'))
 
 
 def getmethodself(m):
@@ -344,59 +371,3 @@ def getfutureimports(entity):
     return tuple()
   return tuple(sorted(name for name, value in entity.__globals__.items()
                       if getattr(value, '__module__', None) == '__future__'))
-
-
-class SuperWrapperForDynamicAttrs(object):
-  """A wrapper that supports dynamic attribute lookup on the super object.
-
-  For example, in the following code, `super` incorrectly reports that
-  `super(Bar, b)` lacks the `a` attribute:
-
-    class Foo(object):
-      def __init__(self):
-        self.a = lambda: 1
-
-      def bar(self):
-        return hasattr(self, 'a')
-
-    class Bar(Foo):
-      def bar(self):
-        return super(Bar, self).bar()
-
-
-    b = Bar()
-    print(hasattr(super(Bar, b), 'a'))  # False
-    print(super(Bar, b).bar())          # True
-
-  A practical situation when this tends to happen is Keras model hierarchies
-  that hold references to certain layers, like this:
-
-    class MiniModel(keras.Model):
-
-      def __init__(self):
-        super(MiniModel, self).__init__()
-        self.fc = keras.layers.Dense(1)
-
-      def call(self, inputs, training=True):
-        return self.fc(inputs)
-
-    class DefunnedMiniModel(MiniModel):
-
-      def call(self, inputs, training=True):
-        return super(DefunnedMiniModel, self).call(inputs, training=training)
-
-  A side effect of this wrapper is that all attributes become visible, even
-  those created in the subclass.
-  """
-
-  # TODO(mdan): Investigate why that happens - it may be for a reason.
-  # TODO(mdan): Probably need more overrides to make it look like super.
-
-  def __init__(self, target):
-    self._target = target
-
-  def __getattribute__(self, name):
-    target = object.__getattribute__(self, '_target')
-    if hasattr(target, name):
-      return getattr(target, name)
-    return getattr(target.__self__, name)

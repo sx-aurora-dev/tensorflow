@@ -48,6 +48,15 @@ bool SetterForXlaAutoJitFlag(const string& value) {
     return true;
   }
 
+  if (value == "fusible") {
+    mark_for_compilation_flags->xla_auto_jit_flag
+        .optimization_level_single_gpu = 1;
+    mark_for_compilation_flags->xla_auto_jit_flag.optimization_level_general =
+        1;
+    mark_for_compilation_flags->tf_xla_ops_to_cluster = "FUSIBLE";
+    return true;
+  }
+
   absl::string_view value_sv(value);
   if (!absl::ConsumePrefix(&value_sv, "single-gpu(") ||
       !absl::ConsumeSuffix(&value_sv, ")") ||
@@ -65,7 +74,9 @@ void AppendMarkForCompilationPassFlagsInternal(std::vector<Flag>* flag_list) {
       Flag("tf_xla_auto_jit", SetterForXlaAutoJitFlag, "0",
            "Control compilation of operators into XLA computations on CPU and "
            "GPU devices.  0 = use ConfigProto setting; -1 = off; 1 = on for "
-           "things very likely to be improved; 2 = on for everything.  "
+           "things very likely to be improved; 2 = on for everything; "
+           "(experimental) fusible = only for Tensorflow operations that XLA "
+           "knows how to fuse.  "
            "If set to single-gpu(<N>) then this resolves to <N> for single-GPU "
            "graphs (graphs that have at least one node placed on a GPU and no "
            "more than one GPU is in use through the entire graph) and 0 "
@@ -78,6 +89,23 @@ void AppendMarkForCompilationPassFlagsInternal(std::vector<Flag>* flag_list) {
       Flag("tf_xla_max_cluster_size",
            &mark_for_compilation_flags->tf_xla_max_cluster_size,
            "Maximum number of operators in an XLA compilation."),
+      Flag(
+          "tf_xla_ops_to_cluster",
+          &mark_for_compilation_flags->tf_xla_ops_to_cluster,
+          "(experimental) "
+          "Limit the operations clustered by XLA to these operations. "
+          "If multiple, separate them with commas. Shortcuts: "
+          " PW: All point-wise operations."
+          " RED: All reduction operations."
+          " MISC: Mixed operations."
+          " PWRED: TF operations that get converted to PW+RED operation in XLA."
+          " REDUCEWINDOW: TF operations like MaxPool/AvgPool that get "
+          "converted to ReduceWindow in XLA."
+          " REDUCEWINDOWPW: Operation that get converted to ReduceWindow + PW "
+          "(LRN, LRNGrad)."
+          " BN: TF FusedBatchNorm* operations."
+          " FUSIBLE: All TF operations that XLA can fuse (All the above). "
+          "You can also put any TF operation name, e.g. 'FUSIBLE,Matmul'."),
       Flag("tf_xla_clustering_debug",
            &mark_for_compilation_flags->tf_xla_clustering_debug,
            "Dump graphs during XLA compilation."),
@@ -92,7 +120,12 @@ void AppendMarkForCompilationPassFlagsInternal(std::vector<Flag>* flag_list) {
            &mark_for_compilation_flags
                 ->tf_xla_disable_deadness_safety_checks_for_debugging,
            "Disable deadness related safety checks when clustering (this is "
-           "unsound).")};
+           "unsound)."),
+      Flag("tf_xla_disable_resource_variable_safety_checks_for_debugging",
+           &mark_for_compilation_flags
+                ->tf_xla_disable_resource_variable_safety_checks_for_debugging,
+           "Disable resource variables related safety checks when clustering "
+           "(this is unsound).")};
   flag_list->insert(flag_list->end(), new_flags.begin(), new_flags.end());
 }
 
@@ -100,6 +133,9 @@ void AllocateAndParseFlags() {
   build_ops_flags = new BuildXlaOpsPassFlags;
   build_ops_flags->tf_xla_enable_lazy_compilation = true;
   build_ops_flags->tf_xla_print_cluster_outputs = false;
+  build_ops_flags->tf_xla_check_cluster_input_numerics = false;
+  build_ops_flags->tf_xla_check_cluster_output_numerics = false;
+  build_ops_flags->tf_xla_disable_constant_folding = false;
 
   mark_for_compilation_flags = new MarkForCompilationPassFlags;
   mark_for_compilation_flags->xla_auto_jit_flag.optimization_level_single_gpu =
@@ -114,9 +150,12 @@ void AllocateAndParseFlags() {
       std::numeric_limits<int64>::max();
   mark_for_compilation_flags
       ->tf_xla_disable_deadness_safety_checks_for_debugging = false;
+  mark_for_compilation_flags
+      ->tf_xla_disable_resource_variable_safety_checks_for_debugging = false;
 
   device_flags = new XlaDeviceFlags;
   device_flags->tf_xla_compile_on_demand = false;
+  device_flags->tf_xla_enable_xla_devices = true;
 
   ops_flags = new XlaOpsCommonFlags;
   ops_flags->tf_xla_always_defer_compilation = false;
@@ -136,10 +175,24 @@ void AllocateAndParseFlags() {
             &build_ops_flags->tf_xla_print_cluster_outputs,
             "If true then insert Print nodes to print out values produced by "
             "XLA clusters."),
+       Flag("tf_xla_check_cluster_input_numerics",
+            &build_ops_flags->tf_xla_check_cluster_input_numerics,
+            "If true then insert CheckNumerics nodes to to check all cluster "
+            "inputs."),
+       Flag("tf_xla_check_cluster_output_numerics",
+            &build_ops_flags->tf_xla_check_cluster_output_numerics,
+            "If true then insert CheckNumerics nodes to to check all cluster "
+            "outputs."),
 
        Flag("tf_xla_compile_on_demand", &device_flags->tf_xla_compile_on_demand,
             "Switch a device into 'on-demand' mode, where instead of "
             "autoclustering ops are compiled one by one just-in-time."),
+
+       Flag("tf_xla_enable_xla_devices",
+            &device_flags->tf_xla_enable_xla_devices,
+            "Generate XLA_* devices, where placing a computation on such a "
+            "device"
+            "forces compilation by XLA. Deprecated."),
 
        Flag("tf_xla_always_defer_compilation",
             &ops_flags->tf_xla_always_defer_compilation, ""),

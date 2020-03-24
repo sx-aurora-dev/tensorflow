@@ -51,7 +51,8 @@ void HloToIrBindings::EmitBasePointersForHlos(
   absl::flat_hash_set<const HloInstruction*> already_bound_for_this_function;
   auto arg_iter = function->arg_begin();
   for (const HloInstruction* io_hlo : io_hlos) {
-    CHECK(!absl::c_count(non_io_hlos, io_hlo))
+    CHECK(io_hlo == io_hlo->parent()->root_instruction() ||
+          !absl::c_count(non_io_hlos, io_hlo))
         << "IO HLOs and non-IO HLOs should be disjoint";
     if (!already_bound_for_this_function.contains(io_hlo)) {
       if (!is_nested_ && io_hlo->opcode() == HloOpcode::kGetTupleElement) {
@@ -170,7 +171,8 @@ llvm::Value* HloToIrBindings::GetTypedIrValue(const HloInstruction& hlo,
     typed_ir_value = llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
         llvm::cast<llvm::GlobalVariable>(ir_value), dest_type);
   } else {
-    typed_ir_value = b_->CreateBitCast(ir_value, pointee_type->getPointerTo());
+    typed_ir_value = b_->CreatePointerBitCastOrAddrSpaceCast(
+        ir_value, pointee_type->getPointerTo());
   }
   if (!HasMeaningfulName(ir_value)) {
     ir_value->setName(llvm_ir::IrName(&hlo, "raw"));

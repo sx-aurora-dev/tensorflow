@@ -30,9 +30,13 @@ REGISTER_SYCL_KERNEL(double);
 
 #endif  // TENSORFLOW_USE_SYCL
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER5(BinaryOp, GPU, "Xdivy", functor::xdivy, float, Eigen::half, double,
           complex64, complex128);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(Xdivy, float, float, float);
+#endif  // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

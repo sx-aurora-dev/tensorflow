@@ -17,9 +17,8 @@ limitations under the License.
 
 #include <type_traits>
 
-#include "profiling/instrumentation.h"
-#include "tensorflow/lite/kernels/cpu_backend_context.h"
-#include "tensorflow/lite/kernels/internal/common.h"
+#include "tensorflow/lite/experimental/ruy/profiler/instrumentation.h"
+#include "tensorflow/lite/kernels/internal/optimized/cpu_check.h"
 #include "tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_3x3_filter.h"
 #include "tensorflow/lite/kernels/internal/reference/depthwiseconv_uint8.h"
 #include "tensorflow/lite/kernels/internal/types.h"
@@ -1478,9 +1477,7 @@ void QuantizedDepthwiseConvAccumRow(int stride, int dilation_factor,
                                     int16 filter_offset, int out_x_buffer_start,
                                     int out_x_buffer_end, int output_depth,
                                     int32* acc_buffer) {
-#ifdef GEMMLOWP_PROFILING
-  gemmlowp::ScopedProfilingLabel label(__PRETTY_FUNCTION__);
-#endif
+  ruy::profiler::ScopeLabel label(__PRETTY_FUNCTION__);
   // Sanity check parameters. This is important in particular to ensure
   // that we keep the number of template instantiations minimal, so we don't
   // increase binary size unnecessarily.
@@ -1554,7 +1551,7 @@ inline void QuantizedDepthwiseConvAccumRowGeneric(
     int depth_multiplier, int filter_width, const uint8* filter_data,
     int16 filter_offset, int out_x_buffer_start, int out_x_buffer_end,
     int output_depth, int32* acc_buffer) {
-  gemmlowp::ScopedProfilingLabel label("DepthwiseConvAccumRowGeneric (slow)");
+  ruy::profiler::ScopeLabel label("DepthwiseConvAccumRowGeneric (slow)");
   const uint8* filter_base_ptr = filter_data;
   for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
     const int out_x_loop_start = std::max(
@@ -1693,14 +1690,26 @@ inline void DepthwiseConvGeneral(
   const int32 multiplier_power_of_two = shift_left ? (1 << output_shift) : 1;
 #endif
 
-  static const int kAccBufferMaxSize = 2048;
-  int32 acc_buffer[kAccBufferMaxSize];
-  TFLITE_DCHECK_GE(kAccBufferMaxSize, output_depth);
-  const int kOutputPixelsInAccBuffer = kAccBufferMaxSize / output_depth;
-  const int kAccBufferActualSize = kOutputPixelsInAccBuffer * output_depth;
+  // The default Accbuffer size is 2048, will allocate a bigger memory if it's
+  // not enough.
+  // TODO(b/136089667): If output_depth > 2048 happens a lot, we should just use
+  // a scratch tensor.
+  static const int kStackAccBufferSize = 2048;
+  int acc_buffer_size = kStackAccBufferSize;
+  int32 stack_acc_buffer[kStackAccBufferSize];
+  int32* acc_buffer = stack_acc_buffer;
+  std::unique_ptr<int32[]> heap_acc_buffer;
+  if (kStackAccBufferSize < output_depth) {
+    heap_acc_buffer.reset(new int32[output_depth]);
+    acc_buffer = heap_acc_buffer.get();
+    acc_buffer_size = output_depth;
+  }
+  const int kOutputPixelsInAccBuffer = acc_buffer_size / output_depth;
+  const int acc_buffer_size_actually_used =
+      kOutputPixelsInAccBuffer * output_depth;
   TFLITE_DCHECK_LE(kOutputPixelsInAccBuffer * output_depth,
-                   kAccBufferActualSize);
-  TFLITE_DCHECK_LE(kAccBufferActualSize, kAccBufferMaxSize);
+                   acc_buffer_size_actually_used);
+  TFLITE_DCHECK_LE(acc_buffer_size_actually_used, acc_buffer_size);
   TFLITE_DCHECK_GE(kOutputPixelsInAccBuffer, 1);
   TFLITE_DCHECK(thread_dim == 0 || thread_dim == 1);
 
@@ -1832,7 +1841,7 @@ inline void DepthwiseConvGeneral(
         }
         // Finished accumulating int32 values. Now need to convert them to
         // the final 8bit form and store them.
-        gemmlowp::ScopedProfilingLabel label("downquantize+store");
+        ruy::profiler::ScopeLabel label("downquantize+store");
         const int num_output_values = output_depth * num_output_pixels;
         int i = 0;
 #ifdef USE_NEON
@@ -1986,9 +1995,9 @@ inline void DepthwiseConvWithRounding(
     const uint8* input_data, const RuntimeShape& filter_shape,
     const uint8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape,
-    uint8* output_data, CpuBackendContext* cpu_backend_context,
-    int thread_start, int thread_end, int thread_dim) {
-  gemmlowp::ScopedProfilingLabel label("DepthwiseConv/8bit");
+    uint8* output_data, const CpuFlags& cpu_flags, int thread_start,
+    int thread_end, int thread_dim) {
+  ruy::profiler::ScopeLabel label("DepthwiseConv/8bit");
   const int depth_multiplier = params.depth_multiplier;
   const int32 output_activation_min = params.quantized_activation_min;
   const int32 output_activation_max = params.quantized_activation_max;
@@ -2008,28 +2017,26 @@ inline void DepthwiseConvWithRounding(
 // Enable for arm64 except for the Nvidia Linux 4 Tegra (L4T) running on
 // Jetson TX-2. This compiler does not support the offsetof() macro.
 #if defined(__aarch64__) && !defined(GOOGLE_L4T)
+#if defined(__ANDROID__) && defined(__clang__)
   // Dispatch to dot-product 3x3 kernels when supported.
-
-  ruy::Context* ruy_context = cpu_backend_context->ruy_context();
-  const bool has_dot_product_instructions =
-      ruy_context != nullptr && (ruy_context->GetRuntimeEnabledPaths() &
-                                 ruy::Path::kNeonDotprod) != ruy::Path::kNone;
-  if (has_dot_product_instructions) {
+  if (cpu_flags.neon_dotprod) {
     using optimized_ops::depthwise_conv::DotProduct3x3KernelType;
     DotProduct3x3KernelType kernel_type =
         optimized_ops::depthwise_conv::CategorizeDotProductKernel(
             input_shape, filter_shape, params);
     if (kernel_type != DotProduct3x3KernelType::kNone) {
-      gemmlowp::ScopedProfilingLabel specialized_label(
+      ruy::profiler::ScopeLabel specialized_label(
           "DepthwiseConv/8bit/3x3XDotProduct");
       optimized_ops::depthwise_conv::DepthwiseConvDotProduct3x3<
           DepthwiseConvImplementation::kUseNeon3x3DotProduct>(
           params, input_shape, input_data, filter_shape, filter_data,
-          bias_shape, bias_data, output_shape, output_data);
+          bias_shape, bias_data, output_shape, output_data, thread_start,
+          thread_end, thread_dim);
       return;
     }
   }
 
+#endif
   // Dispatch to non-dot-product 3x3 kernels when supported.
 
   const int stride_width = params.stride_width;
@@ -2044,7 +2051,7 @@ inline void DepthwiseConvWithRounding(
           input_shape, filter_shape, stride_width, stride_height,
           dilation_width_factor, dilation_height_factor, pad_width, pad_height,
           depth_multiplier, output_shape, output_shift)) {
-    gemmlowp::ScopedProfilingLabel specialized_label("DepthwiseConv/8bit/3x3");
+    ruy::profiler::ScopeLabel specialized_label("DepthwiseConv/8bit/3x3");
     depthwise_conv::DepthwiseConv3x3Filter<kOutputRounding>(
         params, input_shape, input_data, filter_shape, filter_data, bias_shape,
         bias_data, output_shape, output_data, thread_start, thread_end,
@@ -2053,8 +2060,7 @@ inline void DepthwiseConvWithRounding(
   }
 #endif
 
-  gemmlowp::ScopedProfilingLabel specialized_label(
-      "DepthwiseConv/8bit/General");
+  ruy::profiler::ScopeLabel specialized_label("DepthwiseConv/8bit/General");
   depthwise_conv::DepthwiseConvGeneral(params, input_shape, input_data,
                                        filter_shape, filter_data, bias_shape,
                                        bias_data, output_shape, output_data,
@@ -2066,20 +2072,13 @@ inline void DepthwiseConvImpl(
     const uint8* input_data, const RuntimeShape& filter_shape,
     const uint8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape,
-    uint8* output_data, CpuBackendContext* cpu_backend_context,
-    int thread_start, int thread_end, int thread_dim) {
-  return DepthwiseConvWithRounding<DepthwiseConvOutputRounding::kAwayFromZero>(
+    uint8* output_data, const CpuFlags& cpu_flags, int thread_start,
+    int thread_end, int thread_dim) {
+  return DepthwiseConvWithRounding<DepthwiseConvOutputRounding::kUpward>(
       params, input_shape, input_data, filter_shape, filter_data, bias_shape,
-      bias_data, output_shape, output_data, cpu_backend_context, thread_start,
-      thread_end, thread_dim);
+      bias_data, output_shape, output_data, cpu_flags, thread_start, thread_end,
+      thread_dim);
 }
-
-void DepthwiseConv(const DepthwiseParams& params,
-                   const RuntimeShape& input_shape, const uint8* input_data,
-                   const RuntimeShape& filter_shape, const uint8* filter_data,
-                   const RuntimeShape& bias_shape, const int32* bias_data,
-                   const RuntimeShape& output_shape, uint8* output_data,
-                   CpuBackendContext* cpu_backend_context);
 
 }  // namespace optimized_ops
 }  // namespace tflite

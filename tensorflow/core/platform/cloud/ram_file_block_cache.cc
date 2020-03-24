@@ -36,6 +36,9 @@ std::shared_ptr<RamFileBlockCache::Block> RamFileBlockCache::Lookup(
   auto entry = block_map_.find(key);
   if (entry != block_map_.end()) {
     if (BlockNotStale(entry->second)) {
+      if (cache_stats_ != nullptr) {
+        cache_stats_->RecordCacheHitBlockSize(entry->second->data.size());
+      }
       return entry->second;
     } else {
       // Remove the stale block and continue.
@@ -131,6 +134,9 @@ Status RamFileBlockCache::MaybeFetch(const Key& key,
         size_t bytes_transferred;
         status.Update(block_fetcher_(key.first, key.second, block_size_,
                                      block->data.data(), &bytes_transferred));
+        if (cache_stats_ != nullptr) {
+          cache_stats_->RecordCacheMissBlockSize(bytes_transferred);
+        }
         block->mu.lock();  // Reacquire the lock immediately afterwards
         if (status.ok()) {
           block->data.resize(bytes_transferred, 0);
@@ -165,7 +171,7 @@ Status RamFileBlockCache::Read(const string& filename, size_t offset, size_t n,
   if (n == 0) {
     return Status::OK();
   }
-  if (!IsCacheEnabled()) {
+  if (!IsCacheEnabled() || (n > max_bytes_)) {
     // The cache is effectively disabled, so we pass the read through to the
     // fetcher without breaking it up into blocks.
     return block_fetcher_(filename, offset, n, buffer, bytes_transferred);

@@ -413,7 +413,7 @@ class MathGradTest : public ::testing::Test {
 };
 
 void HasError(const Status& s, const string& substr) {
-  EXPECT_TRUE(str_util::StrContains(s.ToString(), substr))
+  EXPECT_TRUE(absl::StrContains(s.ToString(), substr))
       << s << ", expected substring " << substr;
 }
 
@@ -437,6 +437,9 @@ REGISTER_KERNEL_BUILDER(Name("TestOpWithNoGrad").Device(DEVICE_CPU), TestOp);
 #ifdef TENSORFLOW_USE_SYCL
 REGISTER_KERNEL_BUILDER(Name("TestOpWithNoGrad").Device(DEVICE_SYCL), TestOp);
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("TestOpWithNoGrad").Device(DEVICE_VE), TestOp);
+#endif  // TENSORFLOW_USE_VE
 
 TEST_F(MathGradTest, Error_Reporting) {
   auto x = test::AsTensor<float>({-3.f});
@@ -894,7 +897,8 @@ TEST_F(MathGradTest, Pow) {
 }
 
 // TODO{lukeiwanski}: Implement Complex Pow for SYCL
-#ifndef TENSORFLOW_USE_SYCL
+// TODO{jam}: Implement Complex Pow for VE
+#if !(defined(TENSORFLOW_USE_SYCL) || defined(TENSORFLOW_USE_VE))
 TEST_F(MathGradTest, ComplexPow) {
   auto x = test::AsTensor<complex64>({0.f, 2.f, -2.f}, TensorShape({3}));
   auto y = test::AsTensor<complex64>({2.f, 2.f, 2.f}, TensorShape({3}));
@@ -941,7 +945,7 @@ TEST_F(MathGradTest, ComplexPow) {
                                 TensorShape({3})),
       4.5e-6f);
 }
-#endif  // TENSORFLOW_USE_SYCL
+#endif  // TENSORFLOW_USE_SYCL || TENSORFLOW_USE_VE
 
 TEST_F(MathGradTest, Xlogy) {
   auto x = test::AsTensor<float>({0.f, 0.f, 2.f, 3.f, 4.f, 5.f},
@@ -952,6 +956,29 @@ TEST_F(MathGradTest, Xlogy) {
   auto g = [](float x, float y) -> float { return x == 0. ? 0. : std::log(y); };
   auto h = [](float x, float y) -> float { return x == 0. ? 0. : x / y; };
   SymGrad("Xlogy", x, y, &dx, &dy);
+  test::ExpectClose(
+      dx, test::AsTensor<float>({g(0.f, .5f), g(0.f, 0.f), g(2.f, .5f),
+                                 g(3.f, 2.f), g(4.f, 2.f), g(5.f, 2.f)},
+                                TensorShape({2, 3})));
+  test::ExpectClose(
+      dy, test::AsTensor<float>({h(0.f, .5f) + h(0.f, 0.f) + h(2.f, .5f),
+                                 h(3.f, 2.f) + h(4.f, 2.f) + h(5.f, 2.f)},
+                                TensorShape({2, 1})));
+}
+
+TEST_F(MathGradTest, Xlog1py) {
+  auto x = test::AsTensor<float>({0.f, 0.f, 2.f, 3.f, 4.f, 5.f},
+                                 TensorShape({2, 3}));
+  auto y = test::AsTensor<float>({.5f, 2.f}, TensorShape({2, 1}));
+  Tensor dx;
+  Tensor dy;
+  auto g = [](float x, float y) -> float {
+    return x == 0. ? 0. : std::log1p(y);
+  };
+  auto h = [](float x, float y) -> float {
+    return x == 0. ? 0. : x / (y + 1.);
+  };
+  SymGrad("Xlog1py", x, y, &dx, &dy);
   test::ExpectClose(
       dx, test::AsTensor<float>({g(0.f, .5f), g(0.f, 0.f), g(2.f, .5f),
                                  g(3.f, 2.f), g(4.f, 2.f), g(5.f, 2.f)},

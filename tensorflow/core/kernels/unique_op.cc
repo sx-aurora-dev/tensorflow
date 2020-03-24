@@ -236,7 +236,8 @@ class UniqueOp : public OpKernel {
                               .TypeConstraint<int64>("out_idx"), \
                           UniqueOp<type, int64>)
 TF_CALL_REAL_NUMBER_TYPES(REGISTER_UNIQUE);
-REGISTER_UNIQUE(string)
+REGISTER_UNIQUE(tstring)
+REGISTER_UNIQUE(bool)
 #undef REGISTER_UNIQUE
 
 // Fake integer GPU kernels so that the use of Unique in optimizers (to
@@ -310,4 +311,41 @@ REGISTER_KERNEL_BUILDER(Name("Unique")
                             .HostMemory("idx"),
                         UniqueOp<int64, int64>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+
+REGISTER_KERNEL_BUILDER(Name("Unique")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("out_idx")
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("idx"),
+                        UniqueOp<int32, int32>);
+REGISTER_KERNEL_BUILDER(Name("Unique")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int64>("out_idx")
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("idx"),
+                        UniqueOp<int32, int64>);
+REGISTER_KERNEL_BUILDER(Name("Unique")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int64>("T")
+                            .TypeConstraint<int32>("out_idx")
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("idx"),
+                        UniqueOp<int64, int32>);
+REGISTER_KERNEL_BUILDER(Name("Unique")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int64>("T")
+                            .TypeConstraint<int64>("out_idx")
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("idx"),
+                        UniqueOp<int64, int64>);
+#endif // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

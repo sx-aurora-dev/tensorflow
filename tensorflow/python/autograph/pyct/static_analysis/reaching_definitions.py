@@ -34,6 +34,7 @@ import gast
 
 from tensorflow.python.autograph.pyct import anno
 from tensorflow.python.autograph.pyct import cfg
+from tensorflow.python.autograph.pyct import qual_names
 from tensorflow.python.autograph.pyct import transformer
 from tensorflow.python.autograph.pyct.static_analysis import annos
 
@@ -136,15 +137,40 @@ class Analyzer(cfg.GraphVisitor):
       # their ids are used in equality checks.
       if node not in self.gen_map:
         node_symbols = {}
+        # Every modification receives a definition.
         for s in node_scope.modified:
           def_ = self._definition_factory()
-          if s in node_scope.params:
-            def_.param_of = weakref.ref(node_scope.params[s])
+          node_symbols[s] = def_
+        # Every param receives a definition. Params are not necessarily
+        # considered as "modified".
+        for s, p in node_scope.params.items():
+          def_ = self._definition_factory()
+          def_.param_of = weakref.ref(p)
           node_symbols[s] = def_
         self.gen_map[node] = _NodeState(node_symbols)
 
       gen = self.gen_map[node]
       kill = node_scope.modified | node_scope.deleted
+      defs_out = gen | (defs_in - kill)
+
+    elif isinstance(node.ast_node, (gast.Global, gast.Nonlocal)):
+      # Special case for global and nonlocal: they generate a definition,
+      # but are not tracked by activity analysis.
+      if node not in self.gen_map:
+        node_symbols = {}
+        kill = set()
+        for s in node.ast_node.names:
+          qn = qual_names.QN(s)
+          # TODO(mdan): If definitions exist, should we preserve those instead?
+          # Incoming definitions may be present when this is a local function.
+          # In that case, the definitions of the nonlocal symbol from the
+          # enclosing function are available here. See self.extra_in.
+          kill.add(qn)
+          def_ = self._definition_factory()
+          node_symbols[qn] = def_
+        self.gen_map[node] = _NodeState(node_symbols)
+
+      gen = self.gen_map[node]
       defs_out = gen | (defs_in - kill)
 
     else:
@@ -215,12 +241,6 @@ class TreeAnnotator(transformer.Base):
     self.current_analyzer = parent_analyzer
 
     return node
-
-  def visit_Nonlocal(self, node):
-    raise NotImplementedError()
-
-  def visit_Global(self, node):
-    raise NotImplementedError()
 
   def visit_Name(self, node):
     if self.current_analyzer is None:

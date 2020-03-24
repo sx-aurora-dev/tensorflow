@@ -47,11 +47,13 @@ struct MklPoolingParams {
   memory::dims padding_right;
   mkldnn::algorithm alg_kind;
   mkldnn::prop_kind prop_kind;
+  memory::format src_format;
 
   MklPoolingParams(memory::dims src_dims, memory::dims dst_dims,
                    memory::dims filter_dims, memory::dims strides,
                    memory::dims padding_left, memory::dims padding_right,
-                   mkldnn::algorithm alg_kind, mkldnn::prop_kind prop_kind)
+                   mkldnn::algorithm alg_kind, mkldnn::prop_kind prop_kind,
+                   memory::format src_format)
       : src_dims(src_dims),
         dst_dims(dst_dims),
         filter_dims(filter_dims),
@@ -59,7 +61,8 @@ struct MklPoolingParams {
         padding_left(padding_left),
         padding_right(padding_right),
         alg_kind(alg_kind),
-        prop_kind(prop_kind) {}
+        prop_kind(prop_kind),
+        src_format(src_format) {}
 };
 
 template <typename T>
@@ -548,12 +551,21 @@ class MklPoolingOpBase : public OpKernel {
     if (pool_params->data_format == TensorFormat::FORMAT_NCHW) {
       output_tf_shape = MklDnnDimsToTFShape(output_dims_mkl_order);
     } else {
-      memory::dims output_dims_NHWC_order;
-      output_dims_NHWC_order = {pool_params->tensor_in_batch,
-                                static_cast<int>(pool_params->out_height),
-                                static_cast<int>(pool_params->out_width),
-                                pool_params->out_depth};
-      output_tf_shape = MklDnnDimsToTFShape(output_dims_NHWC_order);
+      memory::dims output_dims_order;
+      // determine Pooling2D (NHWC) or Pooling3D (NDHWC)
+      if (this->ksize_.size() == 4) {
+        output_dims_order = {pool_params->tensor_in_batch,
+                             static_cast<int>(pool_params->out_height),
+                             static_cast<int>(pool_params->out_width),
+                             pool_params->out_depth};
+      } else {
+        output_dims_order = {pool_params->tensor_in_batch,
+                             static_cast<int>(pool_params->out_planes),
+                             static_cast<int>(pool_params->out_height),
+                             static_cast<int>(pool_params->out_width),
+                             pool_params->out_depth};
+      }
+      output_tf_shape = MklDnnDimsToTFShape(output_dims_order);
     }
     AllocateOutputSetMklShape(context, kOutputIndex, output_tensor,
                               output_tf_shape, output_mkl_shape);

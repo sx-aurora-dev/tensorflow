@@ -89,8 +89,9 @@ bool CanDedupControlWithRegularInput(const MutableGraphView& graph,
 bool CanDedupControlWithRegularInput(const MutableGraphView& graph,
                                      absl::string_view control_node_name) {
   NodeDef* control_node = graph.GetNode(control_node_name);
-  DCHECK(control_node != nullptr)
-      << "Didn't find a node for control dependency: " << control_node_name;
+  if (control_node == nullptr) {
+    return false;
+  }
   return CanDedupControlWithRegularInput(graph, *control_node);
 }
 
@@ -678,7 +679,10 @@ Status MutableGraphView::SwapNodeNames(absl::string_view from_node_name,
       [this](NodeDef* node, const FanoutsMap::iterator& control_fanouts) {
         if (CanDedupControlWithRegularInput(*this, *node) &&
             control_fanouts != fanouts().end()) {
-          for (const auto& control_fanout : control_fanouts->second) {
+          for (auto it = control_fanouts->second.begin();
+               it != control_fanouts->second.end();) {
+            // Advance `it` before invalidation from removal.
+            const auto& control_fanout = *it++;
             if (HasRegularFaninNode(*this, *control_fanout.node,
                                     node->name())) {
               RemoveControllingFaninInternal(control_fanout.node, node);

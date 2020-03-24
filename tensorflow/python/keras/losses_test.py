@@ -18,22 +18,16 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import os
-import shutil
-
 import numpy as np
 
 from tensorflow.python import keras
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import errors_impl
+from tensorflow.python.framework import ops
 from tensorflow.python.framework import test_util
 from tensorflow.python.keras.utils import losses_utils
 from tensorflow.python.platform import test
-
-try:
-  import h5py  # pylint:disable=g-import-not-at-top
-except ImportError:
-  h5py = None
 
 ALL_LOSSES = [keras.losses.mean_squared_error,
               keras.losses.mean_absolute_error,
@@ -48,20 +42,6 @@ ALL_LOSSES = [keras.losses.mean_squared_error,
               keras.losses.cosine_similarity,
               keras.losses.logcosh,
               keras.losses.categorical_hinge]
-
-
-class _MSEMAELoss(object):
-  """Loss function with internal state, for testing serialization code."""
-
-  def __init__(self, mse_fraction):
-    self.mse_fraction = mse_fraction
-
-  def __call__(self, y_true, y_pred, sample_weight=None):
-    return (self.mse_fraction * keras.losses.mse(y_true, y_pred) +
-            (1 - self.mse_fraction) * keras.losses.mae(y_true, y_pred))
-
-  def get_config(self):
-    return {'mse_fraction': self.mse_fraction}
 
 
 class KerasLossesTest(test.TestCase):
@@ -110,6 +90,28 @@ class KerasLossesTest(test.TestCase):
         keras.backend.eval(output_from_softmax), atol=1e-5)
 
   @test_util.run_in_graph_and_eager_modes
+  def test_categorical_crossentropy_loss_with_unknown_rank_tensor(self):
+    t = keras.backend.placeholder()
+    p = keras.backend.placeholder()
+    o = keras.losses.categorical_crossentropy(t, p)
+
+    t_val = ops.convert_to_tensor([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+    p_val = ops.convert_to_tensor([[.9, .05, .05], [.05, .89, .06],
+                                   [.05, .01, .94]])
+    f = keras.backend.function([t, p], o)
+
+    result = f([t_val, p_val])
+    self.assertArrayNear(result, [.105, .116, .062], 1e-3)
+
+    # from logits
+    p_val = ops.convert_to_tensor([[8., 1., 1.], [0., 9., 1.], [2., 3., 5.]])
+    o = keras.losses.categorical_crossentropy(t, p, from_logits=True)
+    f = keras.backend.function([t, p], o)
+
+    result = f([t_val, p_val])
+    self.assertArrayNear(result, [.002, 0, .17], 1e-3)
+
+  @test_util.run_in_graph_and_eager_modes
   def test_sparse_categorical_crossentropy_loss(self):
     target = keras.backend.variable(np.random.randint(0, 1, (5, 1)))
     logits = keras.backend.variable(np.random.random((5, 1)))
@@ -121,6 +123,28 @@ class KerasLossesTest(test.TestCase):
     np.testing.assert_allclose(
         keras.backend.eval(output_from_logit),
         keras.backend.eval(output_from_softmax), atol=1e-5)
+
+  @test_util.run_in_graph_and_eager_modes
+  def test_sparse_categorical_crossentropy_loss_with_unknown_rank_tensor(self):
+    t = keras.backend.placeholder()
+    p = keras.backend.placeholder()
+    o = keras.losses.sparse_categorical_crossentropy(t, p)
+
+    t_val = ops.convert_to_tensor([0, 1, 2])
+    p_val = ops.convert_to_tensor([[.9, .05, .05], [.05, .89, .06],
+                                   [.05, .01, .94]])
+    f = keras.backend.function([t, p], o)
+
+    result = f([t_val, p_val])
+    self.assertArrayNear(result, [.105, .116, .062], 1e-3)
+
+    # from logits
+    p_val = ops.convert_to_tensor([[8., 1., 1.], [0., 9., 1.], [2., 3., 5.]])
+    o = keras.losses.sparse_categorical_crossentropy(t, p, from_logits=True)
+    f = keras.backend.function([t, p], o)
+
+    result = f([t_val, p_val])
+    self.assertArrayNear(result, [.002, 0, .17], 1e-3)
 
   @test_util.run_in_graph_and_eager_modes
   def test_binary_crossentropy_loss(self):
@@ -135,6 +159,10 @@ class KerasLossesTest(test.TestCase):
         keras.backend.eval(output_from_logit),
         keras.backend.eval(output_from_sigmoid), atol=1e-5)
 
+  def test_get_bce(self):
+    bce_fn = keras.losses.get('bce')
+    self.assertEqual(bce_fn, keras.losses.binary_crossentropy)
+
   def test_serialization(self):
     fn = keras.losses.get('mse')
     config = keras.losses.serialize(fn)
@@ -148,39 +176,6 @@ class KerasLossesTest(test.TestCase):
     expected_loss = ((0.3 - 0.2 + 1) + (0.7 - 0.1 + 1)) / 2.0
     loss = keras.backend.eval(keras.losses.categorical_hinge(y_true, y_pred))
     self.assertAllClose(expected_loss, np.mean(loss))
-
-  def test_serializing_loss_class(self):
-    orig_loss_class = _MSEMAELoss(0.3)
-    with keras.utils.custom_object_scope({'_MSEMAELoss': _MSEMAELoss}):
-      serialized = keras.losses.serialize(orig_loss_class)
-
-    with keras.utils.custom_object_scope({'_MSEMAELoss': _MSEMAELoss}):
-      deserialized = keras.losses.deserialize(serialized)
-    assert isinstance(deserialized, _MSEMAELoss)
-    assert deserialized.mse_fraction == 0.3
-
-  def test_serializing_model_with_loss_class(self):
-    tmpdir = self.get_temp_dir()
-    self.addCleanup(shutil.rmtree, tmpdir)
-    model_filename = os.path.join(tmpdir, 'custom_loss.h5')
-
-    with self.cached_session():
-      with keras.utils.custom_object_scope({'_MSEMAELoss': _MSEMAELoss}):
-        loss = _MSEMAELoss(0.3)
-        inputs = keras.layers.Input((2,))
-        outputs = keras.layers.Dense(1, name='model_output')(inputs)
-        model = keras.models.Model(inputs, outputs)
-        model.compile(optimizer='sgd', loss={'model_output': loss})
-        model.fit(np.random.rand(256, 2), np.random.rand(256, 1))
-
-        if h5py is None:
-          return
-
-        model.save(model_filename)
-
-      with keras.utils.custom_object_scope({'_MSEMAELoss': _MSEMAELoss}):
-        loaded_model = keras.models.load_model(model_filename)
-        loaded_model.predict(np.random.rand(128, 2))
 
   def test_loss_wrapper(self):
     loss_fn = keras.losses.get('mse')
@@ -278,8 +273,9 @@ class MeanSquaredErrorTest(test.TestCase):
     y_true = constant_op.constant([1, 9, 2, -5, -2, 6], shape=(2, 3, 1))
     y_pred = constant_op.constant([4, 8, 12, 8, 1, 3], shape=(2, 3, 1))
     sample_weight = constant_op.constant([3, 6, 5, 0], shape=(2, 2))
-    with self.assertRaisesRegexp(
-        ValueError, r'Shapes \(2, 2\) and \(2, 3\) are incompatible'):
+    with self.assertRaisesRegexp((ValueError, errors_impl.InvalidArgumentError),
+                                 (r'Incompatible shapes: \[2,3\] vs. \[2,2\]|'
+                                  'Dimensions must be equal')):
       mse_obj(y_true, y_pred, sample_weight=sample_weight)
 
   def test_no_reduction(self):
@@ -371,8 +367,9 @@ class MeanAbsoluteErrorTest(test.TestCase):
     y_true = constant_op.constant([1, 9, 2, -5, -2, 6], shape=(2, 3, 1))
     y_pred = constant_op.constant([4, 8, 12, 8, 1, 3], shape=(2, 3, 1))
     sample_weight = constant_op.constant([3, 6, 5, 0], shape=(2, 2))
-    with self.assertRaisesRegexp(
-        ValueError, r'Shapes \(2, 2\) and \(2, 3\) are incompatible'):
+    with self.assertRaisesRegexp((ValueError, errors_impl.InvalidArgumentError),
+                                 (r'Incompatible shapes: \[2,3\] vs. \[2,2\]|'
+                                  'Dimensions must be equal')):
       mae_obj(y_true, y_pred, sample_weight=sample_weight)
 
   def test_no_reduction(self):
@@ -405,6 +402,14 @@ class MeanAbsolutePercentageErrorTest(test.TestCase):
         reduction=losses_utils.ReductionV2.SUM, name='mape_1')
     self.assertEqual(mape_obj.name, 'mape_1')
     self.assertEqual(mape_obj.reduction, losses_utils.ReductionV2.SUM)
+
+  def test_all_correct_unweighted(self):
+    mape_obj = keras.losses.MeanAbsolutePercentageError()
+    y_true = constant_op.constant([4, 8, 12, 8, 1, 3],
+                                  shape=(2, 3),
+                                  dtype=dtypes.float32)
+    loss = mape_obj(y_true, y_true)
+    self.assertAlmostEqual(self.evaluate(loss), 0.0, 3)
 
   def test_unweighted(self):
     mape_obj = keras.losses.MeanAbsolutePercentageError()
@@ -452,6 +457,17 @@ class MeanAbsolutePercentageErrorTest(test.TestCase):
                                   dtype=dtypes.float32)
     loss = mape_obj(y_true, y_pred, sample_weight=0)
     self.assertAlmostEqual(self.evaluate(loss), 0.0, 3)
+
+  def test_no_reduction(self):
+    mape_obj = keras.losses.MeanAbsolutePercentageError(
+        reduction=losses_utils.ReductionV2.NONE)
+    y_true = constant_op.constant([1, 9, 2, -5, -2, 6], shape=(2, 3))
+    y_pred = constant_op.constant([4, 8, 12, 8, 1, 3],
+                                  shape=(2, 3),
+                                  dtype=dtypes.float32)
+    loss = mape_obj(y_true, y_pred, sample_weight=2.3)
+    loss = self.evaluate(loss)
+    self.assertArrayNear(loss, [621.8518, 352.6666], 1e-3)
 
 
 @test_util.run_all_in_graph_and_eager_modes
@@ -541,7 +557,7 @@ class CosineSimilarityTest(test.TestCase):
     self.setup()
     cosine_obj = keras.losses.CosineSimilarity()
     loss = cosine_obj(self.y_true, self.y_pred)
-    expected_loss = np.mean(self.expected_loss)
+    expected_loss = -np.mean(self.expected_loss)
     self.assertAlmostEqual(self.evaluate(loss), expected_loss, 3)
 
   def test_scalar_weighted(self):
@@ -549,7 +565,7 @@ class CosineSimilarityTest(test.TestCase):
     cosine_obj = keras.losses.CosineSimilarity()
     sample_weight = 2.3
     loss = cosine_obj(self.y_true, self.y_pred, sample_weight=sample_weight)
-    expected_loss = np.mean(self.expected_loss * sample_weight)
+    expected_loss = -np.mean(self.expected_loss * sample_weight)
     self.assertAlmostEqual(self.evaluate(loss), expected_loss, 3)
 
   def test_sample_weighted(self):
@@ -560,7 +576,7 @@ class CosineSimilarityTest(test.TestCase):
         self.y_true,
         self.y_pred,
         sample_weight=constant_op.constant(sample_weight))
-    expected_loss = np.mean(self.expected_loss * sample_weight)
+    expected_loss = -np.mean(self.expected_loss * sample_weight)
     self.assertAlmostEqual(self.evaluate(loss), expected_loss, 3)
 
   def test_timestep_weighted(self):
@@ -579,7 +595,7 @@ class CosineSimilarityTest(test.TestCase):
     loss = cosine_obj(
         y_true, y_pred, sample_weight=constant_op.constant(sample_weight))
 
-    expected_loss = np.mean(expected_loss * sample_weight)
+    expected_loss = -np.mean(expected_loss * sample_weight)
     self.assertAlmostEqual(self.evaluate(loss), expected_loss, 3)
 
   def test_zero_weighted(self):
@@ -592,7 +608,7 @@ class CosineSimilarityTest(test.TestCase):
     self.setup(axis=1)
     cosine_obj = keras.losses.CosineSimilarity(axis=1)
     loss = cosine_obj(self.y_true, self.y_pred)
-    expected_loss = np.mean(self.expected_loss)
+    expected_loss = -np.mean(self.expected_loss)
     self.assertAlmostEqual(self.evaluate(loss), expected_loss, 3)
 
 
@@ -863,6 +879,12 @@ class CategoricalCrossentropyTest(test.TestCase):
 @test_util.run_all_in_graph_and_eager_modes
 class SparseCategoricalCrossentropyTest(test.TestCase):
 
+  def test_config(self):
+    cce_obj = keras.losses.SparseCategoricalCrossentropy(
+        reduction=losses_utils.ReductionV2.SUM, name='scc')
+    self.assertEqual(cce_obj.name, 'scc')
+    self.assertEqual(cce_obj.reduction, losses_utils.ReductionV2.SUM)
+
   def test_all_correct_unweighted(self):
     y_true = constant_op.constant([[0], [1], [2]], dtype=dtypes.int64)
     y_pred = constant_op.constant([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
@@ -927,6 +949,14 @@ class SparseCategoricalCrossentropyTest(test.TestCase):
         from_logits=True, reduction=losses_utils.ReductionV2.NONE)
     loss = cce_obj(y_true, logits)
     self.assertAllClose((0.001822, 0.000459, 0.169846), self.evaluate(loss), 3)
+
+  def test_non_tensor(self):
+    # Test case for GitHub issue 33394.
+    cce_obj = keras.losses.SparseCategoricalCrossentropy()
+    y_true = [[0], [1], [2]]
+    y_pred = [[.9, .05, .05], [.5, .89, .6], [.05, .01, .94]]
+    loss = cce_obj(y_true, y_pred, sample_weight=2.3)
+    self.assertAlmostEqual(self.evaluate(loss), .7449, 3)
 
 
 @test_util.run_all_in_graph_and_eager_modes

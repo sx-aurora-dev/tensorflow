@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "tensorflow/lite/tools/evaluation/utils.h"
 
+#if !defined(_WIN32)
 #include <dirent.h>
+#endif
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -23,14 +25,16 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tensorflow/lite/delegates/nnapi/nnapi_delegate.h"
-
-#if defined(__ANDROID__)
-#include "tensorflow/lite/delegates/gpu/gl_delegate.h"
-#endif
-
 namespace tflite {
 namespace evaluation {
+
+namespace {
+
+Interpreter::TfLiteDelegatePtr CreateNullDelegate() {
+  return Interpreter::TfLiteDelegatePtr(nullptr, [](TfLiteDelegate*) {});
+}
+
+}  // namespace
 
 std::string StripTrailingSlashes(const std::string& path) {
   int end = path.size();
@@ -56,8 +60,10 @@ bool ReadFileLines(const std::string& file_path,
   return true;
 }
 
-TfLiteStatus GetSortedFileNames(const std::string& directory,
-                                std::vector<std::string>* result) {
+#if !defined(_WIN32)
+TfLiteStatus GetSortedFileNames(
+    const std::string& directory, std::vector<std::string>* result,
+    const std::unordered_set<std::string>& extensions) {
   DIR* dir;
   struct dirent* ent;
   if (result == nullptr) {
@@ -67,8 +73,15 @@ TfLiteStatus GetSortedFileNames(const std::string& directory,
   std::string dir_path = StripTrailingSlashes(directory);
   if ((dir = opendir(dir_path.c_str())) != nullptr) {
     while ((ent = readdir(dir)) != nullptr) {
+      if (ent->d_type == DT_DIR) continue;
       std::string filename(std::string(ent->d_name));
-      if (filename.size() <= 2) continue;
+      size_t lastdot = filename.find_last_of(".");
+      std::string ext = lastdot != std::string::npos ? filename.substr(lastdot)
+                                                     : std::string();
+      std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+      if (!extensions.empty() && extensions.find(ext) == extensions.end()) {
+        continue;
+      }
       result->emplace_back(dir_path + "/" + filename);
     }
     closedir(dir);
@@ -78,7 +91,9 @@ TfLiteStatus GetSortedFileNames(const std::string& directory,
   std::sort(result->begin(), result->end());
   return kTfLiteOk;
 }
+#endif
 
+// TODO(b/138448769): Migrate delegate helper APIs to lite/testing.
 Interpreter::TfLiteDelegatePtr CreateNNAPIDelegate() {
 #if defined(__ANDROID__)
   return Interpreter::TfLiteDelegatePtr(
@@ -90,19 +105,58 @@ Interpreter::TfLiteDelegatePtr CreateNNAPIDelegate() {
 #endif  // defined(__ANDROID__)
 }
 
-Interpreter::TfLiteDelegatePtr CreateGPUDelegate(
-    tflite::FlatBufferModel* model) {
+Interpreter::TfLiteDelegatePtr CreateNNAPIDelegate(
+    StatefulNnApiDelegate::Options options) {
 #if defined(__ANDROID__)
-  TfLiteGpuDelegateOptions options;
-  options.metadata = TfLiteGpuDelegateGetModelMetadata(model->GetModel());
-  options.compile_options.precision_loss_allowed = 1;
-  options.compile_options.preferred_gl_object_type =
-      TFLITE_GL_OBJECT_TYPE_FASTEST;
-  options.compile_options.dynamic_batch_enabled = 0;
-  return Interpreter::TfLiteDelegatePtr(TfLiteGpuDelegateCreate(&options),
-                                        &TfLiteGpuDelegateDelete);
+  return Interpreter::TfLiteDelegatePtr(
+      new StatefulNnApiDelegate(options), [](TfLiteDelegate* delegate) {
+        delete reinterpret_cast<StatefulNnApiDelegate*>(delegate);
+      });
 #else
-  return Interpreter::TfLiteDelegatePtr(nullptr, [](TfLiteDelegate*) {});
+  return CreateNullDelegate();
+#endif  // defined(__ANDROID__)
+}
+
+#if defined(__ANDROID__)
+Interpreter::TfLiteDelegatePtr CreateGPUDelegate(
+    TfLiteGpuDelegateOptionsV2* options) {
+  return Interpreter::TfLiteDelegatePtr(TfLiteGpuDelegateV2Create(options),
+                                        &TfLiteGpuDelegateV2Delete);
+}
+#endif  // defined(__ANDROID__)
+
+Interpreter::TfLiteDelegatePtr CreateGPUDelegate() {
+#if defined(__ANDROID__)
+  TfLiteGpuDelegateOptionsV2 options = TfLiteGpuDelegateOptionsV2Default();
+  options.inference_priority1 = TFLITE_GPU_INFERENCE_PRIORITY_MIN_LATENCY;
+  options.inference_preference =
+      TFLITE_GPU_INFERENCE_PREFERENCE_SUSTAINED_SPEED;
+
+  return CreateGPUDelegate(&options);
+#else
+  return CreateNullDelegate();
+#endif  // defined(__ANDROID__)
+}
+
+Interpreter::TfLiteDelegatePtr CreateHexagonDelegate(
+    const std::string& library_directory_path) {
+#if defined(__ANDROID__) && (defined(__arm__) || defined(__aarch64__))
+  const TfLiteHexagonDelegateOptions options = {0, 0, false, false};
+  TfLiteDelegate* delegate = TfLiteHexagonDelegateCreate(&options);
+  if (!delegate) {
+    return CreateNullDelegate();
+  }
+  if (library_directory_path.empty()) {
+    TfLiteHexagonInit();
+  } else {
+    TfLiteHexagonInitWithPath(library_directory_path.c_str());
+  }
+  return Interpreter::TfLiteDelegatePtr(delegate, [](TfLiteDelegate* delegate) {
+    TfLiteHexagonTearDown();
+    TfLiteHexagonDelegateDelete(delegate);
+  });
+#else
+  return CreateNullDelegate();
 #endif  // defined(__ANDROID__)
 }
 

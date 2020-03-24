@@ -62,20 +62,33 @@ class CreatePythonApiTest(test.TestCase):
     del sys.modules[_MODULE_NAME]
 
   def testFunctionImportIsAdded(self):
-    imports, _ = create_python_api.get_api_init_text(
+    imports, _, _ = create_python_api.get_api_init_text(
         packages=[create_python_api._DEFAULT_PACKAGE],
         output_package='tensorflow',
         api_name='tensorflow',
         api_version=1)
-    expected_import = (
-        'from tensorflow.python.test_module '
-        'import test_op as test_op1')
+    if create_python_api._LAZY_LOADING:
+      expected_import = (
+          '\'test_op1\': '
+          '(\'tensorflow.python.test_module\','
+          ' \'test_op\')')
+    else:
+      expected_import = (
+          'from tensorflow.python.test_module '
+          'import test_op as test_op1')
     self.assertTrue(
         expected_import in str(imports),
         msg='%s not in %s' % (expected_import, str(imports)))
 
-    expected_import = ('from tensorflow.python.test_module '
-                       'import test_op')
+    if create_python_api._LAZY_LOADING:
+      expected_import = (
+          '\'test_op\': '
+          '(\'tensorflow.python.test_module\','
+          ' \'test_op\')')
+    else:
+      expected_import = (
+          'from tensorflow.python.test_module '
+          'import test_op')
     self.assertTrue(
         expected_import in str(imports),
         msg='%s not in %s' % (expected_import, str(imports)))
@@ -84,30 +97,42 @@ class CreatePythonApiTest(test.TestCase):
                      msg='compat.v1 in %s' % str(imports.keys()))
 
   def testClassImportIsAdded(self):
-    imports, _ = create_python_api.get_api_init_text(
+    imports, _, _ = create_python_api.get_api_init_text(
         packages=[create_python_api._DEFAULT_PACKAGE],
         output_package='tensorflow',
         api_name='tensorflow',
         api_version=2)
-    expected_import = ('from tensorflow.python.test_module '
-                       'import TestClass')
+    if create_python_api._LAZY_LOADING:
+      expected_import = (
+          '\'NewTestClass\':'
+          ' (\'tensorflow.python.test_module\','
+          ' \'TestClass\')')
+    else:
+      expected_import = (
+          'from tensorflow.python.test_module '
+          'import TestClass')
     self.assertTrue(
         'TestClass' in str(imports),
         msg='%s not in %s' % (expected_import, str(imports)))
 
   def testConstantIsAdded(self):
-    imports, _ = create_python_api.get_api_init_text(
+    imports, _, _ = create_python_api.get_api_init_text(
         packages=[create_python_api._DEFAULT_PACKAGE],
         output_package='tensorflow',
         api_name='tensorflow',
         api_version=1)
-    expected = ('from tensorflow.python.test_module '
-                'import _TEST_CONSTANT')
+    if create_python_api._LAZY_LOADING:
+      expected = ('\'_TEST_CONSTANT\':'
+                  ' (\'tensorflow.python.test_module\','
+                  ' \'_TEST_CONSTANT\')')
+    else:
+      expected = ('from tensorflow.python.test_module '
+                  'import _TEST_CONSTANT')
     self.assertTrue(expected in str(imports),
                     msg='%s not in %s' % (expected, str(imports)))
 
   def testCompatModuleIsAdded(self):
-    imports, _ = create_python_api.get_api_init_text(
+    imports, _, _ = create_python_api.get_api_init_text(
         packages=[create_python_api._DEFAULT_PACKAGE],
         output_package='tensorflow',
         api_name='tensorflow',
@@ -117,6 +142,22 @@ class CreatePythonApiTest(test.TestCase):
                     msg='compat.v1 not in %s' % str(imports.keys()))
     self.assertTrue('compat.v1.test' in imports,
                     msg='compat.v1.test not in %s' % str(imports.keys()))
+
+  def testNestedCompatModulesAreAdded(self):
+    imports, _, _ = create_python_api.get_api_init_text(
+        packages=[create_python_api._DEFAULT_PACKAGE],
+        output_package='tensorflow',
+        api_name='tensorflow',
+        api_version=2,
+        compat_api_versions=[1, 2])
+    self.assertIn('compat.v1.compat.v1', imports,
+                  msg='compat.v1.compat.v1 not in %s' % str(imports.keys()))
+    self.assertIn('compat.v1.compat.v2', imports,
+                  msg='compat.v1.compat.v2 not in %s' % str(imports.keys()))
+    self.assertIn('compat.v2.compat.v1', imports,
+                  msg='compat.v2.compat.v1 not in %s' % str(imports.keys()))
+    self.assertIn('compat.v2.compat.v2', imports,
+                  msg='compat.v2.compat.v2 not in %s' % str(imports.keys()))
 
 
 if __name__ == '__main__':

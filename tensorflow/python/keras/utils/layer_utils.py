@@ -24,6 +24,7 @@ import numpy as np
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras.utils.conv_utils import convert_kernel
 from tensorflow.python.util import nest
+from tensorflow.python.util import object_identity
 from tensorflow.python.util.tf_export import keras_export
 
 
@@ -61,7 +62,7 @@ def get_source_inputs(tensor, layer=None, node_index=None):
         previous_sources = get_source_inputs(tensor, layer, node_index)
         # Avoid input redundancy.
         for x in previous_sources:
-          if x not in source_tensors:
+          if all(x is not t for t in source_tensors):
             source_tensors.append(x)
       return source_tensors
 
@@ -75,7 +76,12 @@ def count_params(weights):
   Returns:
       The total number of scalars composing the weights
   """
-  return int(sum(np.prod(p.shape.as_list()) for p in set(weights)))
+  unique_weights = object_identity.ObjectIdentitySet(weights)
+  weight_shapes = [w.shape.as_list() for w in unique_weights]
+  standardized_weight_shapes = [
+      [0 if w_i is None else w_i for w_i in w] for w in weight_shapes
+  ]
+  return int(sum(np.prod(p) for p in standardized_weight_shapes))
 
 
 def print_summary(model, line_length=None, positions=None, print_fn=None):

@@ -1,12 +1,13 @@
-package(default_visibility = [
-    "//visibility:public",
-])
-
-licenses(["notice"])  # Apache 2.0
-
 load("//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite")
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary")
 load("//tensorflow/lite:build_def.bzl", "tflite_copts")
+
+package(
+    default_visibility = [
+        "//visibility:public",
+    ],
+    licenses = ["notice"],  # Apache 2.0
+)
 
 common_copts = ["-Wall"]
 
@@ -18,7 +19,7 @@ py_binary(
         "//tensorflow/python:platform",
         "@flatbuffers//:flatc",
     ],
-    python_version = "PY2",
+    python_version = "PY3",
     srcs_version = "PY2AND3",
 )
 
@@ -53,6 +54,7 @@ cc_test(
         "//tensorflow/lite:testdata/empty_model.bin",
         "//tensorflow/lite:testdata/test_model.bin",
         "//tensorflow/lite:testdata/test_model_broken.bin",
+        "//tensorflow/lite:testdata/test_model_versioned_ops.bin",
     ],
     tags = [
         "tflite_not_portable_android",
@@ -72,7 +74,7 @@ cc_library(
         "//tensorflow/lite:framework",
         "//tensorflow/lite:schema_fbs_version",
         "//tensorflow/lite:string_util",
-        "//tensorflow/lite/c:c_api_internal",
+        "//tensorflow/lite/c:common",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_absl//absl/container:flat_hash_set",
     ],
@@ -82,6 +84,9 @@ cc_test(
     name = "verifier_test",
     size = "small",
     srcs = ["verifier_test.cc"],
+    data = [
+        "//tensorflow/lite:testdata/sparse_tensor.bin",
+    ],
     tags = [
         "tflite_not_portable",
     ],
@@ -90,7 +95,8 @@ cc_test(
         "//tensorflow/core:framework_lite",
         "//tensorflow/lite:framework",
         "//tensorflow/lite:schema_fbs_version",
-        "//tensorflow/lite/c:c_api_internal",
+        "//tensorflow/lite:util",
+        "//tensorflow/lite/core/api",
         "//tensorflow/lite/schema:schema_fbs",
         "//tensorflow/lite/testing:util",
         "@com_google_googletest//:gtest",
@@ -103,6 +109,7 @@ cc_library(
     srcs = ["command_line_flags.cc"],
     hdrs = ["command_line_flags.h"],
     copts = tflite_copts(),
+    deps = ["//tensorflow/lite:minimal_logging"],
 )
 
 cc_test(

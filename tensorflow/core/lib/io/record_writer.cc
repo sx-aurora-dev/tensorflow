@@ -31,7 +31,7 @@ bool IsZlibCompressed(RecordWriterOptions options) {
 RecordWriterOptions RecordWriterOptions::CreateRecordWriterOptions(
     const string& compression_type) {
   RecordWriterOptions options;
-  if (compression_type == "ZLIB") {
+  if (compression_type == compression::kZlib) {
     options.compression_type = io::RecordWriterOptions::ZLIB_COMPRESSION;
 #if defined(IS_SLIM_BUILD)
     LOG(ERROR) << "Compression is not supported but compression_type is set."
@@ -146,10 +146,7 @@ Status RecordWriter::Flush() {
     return Status(::tensorflow::error::FAILED_PRECONDITION,
                   "Writer not initialized or previously closed");
   }
-  if (IsZlibCompressed(options_)) {
-    return dest_->Flush();
-  }
-  return Status::OK();
+  return dest_->Flush();
 }
 
 }  // namespace io

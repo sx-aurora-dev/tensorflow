@@ -21,7 +21,9 @@ from __future__ import print_function
 import collections
 import functools
 import imp
+import inspect
 import sys
+import threading
 import types
 import unittest
 import weakref
@@ -42,17 +44,15 @@ from tensorflow.python.autograph.converters import function_scopes
 from tensorflow.python.autograph.converters import lists
 from tensorflow.python.autograph.converters import logical_expressions
 from tensorflow.python.autograph.converters import return_statements
-from tensorflow.python.autograph.converters import side_effect_guards
 from tensorflow.python.autograph.converters import slices
 from tensorflow.python.autograph.core import config
 from tensorflow.python.autograph.core import converter
-from tensorflow.python.autograph.core import function_wrapping
+from tensorflow.python.autograph.core import function_wrappers
 from tensorflow.python.autograph.core import naming
 from tensorflow.python.autograph.core import unsupported_features_checker
 from tensorflow.python.autograph.lang import special_functions
 from tensorflow.python.autograph.pyct import ast_util
-from tensorflow.python.autograph.pyct import compiler
-from tensorflow.python.autograph.pyct import errors
+from tensorflow.python.autograph.pyct import loader
 from tensorflow.python.autograph.pyct import inspect_utils
 from tensorflow.python.autograph.pyct import origin_info
 from tensorflow.python.autograph.pyct import parser
@@ -82,6 +82,10 @@ class _ConvertedEntityFactoryInfo(
     source_map: Dict.
   """
 
+  def __str__(self):
+    return '_ConvertedEntityFactoryInfo({} in {})'.format(
+        self.converted_name, self.module_name)
+
   def get_module(self):
     return sys.modules[self.module_name]
 
@@ -93,7 +97,7 @@ class _ConvertedEntityFactoryInfo(
 
 
 # TODO(mdan): Add a garbage collection hook for cleaning up modules.
-class _ConversionCache(object):
+class _FunctionCache(object):
   """A hierarchical cache that uses the converted entity as weak key.
 
   The keys soft references (i.e. they are discarded when the key is
@@ -103,23 +107,71 @@ class _ConversionCache(object):
   defined.
   """
 
+  __slots__ = ('_cache',)
+
   def __init__(self):
     self._cache = weakref.WeakKeyDictionary()
 
-  def has(self, key, subkey):
+  def _get_key(self, entity):
+    raise NotImplementedError('subclasses will override')
+
+  def has(self, entity, subkey):
+    key = self._get_key(entity)
     if key not in self._cache:
       return False
     return subkey in self._cache[key]
 
-  def __getitem__(self, key):
+  def __getitem__(self, entity):
+    key = self._get_key(entity)
     if key not in self._cache:
       # The bucket needs to be initialized to support this usage:
       #   cache[key][subkey] = value
       self._cache[key] = {}
     return self._cache[key]
 
+  def __len__(self):
+    return len(self._cache)
 
-_CACHE = _ConversionCache()
+
+class _CodeObjectCache(_FunctionCache):
+  """A function cache based on code objects (i.e., the source code).
+
+  Multiple functions may share the same code object, but they may share the
+  cache because we know they have the exact source code. This properly handles
+  functions defined in a loop, bound methods, etc.
+
+  Falls back to the function object, if it doesn't have a code object.
+  """
+
+  def _get_key(self, entity):
+    if hasattr(entity, '__code__'):
+      return entity.__code__
+    else:
+      return entity
+
+
+class _UnboundInstanceCache(_FunctionCache):
+  """A function cache based on unbound function objects.
+
+  Unlike the _CodeObjectCache, this discriminates between different functions
+  even if they have the same code. This properly handles decorators that may
+  masquerade as various functions. Bound functions are not discriminated by
+  the object they're bound to.
+  """
+
+  def _get_key(self, entity):
+    if inspect.ismethod(entity):
+      return entity.__func__
+    return entity
+
+
+# Using a re-entrant lock to guard against the unlikely possibility that the
+# conversion process tiggers additional code execution.
+_CACHE_LOCK = threading.RLock()
+
+
+_CACHE = _CodeObjectCache()
+_WHITELIST_CACHE = _UnboundInstanceCache()
 
 
 # Note: strictly speaking, a simple factory might have been sufficient for
@@ -184,7 +236,7 @@ def _wrap_into_dynamic_factory(nodes, entity_name, factory_factory_name,
         entity_defs
         entity_name.ag_source_map = ag_source_map__
         entity_name.ag_module = ag_module__
-        entity_name.autograph_info__ = {}
+        entity_name = ag__.autograph_artifact(entity_name)
         return entity_name
       return factory_name
   """
@@ -200,14 +252,6 @@ def _wrap_into_dynamic_factory(nodes, entity_name, factory_factory_name,
 
 def _convert_with_cache(entity, program_ctx, free_nonglobal_var_names):
   """Returns a (possibly cached) factory for the converted result of entity."""
-  # The cache key is the entity's code object if it defined one, otherwise it's
-  # the entity itself. Keying by the code object allows caching of functions
-  # that are dynamically created e.g. in a loop.
-  if hasattr(entity, '__code__'):
-    key = entity.__code__
-  else:
-    key = entity
-
   # The cache subkey encompases any conversion options on which the generated
   # code may depend.
   # The cached factory includes the necessary definitions to distinguish
@@ -215,37 +259,39 @@ def _convert_with_cache(entity, program_ctx, free_nonglobal_var_names):
   # cache subkey includes the names of the free non-globals.
   subkey = (program_ctx.options, frozenset(free_nonglobal_var_names))
 
-  # The cache values are _ConvertedEntityFactoryInfo objects.
-  if _CACHE.has(key, subkey):
-    # TODO(mdan): Check whether the module is still loaded.
-    converted_entity_info = _CACHE[key][subkey]
-    logging.log(3, 'Cache hit for entity %s key %s subkey %s: %s', entity, key,
-                subkey, converted_entity_info)
+  with _CACHE_LOCK:
+    # The cache values are _ConvertedEntityFactoryInfo objects.
+    if _CACHE.has(entity, subkey):
+      # TODO(mdan): Check whether the module is still loaded.
+      converted_entity_info = _CACHE[entity][subkey]
+      logging.log(3, 'Cache hit for entity %s subkey %s: %s', entity, subkey,
+                  converted_entity_info)
+      return converted_entity_info
+
+    logging.log(1, 'Entity %s is not cached for subkey %s', entity, subkey)
+
+    nodes, converted_name, entity_info = convert_entity_to_ast(
+        entity, program_ctx)
+
+    namer = naming.Namer(entity_info.namespace)
+    factory_factory_name = namer.new_symbol('create_converted_entity_factory',
+                                            ())
+    factory_name = namer.new_symbol('create_converted_entity', ())
+    nodes = _wrap_into_dynamic_factory(nodes, converted_name,
+                                       factory_factory_name, factory_name,
+                                       free_nonglobal_var_names,
+                                       entity_info.future_features)
+
+    module, _, source_map = loader.load_ast(nodes, include_source_map=True)
+    module_name = module.__name__
+
+    converted_entity_info = _ConvertedEntityFactoryInfo(
+        module_name=module_name,
+        converted_name=converted_name,
+        factory_factory_name=factory_factory_name,
+        source_map=source_map)
+    _CACHE[entity][subkey] = converted_entity_info
     return converted_entity_info
-
-  logging.log(1, 'Entity %s is not cached for key %s subkey %s', entity, key,
-              subkey)
-
-  nodes, converted_name, entity_info = convert_entity_to_ast(
-      entity, program_ctx)
-
-  namer = naming.Namer(entity_info.namespace)
-  factory_factory_name = namer.new_symbol('create_converted_entity_factory', ())
-  factory_name = namer.new_symbol('create_converted_entity', ())
-  nodes = _wrap_into_dynamic_factory(
-      nodes, converted_name, factory_factory_name, factory_name,
-      free_nonglobal_var_names, entity_info.future_features)
-
-  module, _, source_map = compiler.ast_to_object(nodes, include_source_map=True)
-  module_name = module.__name__
-
-  converted_entity_info = _ConvertedEntityFactoryInfo(
-      module_name=module_name,
-      converted_name=converted_name,
-      factory_factory_name=factory_factory_name,
-      source_map=source_map)
-  _CACHE[key][subkey] = converted_entity_info
-  return converted_entity_info
 
 
 def _instantiate(entity, converted_entity_info, free_nonglobal_var_names):
@@ -284,6 +330,8 @@ def _instantiate(entity, converted_entity_info, free_nonglobal_var_names):
   if tf_inspect.isfunction(entity) or tf_inspect.ismethod(entity):
     # Attach the default argument to the converted function.
     converted_entity.__defaults__ = entity.__defaults__
+    if hasattr(entity, '__kwdefaults__'):
+      converted_entity.__kwdefaults__ = entity.__kwdefaults__
 
   return converted_entity
 
@@ -292,6 +340,10 @@ def convert(entity, program_ctx):
   """Converts an entity into an equivalent entity."""
 
   if tf_inspect.isfunction(entity) or tf_inspect.ismethod(entity):
+    if not hasattr(entity, '__code__'):
+      raise ValueError('Cannot apply autograph to a function that doesn\'t '
+                       'expose a __code__ object. If this is a @tf.function,'
+                       ' try passing f.python_function instead.')
     free_nonglobal_var_names = entity.__code__.co_freevars
   else:
     free_nonglobal_var_names = ()
@@ -303,13 +355,15 @@ def convert(entity, program_ctx):
           entity, name))
     # TODO(mdan): In extreme cases, other ag__ symbols may also be clobbered.
 
-  converted_entity_info = _convert_with_cache(
-      entity, program_ctx, free_nonglobal_var_names)
+  converted_entity_info = _convert_with_cache(entity, program_ctx,
+                                              free_nonglobal_var_names)
 
   return _instantiate(entity, converted_entity_info, free_nonglobal_var_names)
 
 
-def is_whitelisted_for_graph(o, check_call_override=True):
+# TODO(mdan): allow_namedtuple_subclass should be hardcoded to True.
+def is_whitelisted(
+    o, check_call_override=True, allow_namedtuple_subclass=False):
   """Checks whether an entity is whitelisted for use in graph mode.
 
   Examples of whitelisted entities include all members of the tensorflow
@@ -320,6 +374,8 @@ def is_whitelisted_for_graph(o, check_call_override=True):
     check_call_override: Reserved for internal use. When set to `False`, it
       disables the rule according to which classes are whitelisted if their
       __call__ method is whitelisted.
+    allow_namedtuple_subclass: Reserved for internal use. When `True`,
+      namedtuple subclasses are not whitelisted.
 
   Returns:
     Boolean
@@ -332,29 +388,30 @@ def is_whitelisted_for_graph(o, check_call_override=True):
   else:
     m = tf_inspect.getmodule(o)
 
+  # Examples of callables that lack a __module__ property include builtins.
   if hasattr(m, '__name__'):
-    # Builtins typically have unnamed modules.
-    for prefix, in config.DEFAULT_UNCOMPILED_MODULES:
-      if m.__name__.startswith(prefix + '.') or m.__name__ == prefix:
-        logging.log(2, 'Whitelisted: %s: name starts with "%s"', o, prefix)
+    for rule in config.CONVERSION_RULES:
+      action = rule.get_action(m)
+      if action == config.Action.CONVERT:
+        logging.log(2, 'Not whitelisted: %s: %s', o, rule)
+        return False
+      elif action == config.Action.DO_NOT_CONVERT:
+        logging.log(2, 'Whitelisted: %s: %s', o, rule)
         return True
-
-  if hasattr(o, 'autograph_info__') or hasattr(o, '__ag_compiled'):
-    logging.log(2, 'Whitelisted: %s: already converted', o)
-    return True
 
   if tf_inspect.isgeneratorfunction(o):
     logging.warn(
-        'Entity {} appears to be a generator function. It will not be converted'
-        ' by AutoGraph.'.format(o), 1)
+        'Entity %s appears to be a generator function. It will not be converted'
+        ' by AutoGraph.', o)
     logging.log(2, 'Whitelisted: %s: generator functions are not converted', o)
     return True
 
-  if check_call_override and hasattr(o, '__call__'):
+  if (check_call_override and not tf_inspect.isclass(o) and
+      hasattr(o, '__call__')):
     # Callable objects: whitelisted if their __call__ method is.
     # The type check avoids infinite recursion around the __call__ method
     # of function objects.
-    if (type(o) != type(o.__call__)) and is_whitelisted_for_graph(o.__call__):  # pylint: disable=unidiomatic-typecheck
+    if (type(o) != type(o.__call__)) and is_whitelisted(o.__call__):  # pylint: disable=unidiomatic-typecheck
       logging.log(2, 'Whitelisted: %s: object __call__ whitelisted', o)
       return True
 
@@ -382,9 +439,10 @@ def is_whitelisted_for_graph(o, check_call_override=True):
         return True
 
       owner_class = inspect_utils.getdefiningclass(o, owner_class)
-      is_call_override = (o.__name__ == '__call__')
-      if is_whitelisted_for_graph(
-          owner_class, check_call_override=not is_call_override):
+      if is_whitelisted(
+          owner_class,
+          check_call_override=False,
+          allow_namedtuple_subclass=True):
         logging.log(2, 'Whitelisted: %s: owner is whitelisted %s', o,
                     owner_class)
         return True
@@ -393,16 +451,32 @@ def is_whitelisted_for_graph(o, check_call_override=True):
     # Due to the way they're constructed, namedtuple types cannot be converted
     # because they don't expose source code. But we assume they are safe for
     # graph mode since they are just containers.
-    if tf_inspect.isclass(o) and len(o.__bases__) > 1:
-      logging.warn(
-          'Entity {} looks like a namedtuple subclass. Its constructor will'
-          ' not be converted by AutoGraph, but if it has any custom methods,'
-          ' those will be.'.format(o), 1)
-    logging.log(2, 'Whitelisted: %s: named tuple', o)
-    return True
+    if allow_namedtuple_subclass:
+      if not any(inspect_utils.isnamedtuple(base) for base in o.__bases__):
+        logging.log(2, 'Whitelisted: %s: named tuple', o)
+        return True
+    else:
+      logging.log(2, 'Whitelisted: %s: named tuple or subclass', o)
+      return True
 
   logging.log(2, 'Not whitelisted: %s: default rule', o)
   return False
+
+
+def is_in_whitelist_cache(entity, options):
+  try:
+    return _WHITELIST_CACHE.has(entity, options)
+  except TypeError:
+    # Catch-all for entities that are unhashable or don't allow weakrefs.
+    return False
+
+
+def cache_whitelisted(entity, options):
+  try:
+    _WHITELIST_CACHE[entity][options] = True
+  except TypeError:
+    # Catch-all for entities that are unhashable or don't allow weakrefs.
+    pass
 
 
 # TODO(mdan): Rename to convert_*_node to avoid confusion with convert.
@@ -422,7 +496,7 @@ def convert_entity_to_ast(o, program_ctx):
             keyed by their symbol name.
 
   Raises:
-    ValueError: if the entity type is not supported.
+    NotImplementedError: if entity is of a type that is not yet supported.
   """
   logging.log(1, 'Converting %s', o)
 
@@ -439,13 +513,12 @@ def convert_entity_to_ast(o, program_ctx):
         'cannot convert entity "{}": object conversion is not yet'
         ' supported.'.format(o))
   else:
-    raise ValueError(
+    raise NotImplementedError(
         'Entity "%s" has unsupported type "%s". Only functions and classes are '
         'supported for now.' % (o, type(o)))
 
   if logging.has_verbosity(2):
-    logging.log(2, 'Compiled output of %s:\n\n%s\n', o,
-                compiler.ast_to_source(nodes))
+    logging.log(2, 'Compiled output of %s:\n\n%s\n', o, parser.unparse(nodes))
   if logging.has_verbosity(4):
     for n in nodes:
       logging.log(4, 'Compiled AST of %s:\n\n%s\n\n', o,
@@ -485,9 +558,7 @@ def convert_class_to_ast(c, program_ctx):
     if inspect_utils.getdefiningclass(m, c) is not c:
       continue
     (node,), _, entity_info = convert_func_to_ast(
-        m,
-        program_ctx=program_ctx,
-        do_rename=False)
+        m, program_ctx=program_ctx, do_rename=False)
     class_namespace.update(entity_info.namespace)
     converted_members[m] = node
 
@@ -512,7 +583,7 @@ def convert_class_to_ast(c, program_ctx):
     if isinstance(object, base):
       base_names.append('object')
       continue
-    if is_whitelisted_for_graph(base):
+    if is_whitelisted(base):
       alias = namer.new_symbol(base.__name__, ())
       output_nodes.append(
           gast.ImportFrom(
@@ -528,7 +599,9 @@ def convert_class_to_ast(c, program_ctx):
     renames[qual_names.QN(base.__name__)] = qual_names.QN(alias)
 
   # Generate the definition of the converted class.
-  bases = [gast.Name(n, gast.Load(), None) for n in base_names]
+  bases = [
+      gast.Name(n, ctx=gast.Load(), annotation=None, type_comment=None)
+      for n in base_names]
   class_def = gast.ClassDef(
       class_name,
       bases=bases,
@@ -574,9 +647,11 @@ def _add_self_references(namespace, autograph_module):
     ag_internal = imp.new_module('autograph')
     ag_internal.__dict__.update(autograph_module.__dict__)
     ag_internal.ConversionOptions = converter.ConversionOptions
+    ag_internal.STD = converter.STANDARD_OPTIONS
     ag_internal.Feature = converter.Feature
     ag_internal.utils = utils
-    ag_internal.function_scope = function_wrapping.function_scope
+    ag_internal.FunctionScope = function_wrappers.FunctionScope
+    ag_internal.with_function_scope = function_wrappers.with_function_scope
     # TODO(mdan): Add safeguards against name clashes.
     # We don't want to create a submodule because we want the operators to be
     # accessible as ag__.<operator>
@@ -616,29 +691,31 @@ def convert_func_to_ast(f, program_ctx, do_rename=True):
   _add_self_references(namespace, program_ctx.autograph_module)
   namer = naming.Namer(namespace)
 
+  if isinstance(node, gast.Lambda):
+    new_name = namer.new_symbol('tf__lambda', ())
+  elif do_rename:
+    new_name = namer.function_name(f.__name__)
+  else:
+    new_name = f.__name__
+
   entity_info = transformer.EntityInfo(
       source_code=source,
       source_file='<fragment>',
       future_features=future_features,
       namespace=namespace)
-  context = converter.EntityContext(namer, entity_info, program_ctx)
-  try:
-    node = node_to_graph(node, context)
-  except (ValueError, AttributeError, KeyError, NotImplementedError) as e:
-    logging.error(1, 'Error converting %s', f, exc_info=True)
-    raise errors.InternalError('conversion', e)
-    # TODO(mdan): Catch and rethrow syntax errors.
+  context = converter.EntityContext(namer, entity_info, program_ctx, new_name)
+  node = node_to_graph(node, context)
 
   if isinstance(node, gast.Lambda):
-    new_name = namer.new_symbol('tf__lambda', ())
     node = gast.Assign(
-        targets=[gast.Name(new_name, gast.Store(), None)], value=node)
-
+        targets=[
+            gast.Name(
+                new_name, ctx=gast.Store(), annotation=None, type_comment=None)
+        ],
+        value=node)
   elif do_rename:
-    new_name = namer.function_name(f.__name__)
     node.name = new_name
   else:
-    new_name = f.__name__
     assert node.name == new_name
 
   return (node,), new_name, entity_info
@@ -661,6 +738,7 @@ def node_to_graph(node, context):
   unsupported_features_checker.verify(node)
 
   node = converter.standard_analysis(node, context, is_initial=True)
+  node = converter.apply_(node, context, function_scopes)
   node = converter.apply_(node, context, arg_defaults)
   node = converter.apply_(node, context, directives)
   node = converter.apply_(node, context, break_statements)
@@ -678,9 +756,4 @@ def node_to_graph(node, context):
   node = converter.apply_(node, context, control_flow)
   node = converter.apply_(node, context, conditional_expressions)
   node = converter.apply_(node, context, logical_expressions)
-  if context.program.options.uses(converter.Feature.AUTO_CONTROL_DEPS):
-    node = converter.apply_(node, context, side_effect_guards)
-  # TODO(mdan): If function scopes ever does more, the toggle will need moving.
-  if context.program.options.uses(converter.Feature.NAME_SCOPES):
-    node = converter.apply_(node, context, function_scopes)
   return node

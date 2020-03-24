@@ -12,22 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Tests for `tf.data.experimental.unbatch()`."""
+"""Tests for `tf.data.Dataset.unbatch()`."""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
 
 from absl.testing import parameterized
 import numpy as np
 
 from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
+from tensorflow.python.framework import combinations
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import sparse_tensor
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import string_ops
@@ -36,13 +35,14 @@ from tensorflow.python.platform import test
 from tensorflow.python.util import compat
 
 
-@test_util.run_all_in_graph_and_eager_modes
 class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchWithUnknownRankInput(self):
     dataset = dataset_ops.Dataset.from_tensors([0, 1, 2, 3]).unbatch()
     self.assertDatasetProduces(dataset, range(4))
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchScalarDataset(self):
     data = tuple([math_ops.range(10) for _ in range(3)])
     data = dataset_ops.Dataset.from_tensor_slices(data)
@@ -54,6 +54,14 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
 
     self.assertDatasetProduces(data, [(i,) * 3 for i in range(10)])
 
+  @combinations.generate(test_base.default_test_combinations())
+  def testUnbatchNestedDataset(self):
+    data = dataset_ops.Dataset.from_tensors(
+        [dataset_ops.Dataset.range(10) for _ in range(10)])
+    data = data.unbatch().flat_map(lambda x: x)
+    self.assertDatasetProduces(data, list(range(10)) * 10)
+
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchDatasetWithStrings(self):
     data = tuple([math_ops.range(10) for _ in range(3)])
     data = dataset_ops.Dataset.from_tensor_slices(data)
@@ -67,6 +75,7 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     self.assertDatasetProduces(
         data, [(i, compat.as_bytes(str(i)), i) for i in range(10)])
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchDatasetWithSparseTensor(self):
     st = sparse_tensor.SparseTensorValue(
         indices=[[i, i] for i in range(10)],
@@ -81,6 +90,7 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     ]
     self.assertDatasetProduces(data, expected_output=expected_output)
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchDatasetWithDenseSparseAndRaggedTensor(self):
     st = sparse_tensor.SparseTensorValue(
         indices=[[i, i] for i in range(10)],
@@ -98,6 +108,7 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     self.assertDatasetProduces(
         data, expected_output=expected_output)
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchDatasetWithRaggedTensor(self):
     rt = ragged_factory_ops.constant_value([[[0]], [[1]], [[2]], [[3]], [[4]],
                                             [[5]], [[6]], [[7]], [[8]], [[9]]])
@@ -113,6 +124,7 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     self.assertDatasetProduces(
         data, expected_output=expected_output)
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchSingleElementTupleDataset(self):
     data = tuple([(math_ops.range(10),) for _ in range(3)])
     data = dataset_ops.Dataset.from_tensor_slices(data)
@@ -124,6 +136,7 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
 
     self.assertDatasetProduces(data, [((i,),) * 3 for i in range(10)])
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchMultiElementTupleDataset(self):
     data = tuple([(math_ops.range(10 * i, 10 * i + 10),
                    array_ops.fill([10], "hi")) for i in range(3)])
@@ -140,6 +153,7 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
         data,
         [((i, b"hi"), (10 + i, b"hi"), (20 + i, b"hi")) for i in range(10)])
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchEmpty(self):
     data = dataset_ops.Dataset.from_tensors(
         (constant_op.constant([]), constant_op.constant([], shape=[0, 4]),
@@ -147,15 +161,15 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
     data = data.unbatch()
     self.assertDatasetProduces(data, [])
 
+  @combinations.generate(test_base.default_test_combinations())
   def testUnbatchStaticShapeMismatch(self):
     data = dataset_ops.Dataset.from_tensors((np.arange(7), np.arange(8),
                                              np.arange(9)))
     with self.assertRaises(ValueError):
       data.unbatch()
 
-  # Note: dynamic shape mismatch is graph specific test.
-  @test_util.run_deprecated_v1
-  def testSkipEagerUnbatchDynamicShapeMismatch(self):
+  @combinations.generate(test_base.graph_only_combinations())
+  def testUnbatchDynamicShapeMismatch(self):
     ph1 = array_ops.placeholder(dtypes.int32, shape=[None])
     ph2 = array_ops.placeholder(dtypes.int32, shape=None)
     data = dataset_ops.Dataset.from_tensors((ph1, ph2))
@@ -183,6 +197,25 @@ class UnbatchTest(test_base.DatasetTestBase, parameterized.TestCase):
           })
       with self.assertRaises(errors.InvalidArgumentError):
         self.evaluate(next_element)
+
+  @combinations.generate(test_base.default_test_combinations())
+  def testUnbatchDatasetWithUintDtypes(self):
+    components = (
+        np.tile(np.array([[0], [1], [2], [3]], dtype=np.uint8), 2),
+        np.tile(np.array([[1], [2], [3], [256]], dtype=np.uint16), 2),
+        np.tile(np.array([[2], [3], [4], [65536]], dtype=np.uint32), 2),
+        np.tile(np.array([[3], [4], [5], [4294967296]], dtype=np.uint64), 2),
+    )
+    expected_types = (dtypes.uint8, dtypes.uint16, dtypes.uint32, dtypes.uint64)
+    expected_output = [tuple([c[i] for c in components]) for i in range(4)]
+
+    data = dataset_ops.Dataset.from_tensor_slices(components)
+    data = data.batch(2)
+    self.assertEqual(expected_types, dataset_ops.get_legacy_output_types(data))
+
+    data = data.unbatch()
+    self.assertEqual(expected_types, dataset_ops.get_legacy_output_types(data))
+    self.assertDatasetProduces(data, expected_output)
 
 
 if __name__ == "__main__":

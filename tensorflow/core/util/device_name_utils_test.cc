@@ -57,7 +57,8 @@ bool RoundTripPartialName(int parts_to_test, const std::vector<string>& parts,
       strings::StrAppend(&expected, "/device:", parts[3]);
     } else {
       strings::StrAppend(&original, "/", parts[3]);
-      strings::StrAppend(&expected, "/device:", str_util::Uppercase(parts[3]));
+      strings::StrAppend(&expected,
+                         "/device:", absl::AsciiStrToUpper(parts[3]));
     }
   }
   return RoundTripParsedName(original, expected);
@@ -276,6 +277,19 @@ TEST(DeviceNameUtilsTest, Basic) {
                                        /*explicitDevice=*/true));
     }
   }
+  {
+    DeviceNameUtils::ParsedName x, y;
+    DeviceNameUtils::ParseFullName("/job:work/replica:1/task:3/device:GPU:*",
+                                   &x);
+    DeviceNameUtils::ParseFullName("/device:CPU:*", &y);
+    EXPECT_FALSE(DeviceNameUtils::AreCompatibleDevNames(x, y));
+  }
+  {
+    DeviceNameUtils::ParsedName x, y;
+    DeviceNameUtils::ParseFullName("/job:work/replica:1/task:3", &x);
+    DeviceNameUtils::ParseFullName("/device:CPU:*", &y);
+    EXPECT_TRUE(DeviceNameUtils::AreCompatibleDevNames(x, y));
+  }
 }
 
 static bool IsCSHelper(StringPiece pattern, StringPiece actual) {
@@ -408,8 +422,7 @@ static void MergeDevNamesError(const string& name_a, const string& name_b,
   DeviceNameUtils::ParsedName target_a = Name(name_a);
   Status s = DeviceNameUtils::MergeDevNames(&target_a, Name(name_b));
   EXPECT_EQ(s.code(), error::INVALID_ARGUMENT);
-  EXPECT_TRUE(str_util::StrContains(s.error_message(), expected_error_substr))
-      << s;
+  EXPECT_TRUE(absl::StrContains(s.error_message(), expected_error_substr)) << s;
 }
 
 static void MergeOverrideHelper(const string& target, const string& name,
@@ -426,8 +439,6 @@ static void MergeOverrideHelper(const string& target, const string& name,
 }
 
 TEST(DeviceNameUtilsTest, MergeDevNames) {
-  DeviceNameUtils::ParsedName target;
-
   // Idempotence tests.
   MergeDevNamesHelper("", "", "");
   MergeDevNamesHelper("/job:foo/replica:1/task:2/cpu:1",
@@ -511,11 +522,11 @@ TEST(DeviceNameUtilsTest, MergeOverrideDevNames) {
 TEST(DeviceNameUtilsTest, GetNamesForDeviceMappings) {
   DeviceNameUtils::ParsedName p =
       Name("/job:foo/replica:10/task:0/device:GPU:1");
-  EXPECT_EQ(str_util::Join(DeviceNameUtils::GetNamesForDeviceMappings(p), ","),
+  EXPECT_EQ(absl::StrJoin(DeviceNameUtils::GetNamesForDeviceMappings(p), ","),
             "/job:foo/replica:10/task:0/device:GPU:1,"
             "/job:foo/replica:10/task:0/gpu:1");
   p.has_task = false;
-  EXPECT_EQ(str_util::Join(DeviceNameUtils::GetNamesForDeviceMappings(p), ","),
+  EXPECT_EQ(absl::StrJoin(DeviceNameUtils::GetNamesForDeviceMappings(p), ","),
             "");
 }
 

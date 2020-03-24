@@ -1,12 +1,15 @@
-licenses(["notice"])  # Apache 2.0
+load("//tensorflow:tensorflow.bzl", "cuda_py_test")
+
+package(
+    licenses = ["notice"],  # Apache 2.0
+)
 
 exports_files(["LICENSE"])
-
-load("//tensorflow:tensorflow.bzl", "cuda_py_test")
 
 py_library(
     name = "integration_scripts",
     srcs = [
+        "deploy_mnist_cnn.py",
         "export_mnist_cnn.py",
         "export_rnn_cell.py",
         "export_simple_text_embedding.py",
@@ -20,8 +23,10 @@ py_library(
     ],
     visibility = ["//tensorflow:internal"],
     deps = [
+        ":distribution_strategy_utils",
         ":mnist_util",
         "//tensorflow:tensorflow_py",
+        "@absl_py//absl/testing:parameterized",
     ],
 )
 
@@ -34,14 +39,19 @@ py_library(
     ],
 )
 
+py_library(
+    name = "distribution_strategy_utils",
+    srcs = ["distribution_strategy_utils.py"],
+    visibility = ["//tensorflow:internal"],
+    deps = [
+        "//tensorflow/python/distribute:strategy_combinations",
+    ],
+)
+
 cuda_py_test(
     name = "saved_model_test",
     srcs = [
         "saved_model_test.py",
-    ],
-    additional_deps = [
-        ":integration_scripts",
-        "//tensorflow:tensorflow_py",
     ],
     shard_count = 4,
     tags = [
@@ -49,6 +59,13 @@ cuda_py_test(
         "noasan",  # forge input size exceeded
         "nomsan",  # forge input size exceeded
         "notsan",  # forge input size exceeded
+    ],
+    deps = [
+        ":distribution_strategy_utils",
+        ":integration_scripts",
+        "//tensorflow:tensorflow_py",
+        "//tensorflow/python/distribute:combinations",
+        "@absl_py//absl/testing:parameterized",
     ],
 )
 

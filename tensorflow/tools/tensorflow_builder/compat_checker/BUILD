@@ -1,5 +1,9 @@
 # Description:
 #   Tensorflow builder compatibility checker.
+load(
+    "//tensorflow:tensorflow.bzl",
+    "py_test",
+)
 
 licenses(["notice"])  # Apache 2.0
 
@@ -9,9 +13,12 @@ package(
     ],
 )
 
+licenses(["notice"])  # Apache 2.0
+
 py_library(
     name = "compat_checker",
     srcs = ["compat_checker.py"],
+    srcs_version = "PY2AND3",
     deps = [
         "//tensorflow/python:platform",
         "//tensorflow/python:util",
@@ -25,6 +32,8 @@ py_test(
     data = [
         "//tensorflow/tools/tensorflow_builder/compat_checker:test_config",
     ],
+    python_version = "PY3",
+    tags = ["no_pip"],
     deps = [
         ":compat_checker",
         "//tensorflow/python:platform",

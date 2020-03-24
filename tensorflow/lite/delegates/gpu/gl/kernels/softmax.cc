@@ -26,20 +26,21 @@ limitations under the License.
 #include "tensorflow/lite/delegates/gpu/common/status.h"
 #include "tensorflow/lite/delegates/gpu/common/types.h"
 #include "tensorflow/lite/delegates/gpu/common/util.h"
+#include "tensorflow/lite/delegates/gpu/gl/variable.h"
 
 namespace tflite {
 namespace gpu {
 namespace gl {
 namespace {
 
-class SoftMax : public NodeShader {
+class Softmax : public NodeShader {
  public:
   Status GenerateCode(const GenerationContext& ctx,
                       GeneratedCode* generated_code) const final {
-    auto input = ctx.graph->FindInputs(ctx.node->id)[0];
-    auto output = ctx.graph->FindOutputs(ctx.node->id)[0];
-    auto attr =
-        absl::any_cast<SoftMaxAttributes>(ctx.node->operation.attributes);
+    const auto* input = ctx.graph->FindInputs(ctx.node->id)[0];
+    const auto* output = ctx.graph->FindOutputs(ctx.node->id)[0];
+    const auto& attr = absl::any_cast<const SoftmaxAttributes&>(
+        ctx.node->operation.attributes);
     if (input->tensor.shape != output->tensor.shape) {
       return InvalidArgumentError("Input and output shape does not match");
     }
@@ -53,7 +54,7 @@ class SoftMax : public NodeShader {
     for (int i = 0; i < reminder; ++i) {
       mask[i] = 1.0f;
     }
-    std::vector<UniformParameter> parameters = {
+    std::vector<Variable> parameters = {
         {"src_depth", IntegralDivideRoundUp(output->tensor.shape.c, 4)},
         {"mask", mask},
     };
@@ -61,20 +62,24 @@ class SoftMax : public NodeShader {
     std::string source = R"(
   highp float sum = 0.0;
   for (int d = 0; d < $src_depth$ - 1; ++d) {
-    sum += dot(vec4(1.0), exp($input_data_0[gid.x, gid.y, d]$));
+    highp vec4 v = $input_data_0[gid.x, gid.y, d]$;
+    sum += dot(vec4(1.0), exp(v));
   }
   {
     int d = $src_depth$ - 1;
-    sum += dot($mask$, exp($input_data_0[gid.x, gid.y, d]$));
+    highp vec4 v = $input_data_0[gid.x, gid.y, d]$;
+    sum += dot($mask$, exp(v));
   }
   for (int d = 0; d < $src_depth$; ++d) {
-    vec4 temp_sum = exp($input_data_0[gid.x, gid.y, d]$) / sum;
+    highp vec4 v = $input_data_0[gid.x, gid.y, d]$;
+    vec4 temp_sum = exp(v) / sum;
     $output_data_0[gid.x, gid.y, d] = temp_sum$;
   }
 )";
     *generated_code = {
         /*parameters=*/std::move(parameters),
         /*objects=*/{},
+        /*shared_variables=*/{},
         /*workload=*/uint3(output->tensor.shape.w, output->tensor.shape.h, 1),
         /*workgroup=*/uint3(),
         /*source_code=*/std::move(source),
@@ -87,8 +92,8 @@ class SoftMax : public NodeShader {
 
 }  // namespace
 
-std::unique_ptr<NodeShader> NewSoftMaxNodeShader() {
-  return absl::make_unique<SoftMax>();
+std::unique_ptr<NodeShader> NewSoftmaxNodeShader() {
+  return absl::make_unique<Softmax>();
 }
 
 }  // namespace gl
