@@ -1717,25 +1717,74 @@ class FusedBatchNormGradOpBase<VEDevice, T, U> : public OpKernel {
     OP_REQUIRES_OK(
         context, context->allocate_output(4, TensorShape({}), &placeholder_2));
 
+    Tensor y_backprop_transposed ;
+    Tensor x_transposed ;
+    Tensor x_backprop_transposed ;
+    if ( tensor_format_ == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in/out tensor
+
+      const int64 batch = GetTensorDim(x, tensor_format_, 'N');
+
+      const int64 x_rows = GetTensorDim(x, tensor_format_, 'H');
+      const int64 x_cols = GetTensorDim(x, tensor_format_, 'W');
+      const int64 x_depths = GetTensorDim(x, tensor_format_, 'C');
+
+      const int64 y_rows = GetTensorDim(y_backprop, tensor_format_, 'H');
+      const int64 y_cols = GetTensorDim(y_backprop, tensor_format_, 'W');
+      const int64 y_depths = GetTensorDim(y_backprop, tensor_format_, 'C');
+
+      OP_REQUIRES_OK(context,
+		     context->allocate_temp(
+			 reinterpret_cast<DataType>(x.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, x_rows, x_cols, x_depths),
+                         &x_transposed));
+
+      OP_REQUIRES_OK(context,
+		     context->allocate_temp(
+			 reinterpret_cast<DataType>(x.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, x_rows, x_cols, x_depths),
+                         &x_backprop_transposed));
+
+      OP_REQUIRES_OK(context,
+		     context->allocate_temp(
+			 reinterpret_cast<DataType>(x.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, y_rows, y_cols, y_depths),
+                         &y_backprop_transposed)
+		     );
+
+      OP_REQUIRES_OK( context, VEDoTranspose(context, y_backprop, {0,3,1,2}, &y_backprop_transposed));
+      OP_REQUIRES_OK( context, VEDoTranspose(context, x, {0,3,1,2}, &x_transposed));
+    }
+    else {
+      y_backprop_transposed  = y_backprop ;
+      x_transposed           = x ;
+      x_backprop_transposed = *x_backprop ;
+    }
+
     VEOpKernelHelper::ArgsImpl<> args;
 
-    args.addArg<Tensor>(y_backprop); // 0
-    args.addArg<Tensor>(x);
+    args.addArg<Tensor>(y_backprop_transposed); // 0
+    args.addArg<Tensor>(x_transposed);
     args.addArg<Tensor>(scale);
     args.addArg<Tensor>(saved_mean_or_pop_mean);
     args.addArg<Tensor>(saved_maybe_inv_var_or_pop_var);
-    args.addArg<Tensor>(*x_backprop); // 5
+    args.addArg<Tensor>(x_backprop_transposed); // 5
     args.addArg<Tensor>(*scale_backprop);
     args.addArg<Tensor>(*offset_backprop);
     args.addArg<Tensor>(*placeholder_1);
     args.addArg<Tensor>(*placeholder_2);
     args.addArg<U>(epsilon_); // 10
-    args.addArg<int32>((int32)tensor_format_);
+    args.addArg<int32>(FORMAT_NCHW);
     args.addArg<bool>(is_training_);
     args.addArg<int64>(DataTypeToEnum<T>::value);
     args.addArg<int64>(DataTypeToEnum<U>::value); // 14
 
     VEOpKernelHelper::Call(context, "FusedBatchNormGrad", args);
+
+    // if data_format is NHWC, then transpose x_backprop tensor
+    if ( tensor_format_ == FORMAT_NHWC ) {
+      OP_REQUIRES_OK( context, VEDoTranspose(context, x_backprop_transposed, {0,2,3,1}, x_backprop));
+    }
 #else
     // Two placeholders for estimated_mean and estimated_variance, which are
     // used for inference and thus not needed here for gradient computation.
