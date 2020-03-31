@@ -184,7 +184,7 @@ public:
 
             }
         }
-        convert_flag = false;
+        //convert_flag = false;
 
     }
 private:
