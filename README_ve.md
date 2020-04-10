@@ -6,14 +6,14 @@ You can use prebuilt packages if you do not need to modify tensorflow.
 
 We are providing a whl package on github. See [releases](https://github.com/sx-aurora-dev/tensorflow/releases) page.
 
-- tensorflow_ve-2.0.0-cp36-cp36m-linux_x86_64.whl
+- tensorflow_ve-2.1.0-cp36-cp36m-linux_x86_64.whl
 
 Note that we do not release Keras. Please use tf.keras
 
 We have tested on CentOS 7.5 and:
 
-- veos: 2.2.2
-- veoffload: 2.2.2
+- veos: 2.4.1
+- veoffload: 2.4.1
 - python: 3.6
 
 We have installed VEOS and veoffload using [VEOS yum Repository on the
@@ -46,7 +46,7 @@ $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
 (tmp)$ pip install -U six numpy wheel setuptools
-(tmp)% pip install -U tensorflow_ve-2.0.0-cp36-cp36m-linux_x86_64.whl
+(tmp)% pip install -U tensorflow_ve-2.1.0-cp36-cp36m-linux_x86_64.whl
 ```
 
 Now you can run your scripts.
@@ -59,7 +59,7 @@ You may need to rewrite your TF program to support NCHW format.
 
 We have tested on above envirionment with:
 
-- bazel 1.1.0
+- bazel 1.2.1
 - gcc 8.3.1 (devtoolset-8)
 - git 2.9.3 (rh-git29)
 
@@ -72,12 +72,6 @@ addition, you have to install some packages.
 ```
 $ yum install devtoolset-8 rh-git29 veoffload-devel veoffload-veorun-devel
 ```
-
-Install java-11-openjdk that is required by bazel.
-
-- http://mirror.centos.org/centos/7/updates/x86_64/Packages/java-11-openjdk-11.0.3.7-0.el7_6.x86_64.rpm
-- http://mirror.centos.org/centos/7/updates/x86_64/Packages/java-11-openjdk-devel-11.0.3.7-0.el7_6.x86_64.rpm
-- http://mirror.centos.org/centos/7/updates/x86_64/Packages/java-11-openjdk-headless-11.0.3.7-0.el7_6.x86_64.rpm
 
 Install bazel.
 
@@ -105,18 +99,6 @@ You can see a tensorflow package in current direcotry.
 
 We need BAZEL_LINKLIBS and BAZEL_LINKOPTS. See https://github.com/bazelbuild/bazel/issues/10327.
 
-## (option) Build keras
-
-**Note that this is obsolete because current Keras dose not work with TF in master branch as far as we know. Use tf.keras instead.**
-
-Clone https://github.com/sx-aurora-dev/keras.
-
-```
-(tmp)% python setup.py bdist_wheel
-```
-
-You can find a package in `dist` directory.
-
 ## (option) Build veorun_tf
 
 `veorun_tf` is an executable for VE and includes kernel implementaions that are
@@ -129,15 +111,14 @@ veorun_tf by yourself.
 llvm-ve is required to build veorun_tf because intrinsic functions provided by
 llvm-ve are used to write efficient kernels.
 
-You can install the llvm-ve rpm package. See [our
-post](https://sx-aurora-dev.github.io/blog/post/2019-05-22-llvm-rpm/).
+You can install the llvm-ve rpm package. See
+https://github.com/sx-aurora-dev/llvm-project.
 
 ```
 (tmp)% cd <working directory>
 (tmp)% git clone https://github.com/sx-aurora-dev/vetfkernel vetfkernel
-(tmp)% git clone https://github.com/sx-aurora-dev/vednn vetfkernel/libs/vednn
 (tmp)% cd vetfkernel
-(tmp)% (mkdir build && cd build && cmake3 .. && make)
+(tmp)% (mkdir build && cd build && cmake3 -DUSE_PREBUILT_VEDNN=ON .. && make)
 ```
 
 You can specify version of ncc/nc++.
@@ -156,6 +137,6 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 
 We have tested on above envirionment with:
 
-- llvm-ve 1.9.0
+- llvm-ve 1.11.0
 - ncc/nc++ 2.4.1
 
