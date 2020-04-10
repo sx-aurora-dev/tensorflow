@@ -8,16 +8,11 @@ We are providing a whl package on github. See [releases](https://github.com/sx-a
 
 - tensorflow_ve-2.1.0-cp36-cp36m-linux_x86_64.whl
 
-Note that we do not release Keras. Please use tf.keras
-
-We have tested on CentOS 7.5 and:
+We have tested on CentOS 7.7 and:
 
 - veos: 2.4.1
 - veoffload: 2.4.1
 - python: 3.6
-
-We have installed VEOS and veoffload using [VEOS yum Repository on the
-Web](https://sx-aurora.github.io/posts/VEOS-yum-repository/).
 
 ### Enable Huge Page for DMA
 
@@ -51,8 +46,9 @@ $ source ~/.virtualenvs/tmp/bin/activate
 
 Now you can run your scripts.
 
-Important note: Some kernels for VE such as conv2d support only NCHW format.
-You may need to rewrite your TF program to support NCHW format.
+Important note: Some kernels for VE such as conv2d are optimized for NCHW data
+format, while default format of TF is NHWC.  You may need to rewrite your TF
+program to support NCHW format.
 
 
 ## Building TensorFlow
@@ -125,8 +121,8 @@ You can specify version of ncc/nc++.
 
 ```
 (tmp)% (cd build && cmake3 \
-        -DNCC=/opt/nec/ve/bin/ncc-2.4.1 \
-        -DNCXX=/opt/nec/ve/bin/nc++-2.4.1 .. && make)
+        -DNCC=/opt/nec/ve/bin/ncc-3.0.1 \
+        -DNCXX=/opt/nec/ve/bin/nc++-3.0.1 .. && make)
 ```
 
 Your veorun_tf can be used by setting VEORUN_BIN.
@@ -138,5 +134,5 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 We have tested on above envirionment with:
 
 - llvm-ve 1.11.0
-- ncc/nc++ 2.4.1
+- ncc/nc++ 3.0.1
 
