@@ -124,9 +124,11 @@ class VEDeviceTracer : public profiler::ProfilerInterface {
     Status CollectData(RunMetadata* run_metadata) override;
     Status CollectData(XSpace* space) override;
 
+#if 0
     profiler::DeviceType GetDeviceType() override {
       return profiler::DeviceType::kVe;
     }
+#endif
 
   private:
     struct KernelRecords {
@@ -308,7 +310,7 @@ Status VEDeviceTracer::Collect(StepStatsCollector *collector) {
 } // namespace profiler
 
 std::unique_ptr<profiler::ProfilerInterface>
-CreateDeviceTracer(const profiler::ProfilerOptions&) {
+CreateDeviceTracer(const ProfileOptions&) {
   if (const char* tmp = getenv("VE_NODE_NUMBER")) {
     if (atoi(tmp) < 0) {
       return nullptr;

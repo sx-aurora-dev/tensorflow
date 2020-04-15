@@ -977,8 +977,10 @@ Status VEDevice::MaybeCopyTensorToVE(
 Status VEDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
                                           const AllocatorAttributes alloc_attrs,
                                           Tensor* tensor) {
+#if 0
   MEMDEBUG_CACHE_OP(
       (pending_op_name != nullptr ? pending_op_name : "MakeTensorFromProto"));
+#endif
   AllocatorAttributes attr;
   attr.set_on_host(true);
 //  attr.set_gpu_compatible(true);

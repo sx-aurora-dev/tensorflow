@@ -6,8 +6,6 @@ You can use prebuilt packages if you do not need to modify tensorflow.
 
 We are providing a whl package on github. See [releases](https://github.com/sx-aurora-dev/tensorflow/releases) page.
 
-- tensorflow_ve-2.1.0-cp36-cp36m-linux_x86_64.whl
-
 We have tested on CentOS 7.7 and:
 
 - veos: 2.4.1
@@ -55,7 +53,7 @@ program to support NCHW format.
 
 We have tested on above envirionment with:
 
-- bazel 1.2.1
+- bazel 2.0.0
 - gcc 8.3.1 (devtoolset-8)
 - git 2.9.3 (rh-git29)
 

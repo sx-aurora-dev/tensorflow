@@ -130,6 +130,8 @@ static Node* Send(Graph* g, const string& tensor_name,
                   .Attr("send_device_incarnation", 0)  // Do not care.
                   .Attr("recv_device", device_name)
                   .Attr("_hostmem_sendrecv", true)
+                  .Attr("_src", edge->src()->name())
+                  .Attr("_dst", edge->dst()->name())
                   .Finalize(g, &ret));
   return ret;
 }
@@ -145,6 +147,8 @@ static Node* Recv(Graph* g, const string& tensor_name,
           .Attr("send_device_incarnation", 0)
           .Attr("recv_device", device_name)
           .Attr("_hostmem_sendrecv", true)
+          .Attr("_src", edge->src()->name())
+          .Attr("_dst", edge->dst()->name())
           .Finalize(g, &ret));
   return ret;
 }
