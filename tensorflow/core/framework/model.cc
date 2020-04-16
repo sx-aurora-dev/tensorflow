@@ -135,7 +135,7 @@ class InterleaveMany : public Node {
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     return std::make_shared<InterleaveMany>(
         Args{id_, name_, std::move(output)});
   }
@@ -144,7 +144,7 @@ class InterleaveMany : public Node {
   // output time of inputs comprising the interleave "cycle".
   double OutputTimeLocked(std::vector<double>* input_times,
                           std::map<string, double>* gradient) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     if (num_inputs() <= 1) {
       return SelfProcessingTimeLocked();
     }
@@ -188,7 +188,7 @@ class InterleaveMany : public Node {
   // The processing time is the sum of the self processing time and the average
   // processing time of inputs comprising the interleave "cycle".
   double TotalProcessingTimeLocked(std::map<string, double>* processing_times)
-      override SHARED_LOCKS_REQUIRED(mu_) {
+      override TF_SHARED_LOCKS_REQUIRED(mu_) {
     double self_processing_time = SelfProcessingTimeLocked();
     if (processing_times) {
       (*processing_times)[long_name()] = self_processing_time;
@@ -223,7 +223,7 @@ class AsyncInterleaveMany : public Node {
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     std::vector<std::shared_ptr<Parameter>> parameters;
     for (auto& pair : parameters_) {
       parameters.push_back(pair.second);
@@ -239,7 +239,7 @@ class AsyncInterleaveMany : public Node {
   // `buffer_size` is derived from parallelism.
   double OutputTimeLocked(std::vector<double>* input_times,
                           std::map<string, double>* gradient) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     if (num_inputs() <= 1) {
       return SelfProcessingTimeLocked();
     }
@@ -309,7 +309,7 @@ class AsyncInterleaveMany : public Node {
   // The processing time is the sum of the self processing time and the average
   // processing time of inputs comprising the interleave "cycle".
   double TotalProcessingTimeLocked(std::map<string, double>* processing_times)
-      override SHARED_LOCKS_REQUIRED(mu_) {
+      override TF_SHARED_LOCKS_REQUIRED(mu_) {
     double self_processing_time = SelfProcessingTimeLocked();
     if (processing_times) {
       (*processing_times)[long_name()] = self_processing_time;
@@ -333,7 +333,7 @@ class KnownRatio : public Node {
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     return std::make_shared<KnownRatio>(Args{id_, name_, std::move(output)},
                                         ratio_);
   }
@@ -342,7 +342,7 @@ class KnownRatio : public Node {
   // `ratio_` and the sum of output times of inputs.
   double OutputTimeLocked(std::vector<double>* input_times,
                           std::map<string, double>* gradient) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     if (ratio_ == 0) {
       return SelfProcessingTimeLocked();
     }
@@ -378,7 +378,7 @@ class KnownRatio : public Node {
   // The processing time is the sum of the self processing time and the product
   // of `ratio_` and the sum of processing times of inputs.
   double TotalProcessingTimeLocked(std::map<string, double>* processing_times)
-      override SHARED_LOCKS_REQUIRED(mu_) {
+      override TF_SHARED_LOCKS_REQUIRED(mu_) {
     double self_processing_time = SelfProcessingTimeLocked();
     if (processing_times) {
       (*processing_times)[long_name()] = self_processing_time;
@@ -405,7 +405,7 @@ class AsyncKnownRatio : public Node {
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     std::vector<std::shared_ptr<Parameter>> parameters;
     for (auto& pair : parameters_) {
       parameters.push_back(pair.second);
@@ -423,7 +423,7 @@ class AsyncKnownRatio : public Node {
   // Current implementation assumes that there is at most 1 parameter per node.
   double OutputTimeLocked(std::vector<double>* input_times,
                           std::map<string, double>* gradient) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     double parallelism = 1.0;
     double buffer_size = 0.0;
     auto* parallelism_parameter = gtl::FindOrNull(parameters_, kParallelism);
@@ -514,7 +514,7 @@ class AsyncKnownRatio : public Node {
   // The processing time is the sum of the self processing time and the product
   // of `ratio_` and the sum of processing times of inputs.
   double TotalProcessingTimeLocked(std::map<string, double>* processing_times)
-      override SHARED_LOCKS_REQUIRED(mu_) {
+      override TF_SHARED_LOCKS_REQUIRED(mu_) {
     double self_processing_time = SelfProcessingTimeLocked();
     if (processing_times) {
       (*processing_times)[long_name()] = self_processing_time;
@@ -535,7 +535,7 @@ class UnknownRatio : public Node {
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     return std::make_shared<UnknownRatio>(Args{id_, name_, std::move(output)});
   }
 
@@ -543,7 +543,7 @@ class UnknownRatio : public Node {
   // the ratio estimate and the sum of output times of inputs.
   double OutputTimeLocked(std::vector<double>* input_times,
                           std::map<string, double>* gradient) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     if (num_elements_ == 0 || inputs_.empty() ||
         inputs_.front()->num_elements() == 0) {
       return SelfProcessingTimeLocked();
@@ -582,7 +582,7 @@ class UnknownRatio : public Node {
   // The processing time is the sum of the self processing time and the product
   // of the ratio estimate and the sum of processing times of inputs.
   double TotalProcessingTimeLocked(std::map<string, double>* processing_times)
-      override SHARED_LOCKS_REQUIRED(mu_) {
+      override TF_SHARED_LOCKS_REQUIRED(mu_) {
     double self_processing_time = SelfProcessingTimeLocked();
     if (processing_times) {
       (*processing_times)[long_name()] = self_processing_time;
@@ -608,20 +608,20 @@ class Unknown : public Node {
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     return std::make_shared<Unknown>(Args{id_, name_, std::move(output)});
   }
 
   // The output time is the sum of output times of inputs.
   double OutputTimeLocked(std::vector<double>* input_times,
                           std::map<string, double>* gradient) const override
-      SHARED_LOCKS_REQUIRED(mu_) {
+      TF_SHARED_LOCKS_REQUIRED(mu_) {
     return OutputTimeForInputs(input_times, gradient);
   }
 
   // The processing time is the sum of processing times of inputs.
   double TotalProcessingTimeLocked(std::map<string, double>* processing_times)
-      override SHARED_LOCKS_REQUIRED(mu_) {
+      override TF_SHARED_LOCKS_REQUIRED(mu_) {
     return TotalProcessingTimeForInputs(processing_times);
   }
 };
@@ -667,8 +667,202 @@ std::shared_ptr<Node> MakeUnknownNode(Node::Args args) {
   return std::make_shared<Unknown>(std::move(args));
 }
 
-std::shared_ptr<Node> Model::AddNode(Node::Factory factory, const string& name,
-                                     const string& output_name) {
+void Node::CollectTunableParameters(
+    std::map<string, std::shared_ptr<Parameter>>* parameters) const {
+  if (!autotune_) {
+    return;
+  }
+  tf_shared_lock l(mu_);
+  for (auto& pair : parameters_) {
+    if (pair.second->state->tunable) {
+      parameters->insert(std::make_pair(long_name(), pair.second));
+    }
+  }
+  for (auto& input : inputs_) {
+    input->CollectTunableParameters(parameters);
+  }
+}
+
+string Node::DebugString() const {
+  tf_shared_lock l(mu_);
+  string result;
+  strings::StrAppend(&result, long_name(), ":\n");
+  strings::StrAppend(&result, "  autotune=", autotune_.load(), "\n");
+  strings::StrAppend(&result, "  buffered_bytes=", buffered_bytes_.load(),
+                     "\n");
+  strings::StrAppend(&result, "  buffered_elements=", buffered_elements_.load(),
+                     "\n");
+  strings::StrAppend(&result, "  bytes_consumed=", bytes_consumed_.load(),
+                     "\n");
+  strings::StrAppend(&result, "  bytes_produced=", bytes_produced_.load(),
+                     "\n");
+  strings::StrAppend(&result, "  processing_time=", processing_time_, "\n");
+  strings::StrAppend(&result, "  num_elements=", num_elements_.load(), "\n");
+  string inputs;
+  for (auto& input : inputs_) {
+    strings::StrAppend(&inputs, input->long_name(), ",");
+  }
+  strings::StrAppend(&result, "  inputs={", inputs, "}\n");
+  for (auto& input : inputs_) {
+    strings::StrAppend(&result, input->DebugString());
+  }
+  return result;
+}
+
+void Node::FlushMetrics() {
+  if (!record_metrics_) {
+    return;
+  }
+  metrics_.record_bytes_consumed(bytes_consumed_);
+  metrics_.record_bytes_produced(bytes_produced_);
+  metrics_.record_num_elements(num_elements_);
+}
+
+double Node::OutputTime(std::vector<double>* input_times,
+                        std::map<string, double>* gradient) const {
+  tf_shared_lock l(mu_);
+  return OutputTimeLocked(input_times, gradient);
+}
+
+std::shared_ptr<Node> Node::Snapshot(std::shared_ptr<Node> output) {
+  tf_shared_lock l(mu_);
+  std::shared_ptr<Node> result = Clone(output);
+  {
+    result->autotune_.store(autotune_);
+    result->buffered_bytes_.store(buffered_bytes_);
+    result->buffered_elements_.store(buffered_elements_);
+    result->bytes_consumed_.store(bytes_consumed_);
+    result->bytes_produced_.store(bytes_produced_);
+    result->num_elements_.store(num_elements_);
+    result->record_metrics_.store(false);
+    mutex_lock l2(result->mu_);
+    result->parameters_ = parameters_;
+    result->processing_time_ = processing_time_;
+  }
+  for (auto& input : inputs_) {
+    result->add_input(input->Snapshot(result));
+  }
+  return result;
+}
+
+double Node::SelfProcessingTime() const {
+  tf_shared_lock l(mu_);
+  return SelfProcessingTimeLocked();
+}
+
+double Node::TotalBufferedBytes() const {
+  if (!autotune_) {
+    return 0;
+  }
+  tf_shared_lock l(mu_);
+  double result = 0;
+  auto* parameter = gtl::FindOrNull(parameters_, kBufferSize);
+  if (!parameter) {
+    parameter = gtl::FindOrNull(parameters_, kParallelism);
+  }
+  if (parameter) {
+    result = buffered_bytes_;
+  }
+  for (auto& input : inputs_) {
+    result += input->TotalBufferedBytes();
+  }
+  return result;
+}
+
+double Node::TotalMaximumBufferedBytes() const {
+  if (!autotune_) {
+    return 0;
+  }
+  tf_shared_lock l(mu_);
+  double result = 0;
+  auto* parameter = gtl::FindOrNull(parameters_, kBufferSize);
+  if (!parameter) {
+    parameter = gtl::FindOrNull(parameters_, kParallelism);
+  }
+  if (parameter) {
+    result = (*parameter)->value * AverageBufferedElementSize();
+  }
+  for (auto& input : inputs_) {
+    result += input->TotalMaximumBufferedBytes();
+  }
+  return result;
+}
+
+double Node::TotalProcessingTime(std::map<string, double>* processing_times) {
+  tf_shared_lock l(mu_);
+  return TotalProcessingTimeLocked(processing_times);
+}
+
+double Node::AverageBufferedElementSize() const {
+  if (buffered_elements_ == 0) {
+    return 0;
+  }
+  return static_cast<double>(buffered_bytes_) /
+         static_cast<double>(buffered_elements_);
+}
+
+double Node::OutputTimeForInputs(std::vector<double>* input_times,
+                                 std::map<string, double>* gradient) const {
+  double sum = 0;
+  for (auto& input : inputs_) {
+    // Inputs for which autotuning is disabled are excluded.
+    if (input->autotune()) {
+      sum += input->OutputTime(input_times, gradient);
+    }
+  }
+  return sum;
+}
+
+double Node::TotalProcessingTimeForInputs(
+    std::map<string, double>* processing_times) {
+  // If the number of elements produced by an input is smaller than this
+  // constant, then its processing time is estimated using a weighted average
+  // of the empirical processing time and processing time history.
+  constexpr int kNumElementsThreshold = 30;
+
+  // Identifies the minimum number of input processing times to collect
+  // before the processing time history is used as a prior.
+  constexpr int kCountThreshold = 30;
+
+  double sum = 0;
+  for (auto& input : inputs_) {
+    // Inputs for which autotuning is disabled are excluded.
+    if (input->autotune()) {
+      double input_processing_time =
+          input->TotalProcessingTime(processing_times);
+      int64 num_elements = input->num_elements();
+      if (num_elements < kNumElementsThreshold) {
+        if (input_processing_time_count_ < kCountThreshold) {
+          sum += input_processing_time;
+        } else {
+          // The fewer elements the input has produced so far, the more weight
+          // is assigned to the prior to reduce volatility.
+          double prior_weight = 1.0L / static_cast<double>(2 << num_elements);
+          double prior =
+              input_processing_time_sum_ / input_processing_time_count_;
+          sum += (1.0L - prior_weight) * input_processing_time +
+                 prior_weight * prior;
+        }
+      } else {
+        sum += input_processing_time;
+        input_processing_time_count_++;
+        input_processing_time_sum_ += input_processing_time;
+      }
+    }
+  }
+  return sum;
+}
+
+double Node::SelfProcessingTimeLocked() const {
+  if (num_elements_ == 0) {
+    return 0;
+  }
+  return static_cast<double>(processing_time_) /
+         static_cast<double>(num_elements_);
+}
+
+void Model::AddNode(Node::Factory factory, const string& name,
+                    const string& output_name, Node** out_node) {
   // The name captures the sequence of iterators joined by `::`. We use the full
   // sequence as the key in the lookup table, but only the last element of the
   // sequence as the name node.
@@ -700,7 +894,7 @@ std::shared_ptr<Node> Model::AddNode(Node::Factory factory, const string& name,
   collect_resource_usage_ =
       collect_resource_usage_ || node->has_tunable_parameters();
   lookup_table_.insert(std::make_pair(name, node));
-  return node;
+  *out_node = node.get();
 }
 
 void Model::AddProcessingTime(const string& name, int64 delta) {
@@ -709,6 +903,22 @@ void Model::AddProcessingTime(const string& name, int64 delta) {
   if (node) {
     (*node)->add_processing_time(delta);
   }
+}
+
+void Model::FlushMetrics() {
+  tf_shared_lock l(mu_);
+  for (const auto& pair : lookup_table_) {
+    pair.second->FlushMetrics();
+  }
+}
+
+int64 Model::NumElements(const string& name) {
+  tf_shared_lock l(mu_);
+  auto node = gtl::FindOrNull(lookup_table_, name);
+  if (node) {
+    return (*node)->num_elements();
+  }
+  return 0;
 }
 
 void Model::Optimize(AutotuneAlgorithm algorithm, int64 cpu_budget,
@@ -721,23 +931,6 @@ void Model::Optimize(AutotuneAlgorithm algorithm, int64 cpu_budget,
       OptimizeGradientDescent(cpu_budget, ram_budget);
       break;
   }
-}
-
-void Model::RecordElement(const string& name) {
-  tf_shared_lock l(mu_);
-  auto node = gtl::FindOrNull(lookup_table_, name);
-  if (node) {
-    (*node)->record_element();
-  }
-}
-
-int64 Model::NumElements(const string& name) {
-  tf_shared_lock l(mu_);
-  auto node = gtl::FindOrNull(lookup_table_, name);
-  if (node) {
-    return (*node)->num_elements();
-  }
-  return 0;
 }
 
 void Model::RecordStart(const string& name, bool stop_output) {
@@ -772,7 +965,6 @@ void Model::RemoveNode(const string& name) {
       (*node)->output()->remove_input(*node);
     }
     VLOG(3) << "Removing " << (*node)->long_name();
-    remove_node_hook_(*node);
   }
   lookup_table_.erase(name);
 }
@@ -786,7 +978,7 @@ std::map<string, std::shared_ptr<Parameter>> Model::CollectTunableParameters(
 
 std::map<string, std::shared_ptr<Parameter>> Model::CollectEssentialParallelism(
     std::shared_ptr<Node> node) {
-  // Parallelism parameter is considered to be essential if the coressponding
+  // Parallelism parameter is considered to be essential if the corresponding
   // transformations's processing time is greater than essential rate times the
   // average transformation self processing time.
   constexpr double kEssentialRate = 0.3L;

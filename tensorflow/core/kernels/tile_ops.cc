@@ -194,7 +194,7 @@ class TileOp : public OpKernel {
     const Tensor& multiples = context->input(1);
 
     OP_REQUIRES(
-        context, IsLegacyVector(multiples.shape()),
+        context, TensorShapeUtils::IsVector(multiples.shape()),
         errors::InvalidArgument("Expected multiples to be 1-D, but got shape ",
                                 multiples.shape().DebugString()));
     OP_REQUIRES(context, input.dims() == multiples.NumElements(),
@@ -368,7 +368,7 @@ class TileGradientOp : public OpKernel {
     const Tensor& input = context->input(0);
     const Tensor& multiples = context->input(1);
     OP_REQUIRES(
-        context, IsLegacyVector(multiples.shape()),
+        context, TensorShapeUtils::IsVector(multiples.shape()),
         errors::InvalidArgument("Expected multiples to be 1-D, but got shape ",
                                 multiples.shape().DebugString()));
     OP_REQUIRES(context, input.dims() == multiples.NumElements(),

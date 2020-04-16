@@ -19,6 +19,7 @@ limitations under the License.
 #include <cmath>
 
 #include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/kernel_shape_util.h"
 #include "tensorflow/core/framework/numeric_op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/kernels/conv_grad_ops.h"
 #include "tensorflow/core/kernels/depthwise_conv_op.h"
-#include "tensorflow/core/kernels/ops_util.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
@@ -124,13 +124,20 @@ typedef Eigen::VeDevice VEDevice;
       errors::InvalidArgument(                                                 \
           label, ": depth_multiplier * in_depth not equal to out_depth"));     \
   const auto stride = stride_;                                                 \
-  int64 out_rows = 0, out_cols = 0, pad_rows = 0, pad_cols = 0;                \
-  OP_REQUIRES_OK(context,                                                      \
-                 GetWindowedOutputSize(input_rows, filter_rows, stride,        \
-                                       padding_, &out_rows, &pad_rows));       \
-  OP_REQUIRES_OK(context,                                                      \
-                 GetWindowedOutputSize(input_cols, filter_cols, stride,        \
-                                       padding_, &out_cols, &pad_cols));       \
+  int64 out_rows = 0, out_cols = 0, pad_top = 0, pad_bottom = 0, pad_left = 0, \
+        pad_right = 0;                                                         \
+  if (padding_ == Padding::EXPLICIT) {                                         \
+    GetExplicitPaddingForDim(explicit_paddings_, data_format_, 'H', &pad_top,  \
+                             &pad_bottom);                                     \
+    GetExplicitPaddingForDim(explicit_paddings_, data_format_, 'W', &pad_left, \
+                             &pad_right);                                      \
+  }                                                                            \
+  OP_REQUIRES_OK(context, GetWindowedOutputSizeVerbose(                        \
+                              input_rows, filter_rows, stride_, padding_,      \
+                              &out_rows, &pad_top, &pad_bottom));              \
+  OP_REQUIRES_OK(context, GetWindowedOutputSizeVerbose(                        \
+                              input_cols, filter_cols, stride_, padding_,      \
+                              &out_cols, &pad_left, &pad_right));              \
   OP_REQUIRES(                                                                 \
       context, output_rows == out_rows,                                        \
       errors::InvalidArgument(                                                 \
@@ -150,8 +157,8 @@ typedef Eigen::VeDevice VEDevice;
   args.filter_cols = filter_cols;                                              \
   args.depth_multiplier = depth_multiplier;                                    \
   args.stride = stride;                                                        \
-  args.pad_rows = pad_rows;                                                    \
-  args.pad_cols = pad_cols;                                                    \
+  args.pad_rows = pad_top;                                                     \
+  args.pad_cols = pad_left;                                                    \
   args.out_rows = out_rows;                                                    \
   args.out_cols = out_cols;                                                    \
   args.out_depth = out_depth;                                                  \
@@ -159,7 +166,7 @@ typedef Eigen::VeDevice VEDevice;
           << input_rows << ", " << input_cols << ", " << in_depth              \
           << "]; Filter: [" << filter_rows << ", " << filter_cols << ", "      \
           << in_depth << ", " << depth_multiplier << "]; stride = " << stride  \
-          << ", pad_rows = " << pad_rows << ", pad_cols = " << pad_cols        \
+          << ", pad_rows = " << pad_top << ", pad_cols = " << pad_left         \
           << ", output: [" << batch << ", " << out_rows << ", " << out_cols    \
           << ", " << out_depth << "]";
 
@@ -574,6 +581,10 @@ class DepthwiseConv2dNativeBackpropInputOp : public OpKernel {
         errors::InvalidArgument("Current implementation does not yet support "
                                 "strides in the batch and depth dimensions."));
     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("explicit_paddings", &explicit_paddings_));
+    OP_REQUIRES_OK(context, CheckValidPadding(padding_, explicit_paddings_,
+                                              /*num_dims=*/4, data_format_));
 
     // For in_depth == 1 and grouped convolutions.
     use_cudnn_ = CanUseCudnn() && std::is_same<Device, GPUDevice>::value;
@@ -636,7 +647,7 @@ class DepthwiseConv2dNativeBackpropInputOp : public OpKernel {
             << filter_cols << ", " << in_depth << ", " << depth_multiplier
             << "]; Output: [" << batch << ", " << out_rows << ", " << out_cols
             << ", " << out_depth << "], stride = " << stride_
-            << ", pad_rows = " << pad_rows << ", pad_cols = " << pad_cols
+            << ", pad_rows = " << pad_top << ", pad_cols = " << pad_left
             << ", Use cuDNN: " << use_cudnn;
 
     if (use_cudnn) {
@@ -660,8 +671,8 @@ class DepthwiseConv2dNativeBackpropInputOp : public OpKernel {
       // conv is supported.
       launcher_(context, use_cudnn_, cudnn_use_autotune_, out_backprop,
                 reshaped_filter, /*row_dilation=*/1, /*col_dilation=*/1,
-                stride_, stride_, padding_, /*explicit_paddings=*/{},
-                in_backprop, data_format_);
+                stride_, stride_, padding_, explicit_paddings_, in_backprop,
+                data_format_);
       return;
     }
 
@@ -679,6 +690,7 @@ class DepthwiseConv2dNativeBackpropInputOp : public OpKernel {
  private:
   std::vector<int32> strides_;
   Padding padding_;
+  std::vector<int64> explicit_paddings_;
   TensorFormat data_format_;
   int64 stride_;
 
@@ -1063,6 +1075,10 @@ class DepthwiseConv2dNativeBackpropFilterOp : public OpKernel {
         errors::InvalidArgument("Current implementation does not yet support "
                                 "strides in the batch and depth dimensions."));
     OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("explicit_paddings", &explicit_paddings_));
+    OP_REQUIRES_OK(context, CheckValidPadding(padding_, explicit_paddings_,
+                                              /*num_dims=*/4, data_format_));
 
     // For in_depth == 1 and grouped convolutions.
     use_cudnn_ = CanUseCudnn() && std::is_same<Device, GPUDevice>::value;
@@ -1131,7 +1147,7 @@ class DepthwiseConv2dNativeBackpropFilterOp : public OpKernel {
             << filter_cols << ", " << in_depth << ", " << depth_multiplier
             << "]; Output: [" << batch << ", " << out_rows << ", " << out_cols
             << ", " << out_depth << "], stride = " << stride_
-            << ", pad_rows = " << pad_rows << ", pad_cols = " << pad_cols
+            << ", pad_rows = " << pad_top << ", pad_cols = " << pad_left
             << ", Use cuDNN: " << use_cudnn;
 
     if (use_cudnn) {
@@ -1156,8 +1172,7 @@ class DepthwiseConv2dNativeBackpropFilterOp : public OpKernel {
       // conv is supported.
       launcher_(context, use_cudnn_, cudnn_use_autotune_, out_backprop, input,
                 /*row_dilation=*/1, /*col_dilation=*/1, stride_, stride_,
-                padding_, /*explicit_paddings=*/{}, &reshaped_filter,
-                data_format_);
+                padding_, explicit_paddings_, &reshaped_filter, data_format_);
       return;
     }
 
@@ -1175,6 +1190,7 @@ class DepthwiseConv2dNativeBackpropFilterOp : public OpKernel {
  private:
   std::vector<int32> strides_;
   Padding padding_;
+  std::vector<int64> explicit_paddings_;
   TensorFormat data_format_;
   int64 stride_;
 

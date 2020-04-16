@@ -158,6 +158,7 @@ class ArgMinOp
                           ArgMinOp<CPUDevice, type, int32>);
 
 TF_CALL_REAL_NUMBER_TYPES(REGISTER_ARGMAX);
+TF_CALL_bool(REGISTER_ARGMAX);
 
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
     (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
@@ -198,7 +199,9 @@ namespace functor {
   extern template struct ArgMin<GPUDevice, T, int32>;
 
 TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_SPECS);
+TF_CALL_bool(DECLARE_GPU_SPECS);
 TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_CLASS);
+TF_CALL_bool(DECLARE_GPU_CLASS);
 
 #undef DECLARE_GPU_SPECS
 #undef DECLARE_GPU_CLASS
@@ -237,6 +240,7 @@ TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_CLASS);
                           ArgMinOp<GPUDevice, type, int32>);
 
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_ARGMAX_GPU);
+TF_CALL_bool(REGISTER_ARGMAX_GPU);
 
 #undef REGISTER_ARGMAX_GPU
 
