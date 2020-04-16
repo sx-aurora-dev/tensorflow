@@ -30,6 +30,17 @@ namespace tensorflow {
 
 namespace {
 
+int get_node_number() {
+  static int node = -99;
+  if (node == -99) {
+    node = 0;
+    if (const char* tmp = getenv("VE_NODE_NUMBER")) {
+      node = atoi(tmp);
+    }
+  }
+  return node;
+}
+
 class VEO {
   public:
     struct Args {
@@ -112,7 +123,8 @@ class VEO {
 
     virtual Status write_mem(uint64_t ve_addr, const void* vh_buff, size_t len) {
       int rc;
-      uint64_t start = 0, end = 0; // initialize to suppress warning
+      uint64_t start = 0, end = 0;
+      //uint64_t start = 0, end = 0; // initialize to suppress warning
       //uint64_t start0 = Env::Default()->NowMicros();
 
       //bool useDMA = false;
@@ -121,7 +133,7 @@ class VEO {
         mutex_lock guard(dma_.lock);
         //VLOG(2) << "VEO::write_mem: after dma lock";
         if (isTracerEnabled())
-          start = Env::Default()->NowMicros();
+          start = tensorflow::EnvTime::NowNanos();
         //start0 = Env::Default()->NowMicros(); useDMA = true;
 
         assert(len < 256 * 1024 * 1024);
@@ -137,15 +149,18 @@ class VEO {
         Status s = call_and_wait(dma_.sym_dma_read, a);
         if (!s.ok())
           return s;
+        if (isTracerEnabled())
+          end = tensorflow::EnvTime::NowNanos();
         rc = 0;
       } else {
         if (isTracerEnabled())
-          start = Env::Default()->NowMicros();
+          start = tensorflow::EnvTime::NowNanos();
         rc = veo_write_mem(proc_, ve_addr, vh_buff, len);
+        if (isTracerEnabled())
+          end = tensorflow::EnvTime::NowNanos();
       }
 
       if (isTracerEnabled()) {
-        end = Env::Default()->NowMicros();
         callbackTracer(start, end, 0); // 0: HtoD
       }
 #else
@@ -1083,7 +1098,7 @@ class VEOFactory {
 Status VEDevice::Sync() {
   VLOG(2) << "VEDevice::Sync";
   VEO* veo = NULL;
-  int nodeid = 0; // FIXME
+  int nodeid = get_node_number();
   Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
   if (!s.ok())
     return s;
@@ -1097,11 +1112,7 @@ class VEDeviceFactory : public DeviceFactory {
     const string device_name = strings::StrCat(name_prefix, "/device:VE:0");
     VLOG(2) << "VEDeviceFactory::CreateDevices: " << device_name;
 
-    int nodeid = 0;
-    if (const char* tmp = getenv("VE_NODE_NUMBER")) {
-      nodeid = atoi(tmp);
-    }
-
+    int nodeid = get_node_number();
     if (nodeid < 0) // user disables VE
       return Status::OK();
 
@@ -1132,10 +1143,7 @@ class VEDeviceFactory : public DeviceFactory {
   }
 
   Status ListPhysicalDevices(std::vector<string>* devices) {
-    int nodeid = 0;
-    if (const char* tmp = getenv("VE_NODE_NUMBER")) {
-      nodeid = atoi(tmp);
-    }
+    int nodeid = get_node_number();
     if (nodeid > 0) {
       const string device_name = strings::StrCat("/physical_device:VE:", nodeid);
       devices->push_back(device_name);
@@ -1210,9 +1218,10 @@ Status VEDeviceContextImpl::Compute(const std::string& name, const void* arg, si
   return veo_->compute(name, arg, len, op);
 }
 
-Status ve_get_timestamp(int nodeid, uint64_t* ts, double* resolution)
+Status ve_get_timestamp(uint64_t* ts, double* resolution)
 {
   VEO* veo = NULL;
+  int nodeid = get_node_number();
   Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
   if (!s.ok())
     return s;
@@ -1220,16 +1229,29 @@ Status ve_get_timestamp(int nodeid, uint64_t* ts, double* resolution)
   return veo->get_timestamp(ts, resolution);
 }
 
-Status ve_set_trace_callback(int nodeid, VEO::cb_t cb, void* data)
+Status ve_set_trace_callback(VEO::cb_t cb, void* data)
 {
   VLOG(2) << __FUNCTION__ << ": cb=" << reinterpret_cast<void*>(cb)
     << " data=" << data;
   VEO* veo = NULL;
+  int nodeid = get_node_number();
   Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
   if (s.ok())
     veo->setTraceCallback(cb, data);
 
   return s;
+}
+
+Status ve_sync()
+{
+  VLOG(2) << "vesync";
+  VEO* veo = NULL;
+  int nodeid = get_node_number();
+  Status s = VEOFactory::Global()->GetOrCreate(&veo, nodeid);
+  if (!s.ok())
+    return s;
+
+  return veo->sync();
 }
 
 } // namespace tensorflow

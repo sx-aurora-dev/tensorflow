@@ -1,6 +1,7 @@
 load("//tensorflow/core/platform:build_config_root.bzl", "if_static")
 load("//tensorflow:tensorflow.bzl", "if_not_android", "tf_cuda_library")
 load("//tensorflow:tensorflow.bzl", "tf_pybind_cc_library_wrapper")
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
 
 package(
     default_visibility = [
@@ -72,7 +73,9 @@ tf_cuda_library(
     deps = [
         "//tensorflow/core/profiler/internal/cpu:host_tracer",
         "//tensorflow/core/profiler/internal/cpu:metadata_collector",
-    ],
+    ] + if_ve([
+        "//tensorflow/core/profiler/internal/ve:device_tracer",
+    ]),
     alwayslink = True,
 )
 

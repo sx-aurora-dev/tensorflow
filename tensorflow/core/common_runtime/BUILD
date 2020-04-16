@@ -419,7 +419,6 @@ cc_library(
     name = "ve_runtime",
     hdrs = [
         "ve/ve_device.h",
-        "ve/ve_tracer.h"
     ],
     alwayslink = 1,
 )
@@ -428,15 +427,12 @@ cc_library(
     name = "ve_runtime_impl",
     srcs = [
         "ve/ve_device.cc",
-        "ve/ve_tracer.cc"
         ],
     deps = [
         ":core_cpu_impl",
         ":ve_runtime",
         "//third_party/veoffload",
-        "//tensorflow/core:stream_executor",
-        "//tensorflow/core/profiler/internal:profiler_interface",
-        "//tensorflow/core/profiler/internal:profiler_factory",
+        #"//tensorflow/core:stream_executor",
     ],
     alwayslink = 1,
 )
