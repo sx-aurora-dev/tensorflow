@@ -1,5 +1,3 @@
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
-
 package(
     default_visibility = ["//tensorflow:internal"],
     licenses = ["notice"],  # Apache 2.0
@@ -11,9 +9,6 @@ cc_library(
         "ve_tracer.cc"
         ],
     deps = [
-        #"//tensorflow/core/common_runtime:core_cpu_impl",
-        #"//tensorflow/core/common_runtime:ve_runtime",
-        #"//third_party/veoffload",
         "//tensorflow/core:stream_executor",
         "//tensorflow/core/profiler/internal:profiler_factory",
         "//tensorflow/core/profiler/internal:profiler_interface",

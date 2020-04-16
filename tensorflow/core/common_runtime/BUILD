@@ -415,28 +415,6 @@ tf_cuda_library(
     alwayslink = 1,
 )
 
-cc_library(
-    name = "ve_runtime",
-    hdrs = [
-        "ve/ve_device.h",
-    ],
-    alwayslink = 1,
-)
-
-cc_library(
-    name = "ve_runtime_impl",
-    srcs = [
-        "ve/ve_device.cc",
-        ],
-    deps = [
-        ":core_cpu_impl",
-        ":ve_runtime",
-        "//third_party/veoffload",
-        #"//tensorflow/core:stream_executor",
-    ],
-    alwayslink = 1,
-)
-
 # This is redundant with the "core_cpu_*" targets above. It's useful for
 # applications that want to depend on a minimal subset of TensorFlow (e.g. XLA).
 cc_library(

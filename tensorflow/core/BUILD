@@ -2454,13 +2454,13 @@ alias(
 alias(
   name = "ve_runtime",
   actual = 
-        "//tensorflow/core/common_runtime:ve_runtime",
+        "//tensorflow/core/common_runtime/ve:ve_runtime",
 )
 
 alias(
   name = "ve_runtime_impl",
   actual = 
-        "//tensorflow/core/common_runtime:ve_runtime_impl",
+        "//tensorflow/core/common_runtime/ve:ve_runtime_impl",
 )
 
 alias(
