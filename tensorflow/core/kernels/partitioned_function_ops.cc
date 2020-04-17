@@ -293,4 +293,11 @@ REGISTER_KERNEL_BUILDER(Name("StatefulPartitionedCall").Device(DEVICE_SYCL),
                         PartitionedCallOp);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("PartitionedCall").Device(DEVICE_VE),
+                        PartitionedCallOp);
+REGISTER_KERNEL_BUILDER(Name("StatefulPartitionedCall").Device(DEVICE_VE),
+                        PartitionedCallOp);
+#endif
+
 }  // namespace tensorflow
