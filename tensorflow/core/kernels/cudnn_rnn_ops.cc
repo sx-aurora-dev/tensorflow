@@ -2110,4 +2110,692 @@ TF_CALL_double(REGISTER_GPU);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+
+// Specifies the types of a RNN model.
+enum class VERnnMode {
+  kRnnRelu = 0,
+  kRnnTanh = 1,
+  kRnnLstm = 2,
+  kRnnGru = 3,
+};
+
+enum class VETFRNNInputMode {
+  kRNNLinearInput = 0,
+  kRNNSkipInput = 1,
+  kAutoSelect = 9999999
+};
+
+// Specifies the number of directions used in a RNN model. When bidirection
+// is used, the input states and output sequence contain data for both
+// directions.
+enum class VERnnDirectionMode {
+  kRnnUnidirectional = 0,
+  kRnnBidirectional = 1,
+};
+
+// A helper class that collects the shapes to describe a RNN model.
+struct VERnnModelShapes {
+  int num_layers;
+  int input_size;
+  int num_units;
+  int dir_count;
+  int max_seq_length;
+  int batch_size;
+  int cell_num_units = 0;
+  TensorShape input_shape;
+  TensorShape output_shape;
+  TensorShape hidden_state_shape;
+  TensorShape cell_state_shape;
+  // At present only fields related to cached RnnDescriptor are concerned.
+  bool IsCompatibleWith(const VERnnModelShapes& rhs) const {
+    return num_layers == rhs.num_layers && input_size == rhs.input_size &&
+           num_units == rhs.num_units && dir_count == rhs.dir_count &&
+           cell_num_units == rhs.cell_num_units;
+  }
+  string DebugString() const {
+    return strings::Printf(
+        "[num_layers, input_size, num_units, dir_count, max_seq_length, "
+        "batch_size, cell_num_units]: [%d, %d, %d, %d, %d, %d, %d] ",
+        num_layers, input_size, num_units, dir_count, max_seq_length,
+        batch_size, cell_num_units);
+  }
+};
+
+struct VERNNModelTypes {
+  VERnnMode rnn_mode;
+  VETFRNNInputMode rnn_input_mode;
+  VERnnDirectionMode rnn_direction_mode;
+  bool HasInputC() const {
+    return rnn_mode == VERnnMode::kRnnLstm;
+  }
+
+  string DebugString() const {
+    return strings::Printf(
+        "[rnn_mode, rnn_input_mode, rnn_direction_mode]: %d, %d, %d ",
+        static_cast<int>(rnn_mode), static_cast<int>(rnn_input_mode),
+        static_cast<int>(rnn_direction_mode));
+  }
+};
+
+Status VEParseRNNMode(const string& str, VERnnMode* rnn_mode) {
+
+#if 0
+  if (str == "rnn_relu") {
+    *rnn_mode = RnnMode::kRnnRelu;
+    return Status::OK();
+  } else if (str == "rnn_tanh") {
+    *rnn_mode = RnnMode::kRnnTanh;
+    return Status::OK();
+  } else if (str == "lstm") {
+    *rnn_mode = RnnMode::kRnnLstm;
+    return Status::OK();
+  } else if (str == "gru") {
+    *rnn_mode = RnnMode::kRnnGru;
+    return Status::OK();
+  }
+
+  return errors::InvalidArgument("Invalid RNN mode: ", str);
+#else
+  if (str == "lstm") {
+      *rnn_mode = VERnnMode::kRnnLstm;
+      return Status::OK();
+  }
+
+  return errors::InvalidArgument("Invalid RNN mode: ", str, ", Current VERNN supports lstm only");
+
+#endif
+}
+
+Status VEParseTFRNNInputMode(const string& str, VETFRNNInputMode* rnn_input_mode) {
+#if 0
+  if (str == "linear_input") {
+    *rnn_input_mode = TFRNNInputMode::kRNNLinearInput;
+    return Status::OK();
+  } else if (str == "skip_input") {
+    *rnn_input_mode = TFRNNInputMode::kRNNSkipInput;
+    return Status::OK();
+  } else if (str == "auto_select") {
+    *rnn_input_mode = TFRNNInputMode::kAutoSelect;
+    return Status::OK();
+  }
+  return errors::InvalidArgument("Invalid RNN input mode: ", str);
+#else
+  if (str == "linear_input") {
+    *rnn_input_mode = VETFRNNInputMode::kRNNLinearInput;
+    return Status::OK();
+  }
+  return errors::InvalidArgument("Invalid RNN input mode: ", str, ", Current VERNN supports linear_input only");
+#endif
+}
+
+Status VEParseRNNDirectionMode(const string& str,
+                               VERnnDirectionMode* rnn_dir_mode) {
+#if 0
+  if (str == "unidirectional") {
+    *rnn_dir_mode = RnnDirectionMode::kRnnUnidirectional;
+    return Status::OK();
+  } else if (str == "bidirectional") {
+    *rnn_dir_mode = RnnDirectionMode::kRnnBidirectional;
+    return Status::OK();
+  }
+  return errors::InvalidArgument("Invalid RNN direction mode: ", str);
+#else
+  if (str == "unidirectional") {
+    *rnn_dir_mode = VERnnDirectionMode::kRnnUnidirectional;
+    return Status::OK();
+  }
+  return errors::InvalidArgument("Invalid RNN direction mode: ", str, ", Current VERNN supports unidirectional only" );
+
+#endif
+}
+
+
+// Extract and checks the forward input tensors, parameters, and shapes from the
+// OpKernelContext.
+Status VEExtractForwardInput(OpKernelContext* context,
+                             const VERNNModelTypes& model_types, bool time_major,
+                             const Tensor** input, const Tensor** input_h,
+                             const Tensor** input_c, const Tensor** params,
+                             const int num_proj,
+                             VERnnModelShapes* model_shapes) {
+
+  TF_RETURN_IF_ERROR(context->input("input", input));
+  TF_RETURN_IF_ERROR(context->input("input_h", input_h));
+  if (model_types.HasInputC()) {
+    TF_RETURN_IF_ERROR(context->input("input_c", input_c));
+  }
+  TF_RETURN_IF_ERROR(context->input("params", params));
+
+  if ((*input)->dims() != 3) {
+    return errors::InvalidArgument("RNN input must be a 3-D vector.");
+  }
+  if (time_major) {
+    model_shapes->max_seq_length = (*input)->dim_size(0);
+    model_shapes->batch_size = (*input)->dim_size(1);
+  } else {
+    model_shapes->max_seq_length = (*input)->dim_size(1);
+    model_shapes->batch_size = (*input)->dim_size(0);
+  }
+  model_shapes->input_size = (*input)->dim_size(2);
+  model_shapes->input_shape = (*input)->shape();
+#if 0
+  model_shapes->dir_count =
+      (model_types.rnn_direction_mode == RnnDirectionMode::kRnnBidirectional)
+          ? 2
+          : 1;
+#else
+  model_shapes->dir_count =
+      (model_types.rnn_direction_mode == VERnnDirectionMode::kRnnBidirectional)
+          ? 2
+          : 1;
+#endif
+
+  if ((*input_h)->dims() != 3) {
+    return errors::InvalidArgument("RNN input_h must be a 3-D vector.");
+  }
+  if (time_major) {
+    model_shapes->num_layers =
+        (*input_h)->dim_size(0) / model_shapes->dir_count;
+  } else {
+    model_shapes->num_layers =
+        (*input_h)->dim_size(1) / model_shapes->dir_count;
+  }
+  model_shapes->num_units = (*input_h)->dim_size(2);
+
+  if (time_major) {
+    model_shapes->hidden_state_shape =
+        TensorShape({model_shapes->dir_count * model_shapes->num_layers,
+                     model_shapes->batch_size, model_shapes->num_units});
+  } else {
+    model_shapes->hidden_state_shape =
+        TensorShape({model_shapes->batch_size,
+                     model_shapes->dir_count * model_shapes->num_layers,
+                     model_shapes->num_units});
+  }
+  if ((*input_h)->shape() != model_shapes->hidden_state_shape) {
+    return errors::InvalidArgument(
+        "Invalid input_h shape: ", (*input_h)->shape().DebugString(), " ",
+        model_shapes->hidden_state_shape.DebugString());
+  }
+  if (model_types.HasInputC()) {
+    model_shapes->cell_num_units = (*input_c)->dim_size(2);
+    if (time_major) {
+      model_shapes->cell_state_shape =
+          TensorShape({model_shapes->dir_count * model_shapes->num_layers,
+                       model_shapes->batch_size, model_shapes->cell_num_units});
+    } else {
+      model_shapes->cell_state_shape =
+          TensorShape({model_shapes->batch_size,
+                       model_shapes->dir_count * model_shapes->num_layers,
+                       model_shapes->cell_num_units});
+    }
+    if (num_proj == 0) {
+      if ((*input_h)->shape() != (*input_c)->shape()) {
+        return errors::InvalidArgument(
+            "input_h and input_c must have the same shape w/o projection: ",
+            (*input_h)->shape().DebugString(), " ",
+            (*input_c)->shape().DebugString());
+      }
+    } else {
+      if ((*input_h)->dim_size(2) > (*input_c)->dim_size(2) ||
+          num_proj != (*input_h)->dim_size(2) ||
+          (*input_h)->dim_size(0) != (*input_c)->dim_size(0) ||
+          (*input_h)->dim_size(1) != (*input_c)->dim_size(1)) {
+        return errors::InvalidArgument(
+            "Invalid input_h and input_c w/ projection size: ", num_proj, " ",
+            (*input_h)->shape().DebugString(), " ",
+            (*input_c)->shape().DebugString());
+      }
+    }
+  } else {
+    // dummy cell_state_shape TODO(kaixih): remove the time_major branch
+    if (time_major) {
+      model_shapes->cell_state_shape =
+          TensorShape({model_shapes->dir_count * model_shapes->num_layers,
+                       model_shapes->batch_size, model_shapes->num_units});
+    } else {
+      model_shapes->cell_state_shape =
+          TensorShape({model_shapes->batch_size,
+                       model_shapes->dir_count * model_shapes->num_layers,
+                       model_shapes->num_units});
+    }
+    model_shapes->cell_num_units = 0;
+  }
+  if (time_major) {
+    model_shapes->output_shape =
+        TensorShape({model_shapes->max_seq_length, model_shapes->batch_size,
+                     model_shapes->dir_count * model_shapes->num_units});
+  } else {
+    model_shapes->output_shape =
+        TensorShape({model_shapes->batch_size, model_shapes->max_seq_length,
+                     model_shapes->dir_count * model_shapes->num_units});
+  }
+  return Status::OK();
+}
+
+
+// A common base class for RNN kernels. It extracts common attributes and
+// shape validations.
+class VERNNKernelCommon : public OpKernel {
+ protected:
+  explicit VERNNKernelCommon(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("dropout", &dropout_));
+    OP_REQUIRES_OK(context, context->GetAttr("seed", &seed_));
+    OP_REQUIRES_OK(context, context->GetAttr("seed2", &seed2_));
+#if 0
+    string str;
+    OP_REQUIRES_OK(context, context->GetAttr("rnn_mode", &str));
+    OP_REQUIRES_OK(context, ParseRNNMode(str, &model_types_.rnn_mode));
+    OP_REQUIRES_OK(context, context->GetAttr("input_mode", &str));
+    OP_REQUIRES_OK(context,
+                   ParseTFRNNInputMode(str, &model_types_.rnn_input_mode));
+    OP_REQUIRES_OK(context, context->GetAttr("direction", &str));
+    OP_REQUIRES_OK(
+        context, ParseRNNDirectionMode(str, &model_types_.rnn_direction_mode));
+#else
+    string str;
+    OP_REQUIRES_OK(context, context->GetAttr("rnn_mode", &str));
+    OP_REQUIRES_OK(context, VEParseRNNMode(str, &model_types_.rnn_mode));
+    OP_REQUIRES_OK(context, context->GetAttr("input_mode", &str));
+    OP_REQUIRES_OK(context,
+                   VEParseTFRNNInputMode(str, &model_types_.rnn_input_mode));
+    OP_REQUIRES_OK(context, context->GetAttr("direction", &str));
+    OP_REQUIRES_OK(
+        context, VEParseRNNDirectionMode(str, &model_types_.rnn_direction_mode));
+#endif
+//    // Reset CudnnRnnDescriptor and related random number generate states in
+//    // every Compute() call.
+//    OP_REQUIRES_OK(context, ReadBoolFromEnvVar("TF_CUDNN_RESET_RND_GEN_STATE",
+//                                               false, &reset_rnd_gen_state_));
+  }
+
+#if 0
+  bool HasInputC() const { return model_types_.HasInputC(); }
+  RnnMode rnn_mode() const { return model_types_.rnn_mode; }
+  TFRNNInputMode rnn_input_mode() const { return model_types_.rnn_input_mode; }
+  RnnDirectionMode rnn_direction_mode() const {
+    return model_types_.rnn_direction_mode;
+  }
+  const CudnnModelTypes& model_types() const { return model_types_; }
+  float dropout() const { return dropout_; }
+  uint64 seed() { return (static_cast<uint64>(seed_) << 32) | seed2_; }
+  bool ResetRndGenState() { return reset_rnd_gen_state_; }
+#else
+  bool HasInputC() const { return model_types_.HasInputC(); }
+  VERnnMode rnn_mode() const { return model_types_.rnn_mode; }
+  VETFRNNInputMode rnn_input_mode() const { return model_types_.rnn_input_mode; }
+  VERnnDirectionMode rnn_direction_mode() const {
+    return model_types_.rnn_direction_mode;
+  }
+  const VERNNModelTypes& model_types() const { return model_types_; }
+  float dropout() const { return dropout_; }
+  uint64 seed() { return (static_cast<uint64>(seed_) << 32) | seed2_; }
+  bool ResetRndGenState() { return false; }
+#endif
+
+#if 0
+  template <typename T>
+  Status ExtractCudnnRNNParamsInfo(OpKernelContext* context, int num_proj,
+                                   std::unique_ptr<RnnDescriptor>* rnn_desc) {
+    const Tensor* num_layers_t = nullptr;
+    TF_RETURN_IF_ERROR(context->input("num_layers", &num_layers_t));
+    if (!TensorShapeUtils::IsScalar(num_layers_t->shape())) {
+      return errors::InvalidArgument("num_layers is not a scalar");
+    }
+    int num_layers = num_layers_t->scalar<int>()();
+    const Tensor* num_units_t = nullptr;
+    TF_RETURN_IF_ERROR(context->input("num_units", &num_units_t));
+    if (!TensorShapeUtils::IsScalar(num_units_t->shape())) {
+      return errors::InvalidArgument("num_units is not a scalar");
+    }
+    int num_units = num_units_t->scalar<int>()();
+    const Tensor* input_size_t = nullptr;
+    TF_RETURN_IF_ERROR(context->input("input_size", &input_size_t));
+    if (!TensorShapeUtils::IsScalar(input_size_t->shape())) {
+      return errors::InvalidArgument("input_size is not a scalar");
+    }
+    int input_size = input_size_t->scalar<int>()();
+
+    int h_num_units = (num_proj == 0 ? num_units : num_proj);
+    int c_num_units = (num_proj == 0 ? 0 : num_units);
+
+    RnnInputMode input_mode;
+    TF_RETURN_IF_ERROR(
+        ToRNNInputMode(rnn_input_mode(), num_units, input_size, &input_mode));
+
+    Stream* stream = context->op_device_context()->stream();
+    // ExtracCudnnRNNParamsInfo is only called by op_kernels that do not require
+    // random number generator, therefore set state_allocator to nullptr.
+    const AlgorithmConfig algo_config;
+    auto rnn_desc_s = stream->parent()->createRnnDescriptor(
+        num_layers, h_num_units, input_size, /*cell_size=*/c_num_units,
+        /*batch_size=*/0, input_mode, rnn_direction_mode(), rnn_mode(),
+        ToDataType<T>::value, algo_config, dropout(), seed(),
+        /* state_allocator=*/nullptr, /*use_padded_io=*/false);
+    if (!rnn_desc_s.ok()) {
+      return FromExecutorStatus(rnn_desc_s);
+    }
+    *rnn_desc = rnn_desc_s.ConsumeValueOrDie();
+    return Status::OK();
+  }
+
+  template <typename T>
+  Status CreateRnnDescriptor(OpKernelContext* context,
+                             const CudnnRnnModelShapes& model_shapes,
+                             const RnnInputMode& input_mode,
+                             const AlgorithmConfig& algo_config,
+                             ScratchAllocator* dropout_state_allocator,
+                             std::unique_ptr<RnnDescriptor>* rnn_desc,
+                             bool use_padded_io) {
+    StreamExecutor* executor = context->op_device_context()->stream()->parent();
+    se::dnn::DataType data_type = ToDataType<T>::value;
+    auto rnn_desc_s = executor->createRnnDescriptor(
+        model_shapes.num_layers, model_shapes.num_units,
+        model_shapes.input_size, model_shapes.cell_num_units,
+        model_shapes.batch_size, input_mode, rnn_direction_mode(), rnn_mode(),
+        data_type, algo_config, dropout(), seed(), dropout_state_allocator,
+        use_padded_io);
+    TF_RETURN_IF_ERROR(rnn_desc_s.status());
+
+    *rnn_desc = rnn_desc_s.ConsumeValueOrDie();
+    return Status::OK();
+  }
+
+  using RnnStateCache = gtl::FlatMap<
+      std::pair<CudnnRnnModelShapes, absl::optional<AlgorithmDesc>>,
+      RnnScratchSpace, CudnnRnnConfigHasher, CudnnRnnConfigComparator>;
+  // Returns a raw rnn descriptor pointer. The cache owns the rnn descriptor and
+  // should outlive the returned pointer.
+  template <typename T>
+  Status GetCachedRnnDescriptor(OpKernelContext* context,
+                                const CudnnRnnModelShapes& model_shapes,
+                                const RnnInputMode& input_mode,
+                                const AlgorithmConfig& algo_config,
+                                RnnStateCache* cache, RnnDescriptor** rnn_desc,
+                                bool use_padded_io) {
+    auto key = std::make_pair(model_shapes, algo_config.algorithm());
+    RnnScratchSpace& rnn_state = (*cache)[key];
+    if (rnn_state.rnn_desc == nullptr || ResetRndGenState()) {
+      CudnnRNNPersistentSpaceAllocator* dropout_state_allocator =
+          new CudnnRNNPersistentSpaceAllocator(context);
+      rnn_state.dropout_state_allocator.reset(dropout_state_allocator);
+      Status status = CreateRnnDescriptor<T>(
+          context, model_shapes, input_mode, algo_config,
+          dropout_state_allocator, &rnn_state.rnn_desc, use_padded_io);
+      TF_RETURN_IF_ERROR(status);
+    }
+    *rnn_desc = rnn_state.rnn_desc.get();
+    return Status::OK();
+  }
+#endif
+
+ private:
+  int seed_;
+  int seed2_;
+  float dropout_;
+//  bool reset_rnd_gen_state_;
+
+#if 0
+  CudnnModelTypes model_types_;
+#else
+  VERNNModelTypes model_types_;
+#endif
+};
+
+// Run the forward operation of the RNN model.
+template <typename T>
+class VERNNForwardOp : public VERNNKernelCommon {
+ public:
+  explicit VERNNForwardOp(OpKernelConstruction* context)
+      : VERNNKernelCommon(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("is_training", &is_training_));
+
+#if 0
+    // Read debug env variables.
+    is_debug_mode_ = DebugCudnnRnn();
+    debug_cudnn_rnn_algo_ = DebugCudnnRnnAlgo();
+    debug_use_tensor_ops_ = DebugCudnnRnnUseTensorOps();
+#endif
+  }
+
+  void Compute(OpKernelContext* context) override {
+#if 0
+    AlgorithmConfig algo_config;
+    ComputeAndReturnAlgorithm(context, &algo_config, /*var_seq_lengths=*/false,
+                              /*time_major=*/true, /*num_proj=*/0);
+#else
+    const bool var_seq_lengths = false ;
+    const bool time_major = true ;
+    const int num_proj= 0 ;
+
+//    CHECK_NE(output_algo_config, nullptr);
+
+    const Tensor* input = nullptr;
+    const Tensor* input_h = nullptr;
+    const Tensor* input_c = nullptr;
+    const Tensor* params = nullptr;
+    const Tensor* sequence_lengths = nullptr;
+
+
+    VERnnModelShapes model_shapes;
+    bool use_padded_io = false;
+//    if (var_seq_lengths) {
+//      OP_REQUIRES_OK(context, ExtractForwardInput(
+//                                  context, model_types(), time_major, &input,
+//                                  &input_h, &input_c, &params,
+//                                  &sequence_lengths, num_proj, &model_shapes));
+//      use_padded_io =
+//          ShouldUsePaddedIO(sequence_lengths, model_shapes, time_major);
+//    } else {
+      OP_REQUIRES_OK(context,
+                     VEExtractForwardInput(context, model_types(), time_major,
+                                           &input, &input_h, &input_c, &params,
+                                           num_proj, &model_shapes));
+//    }
+
+//    RnnInputMode input_mode;
+//    OP_REQUIRES_OK(context,
+//                   ToRNNInputMode(rnn_input_mode(), model_shapes.num_units,
+//                                  model_shapes.input_size, &input_mode));
+
+    Tensor* output = nullptr;
+    Tensor* output_h = nullptr;
+    Tensor* output_c = nullptr;
+
+    OP_REQUIRES_OK(context, AllocateOutputs(context, model_shapes, &output,
+                                            &output_h, &output_c));
+
+#if 0     // current VERNN impl does not use working memory
+    // Creates a memory callback for the reserve_space. The memory lives in the
+    // output of this kernel. And it will be fed into the backward pass when
+    // needed.
+    CudnnRnnAllocatorInOutput<T> reserve_space_allocator(context, 3);
+#endif
+
+#if 0
+    // Creates a memory callback for the workspace. The memory lives to the end
+    // of this kernel calls.
+    CudnnRnnAllocatorInTemp<uint8> workspace_allocator(context);
+
+    if (is_debug_mode_) {
+      AlgorithmDesc algo_desc(debug_cudnn_rnn_algo_, debug_use_tensor_ops_);
+      output_algo_config->set_algorithm(algo_desc);
+    } else {
+      OP_REQUIRES_OK(context,
+                     MaybeAutoTune(context, model_shapes, input_mode, input,
+                                   input_h, input_c, params, output, output_h,
+                                   output_c, output_algo_config));
+    }
+
+    Status launch_status;
+    {
+      mutex_lock l(mu_);
+      RnnDescriptor* rnn_desc_ptr = nullptr;
+      OP_REQUIRES_OK(context,
+                     GetCachedRnnDescriptor<T>(
+                         context, model_shapes, input_mode, *output_algo_config,
+                         &rnn_state_cache_, &rnn_desc_ptr, use_padded_io));
+      launch_status = DoForward<T>(
+          context, *rnn_desc_ptr, model_types(), model_shapes, input, input_h,
+          input_c, params, is_training_, output, output_h, output_c,
+          sequence_lengths, time_major, &reserve_space_allocator,
+          &workspace_allocator, /*output_profile_result=*/nullptr);
+    }
+    OP_REQUIRES_OK(context, launch_status);
+
+#endif
+#endif
+  }
+
+ protected:
+#if 0
+  virtual void ComputeAndReturnAlgorithm(OpKernelContext* context,
+                                         AlgorithmConfig* output_algo_config,
+                                         bool var_seq_lengths, bool time_major,
+                                         int num_proj) {
+    CHECK_NE(output_algo_config, nullptr);
+
+    const Tensor* input = nullptr;
+    const Tensor* input_h = nullptr;
+    const Tensor* input_c = nullptr;
+    const Tensor* params = nullptr;
+    const Tensor* sequence_lengths = nullptr;
+    CudnnRnnModelShapes model_shapes;
+    bool use_padded_io = false;
+    if (var_seq_lengths) {
+      OP_REQUIRES_OK(context, ExtractForwardInput(
+                                  context, model_types(), time_major, &input,
+                                  &input_h, &input_c, &params,
+                                  &sequence_lengths, num_proj, &model_shapes));
+      use_padded_io =
+          ShouldUsePaddedIO(sequence_lengths, model_shapes, time_major);
+    } else {
+      OP_REQUIRES_OK(context,
+                     ExtractForwardInput(context, model_types(), time_major,
+                                         &input, &input_h, &input_c, &params,
+                                         num_proj, &model_shapes));
+    }
+    RnnInputMode input_mode;
+    OP_REQUIRES_OK(context,
+                   ToRNNInputMode(rnn_input_mode(), model_shapes.num_units,
+                                  model_shapes.input_size, &input_mode));
+
+    Tensor* output = nullptr;
+    Tensor* output_h = nullptr;
+    Tensor* output_c = nullptr;
+    OP_REQUIRES_OK(context, AllocateOutputs(context, model_shapes, &output,
+                                            &output_h, &output_c));
+
+    // Creates a memory callback for the reserve_space. The memory lives in the
+    // output of this kernel. And it will be fed into the backward pass when
+    // needed.
+    CudnnRnnAllocatorInOutput<T> reserve_space_allocator(context, 3);
+    // Creates a memory callback for the workspace. The memory lives to the end
+    // of this kernel calls.
+    CudnnRnnAllocatorInTemp<uint8> workspace_allocator(context);
+
+    if (is_debug_mode_) {
+      AlgorithmDesc algo_desc(debug_cudnn_rnn_algo_, debug_use_tensor_ops_);
+      output_algo_config->set_algorithm(algo_desc);
+    } else {
+      OP_REQUIRES_OK(context,
+                     MaybeAutoTune(context, model_shapes, input_mode, input,
+                                   input_h, input_c, params, output, output_h,
+                                   output_c, output_algo_config));
+    }
+
+    Status launch_status;
+    {
+      mutex_lock l(mu_);
+      RnnDescriptor* rnn_desc_ptr = nullptr;
+      OP_REQUIRES_OK(context,
+                     GetCachedRnnDescriptor<T>(
+                         context, model_shapes, input_mode, *output_algo_config,
+                         &rnn_state_cache_, &rnn_desc_ptr, use_padded_io));
+      launch_status = DoForward<T>(
+          context, *rnn_desc_ptr, model_types(), model_shapes, input, input_h,
+          input_c, params, is_training_, output, output_h, output_c,
+          sequence_lengths, time_major, &reserve_space_allocator,
+          &workspace_allocator, /*output_profile_result=*/nullptr);
+    }
+    OP_REQUIRES_OK(context, launch_status);
+  }
+#endif
+
+ protected:
+#if 0
+  virtual Status MaybeAutoTune(OpKernelContext* context,
+                               const CudnnRnnModelShapes& model_shapes,
+                               const RnnInputMode& input_mode,
+                               const Tensor* input, const Tensor* input_h,
+                               const Tensor* input_c, const Tensor* params,
+                               Tensor* output, Tensor* output_h,
+                               Tensor* output_c,
+                               AlgorithmConfig* best_algo_config) {
+    CHECK_NE(best_algo_config, nullptr);
+    *best_algo_config = AlgorithmConfig();
+    return Status::OK();
+  }
+#endif
+
+  bool is_training() const { return is_training_; }
+//  bool is_debug_mode_;
+//  bool debug_use_tensor_ops_;
+//  int64 debug_cudnn_rnn_algo_;
+
+
+ private:
+  Status AllocateOutputs(OpKernelContext* context,
+                         const VERnnModelShapes& model_shapes,
+                         Tensor** output, Tensor** output_h,
+                         Tensor** output_c) {
+    const TensorShape& hidden_state_shape = model_shapes.hidden_state_shape;
+    const TensorShape& output_shape = model_shapes.output_shape;
+    const TensorShape& cell_state_shape = model_shapes.cell_state_shape;
+
+    TF_RETURN_IF_ERROR(context->allocate_output(0, output_shape, output));
+    TF_RETURN_IF_ERROR(
+        context->allocate_output(1, hidden_state_shape, output_h));
+    if (HasInputC()) {
+      TF_RETURN_IF_ERROR(
+          context->allocate_output(2, cell_state_shape, output_c));
+    } else {
+      // Only LSTM uses input_c and output_c. So for all other models, we only
+      // need to create dummy outputs.
+      TF_RETURN_IF_ERROR(context->allocate_output(2, {}, output_c));
+    }
+#if 0
+    if (!is_training_) {
+      Tensor* dummy_reserve_space = nullptr;
+      TF_RETURN_IF_ERROR(context->allocate_output(3, {}, &dummy_reserve_space));
+    }
+#else
+    // current VERNN impl does not use working memory
+    Tensor* dummy_reserve_space = nullptr;
+    TF_RETURN_IF_ERROR(context->allocate_output(3, {}, &dummy_reserve_space));
+#endif
+    return Status::OK();
+  }
+
+
+  mutex mu_;
+  bool is_training_;
+//  RnnStateCache rnn_state_cache_ TF_GUARDED_BY(mu_);
+
+};
+
+#define REGISTER_VE(T)                                            \
+  REGISTER_KERNEL_BUILDER(                                        \
+      Name("CudnnRNN").Device(DEVICE_VE).TypeConstraint<T>("T"),  \
+      VERNNForwardOp<T>);
+
+//TF_CALL_half(REGISTER_VE);
+TF_CALL_float(REGISTER_VE);
+//TF_CALL_double(REGISTER_VE);
+#undef REGISTER_VE
+
+#endif // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow
