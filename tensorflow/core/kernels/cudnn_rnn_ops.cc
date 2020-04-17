@@ -2796,6 +2796,284 @@ TF_CALL_float(REGISTER_VE);
 //TF_CALL_double(REGISTER_VE);
 #undef REGISTER_VE
 
+// Run the backward operation of the RNN model.
+template <typename T>
+class VERNNBackwardOp : public VERNNKernelCommon {
+ public:
+  explicit VERNNBackwardOp(OpKernelConstruction* context)
+      : VERNNKernelCommon(context) {}
+
+  void Compute(OpKernelContext* context) override {
+#if 0
+    ComputeImpl(context, false, true, 0);
+#else
+    const bool var_seq_lengths = false ;
+    const bool time_major = true ;
+    const int num_proj = 0 ;
+
+    const Tensor* input = nullptr;
+    const Tensor* input_h = nullptr;
+    const Tensor* input_c = nullptr;
+    const Tensor* params = nullptr;
+    const Tensor* sequence_lengths = nullptr;
+    VERnnModelShapes model_shapes;
+    bool use_padded_io = false;
+
+//    if (var_seq_lengths) {
+//      OP_REQUIRES_OK(context, ExtractForwardInput(
+//                                  context, model_types(), time_major, &input,
+//                                  &input_h, &input_c, &params,
+//                                  &sequence_lengths, num_proj, &model_shapes));
+//      use_padded_io =
+//          ShouldUsePaddedIO(sequence_lengths, model_shapes, time_major);
+//    } else {
+      OP_REQUIRES_OK(context,
+                     VEExtractForwardInput(context, model_types(), time_major,
+                                           &input, &input_h, &input_c, &params,
+                                           num_proj, &model_shapes));
+//    }
+
+//    RnnInputMode input_mode;
+//    OP_REQUIRES_OK(context,
+//                   ToRNNInputMode(rnn_input_mode(), model_shapes.num_units,
+//                                  model_shapes.input_size, &input_mode));
+
+    const Tensor* output = nullptr;
+    const Tensor* output_h = nullptr;
+    const Tensor* output_c = nullptr;
+    const Tensor* output_backprop = nullptr;
+    const Tensor* output_h_backprop = nullptr;
+    const Tensor* output_c_backprop = nullptr;
+    const Tensor* reserve_space = nullptr;
+    OP_REQUIRES_OK(context,
+                   ExtractBackwardInputs(context, model_shapes, model_types(),
+                                         &output, &output_h, &output_c,
+                                         &output_backprop, &output_h_backprop,
+                                         &output_c_backprop, &reserve_space));
+
+    Tensor* input_backprop = nullptr;
+    Tensor* input_h_backprop = nullptr;
+    Tensor* input_c_backprop = nullptr;
+    Tensor* params_backprop = nullptr;
+    OP_REQUIRES_OK(context,
+                   AllocateOutputs(context, model_shapes, params->shape(),
+                                   &input_backprop, &input_h_backprop,
+                                   &input_c_backprop, &params_backprop));
+
+#if 0
+    // Creates a memory callback for the workspace. The memory lives to the end
+    // of this kernel calls.
+    CudnnRnnAllocatorInTemp<uint8> workspace_allocator(context);
+    AlgorithmConfig algo_config;
+    OP_REQUIRES_OK(context, GetAlgorithm(context, &algo_config));
+    Status launch_status;
+    {
+      mutex_lock l(mu_);
+      RnnDescriptor* rnn_desc_ptr = nullptr;
+      OP_REQUIRES_OK(
+          context, GetCachedRnnDescriptor<T>(context, model_shapes, input_mode,
+                                             algo_config, &rnn_state_cache_,
+                                             &rnn_desc_ptr, use_padded_io));
+      launch_status = DoBackward<T>(
+          context, *rnn_desc_ptr, model_types(), model_shapes, input, input_h,
+          input_c, params, output, output_h, output_c, output_backprop,
+          output_h_backprop, output_c_backprop, reserve_space, input_backprop,
+          input_h_backprop, input_c_backprop, params_backprop, sequence_lengths,
+          time_major, &workspace_allocator,
+          /*output_profile_result=*/nullptr);
+    }
+    OP_REQUIRES_OK(context, launch_status);
+#endif
+
+#endif
+  }
+
+ protected:
+#if 0
+  virtual void ComputeImpl(OpKernelContext* context, bool var_seq_lengths,
+                           bool time_major, int num_proj) {
+    const Tensor* input = nullptr;
+    const Tensor* input_h = nullptr;
+    const Tensor* input_c = nullptr;
+    const Tensor* params = nullptr;
+    const Tensor* sequence_lengths = nullptr;
+    CudnnRnnModelShapes model_shapes;
+    bool use_padded_io = false;
+    if (var_seq_lengths) {
+      OP_REQUIRES_OK(context, ExtractForwardInput(
+                                  context, model_types(), time_major, &input,
+                                  &input_h, &input_c, &params,
+                                  &sequence_lengths, num_proj, &model_shapes));
+      use_padded_io =
+          ShouldUsePaddedIO(sequence_lengths, model_shapes, time_major);
+    } else {
+      OP_REQUIRES_OK(context,
+                     ExtractForwardInput(context, model_types(), time_major,
+                                         &input, &input_h, &input_c, &params,
+                                         num_proj, &model_shapes));
+    }
+    RnnInputMode input_mode;
+    OP_REQUIRES_OK(context,
+                   ToRNNInputMode(rnn_input_mode(), model_shapes.num_units,
+                                  model_shapes.input_size, &input_mode));
+
+    const Tensor* output = nullptr;
+    const Tensor* output_h = nullptr;
+    const Tensor* output_c = nullptr;
+    const Tensor* output_backprop = nullptr;
+    const Tensor* output_h_backprop = nullptr;
+    const Tensor* output_c_backprop = nullptr;
+    const Tensor* reserve_space = nullptr;
+    OP_REQUIRES_OK(context,
+                   ExtractBackwardInputs(context, model_shapes, model_types(),
+                                         &output, &output_h, &output_c,
+                                         &output_backprop, &output_h_backprop,
+                                         &output_c_backprop, &reserve_space));
+
+    Tensor* input_backprop = nullptr;
+    Tensor* input_h_backprop = nullptr;
+    Tensor* input_c_backprop = nullptr;
+    Tensor* params_backprop = nullptr;
+    OP_REQUIRES_OK(context,
+                   AllocateOutputs(context, model_shapes, params->shape(),
+                                   &input_backprop, &input_h_backprop,
+                                   &input_c_backprop, &params_backprop));
+
+    // Creates a memory callback for the workspace. The memory lives to the end
+    // of this kernel calls.
+    CudnnRnnAllocatorInTemp<uint8> workspace_allocator(context);
+    AlgorithmConfig algo_config;
+    OP_REQUIRES_OK(context, GetAlgorithm(context, &algo_config));
+    Status launch_status;
+    {
+      mutex_lock l(mu_);
+      RnnDescriptor* rnn_desc_ptr = nullptr;
+      OP_REQUIRES_OK(
+          context, GetCachedRnnDescriptor<T>(context, model_shapes, input_mode,
+                                             algo_config, &rnn_state_cache_,
+                                             &rnn_desc_ptr, use_padded_io));
+      launch_status = DoBackward<T>(
+          context, *rnn_desc_ptr, model_types(), model_shapes, input, input_h,
+          input_c, params, output, output_h, output_c, output_backprop,
+          output_h_backprop, output_c_backprop, reserve_space, input_backprop,
+          input_h_backprop, input_c_backprop, params_backprop, sequence_lengths,
+          time_major, &workspace_allocator,
+          /*output_profile_result=*/nullptr);
+    }
+    OP_REQUIRES_OK(context, launch_status);
+  }
+#endif
+
+ protected:
+#if 0
+  virtual Status GetAlgorithm(OpKernelContext* context,
+                              AlgorithmConfig* algo_config) {
+    CHECK_NE(algo_config, nullptr);
+    *algo_config = AlgorithmConfig();
+    return Status::OK();
+  }
+#endif
+
+ private:
+  mutex mu_;
+//  RnnStateCache rnn_state_cache_ TF_GUARDED_BY(mu_);
+
+  Status ExtractBackwardInputs(
+      OpKernelContext* context, const VERnnModelShapes& model_shapes,
+      const VERNNModelTypes& model_types, const Tensor** output,
+      const Tensor** output_h, const Tensor** output_c,
+      const Tensor** output_backprop, const Tensor** output_h_backprop,
+      const Tensor** output_c_backprop, const Tensor** reserve_space) {
+    TF_RETURN_IF_ERROR(context->input("output", output));
+    TF_RETURN_IF_ERROR(context->input("output_backprop", output_backprop));
+    TF_RETURN_IF_ERROR(context->input("output_h", output_h));
+    TF_RETURN_IF_ERROR(context->input("output_h_backprop", output_h_backprop));
+    if (model_types.HasInputC()) {
+      TF_RETURN_IF_ERROR(context->input("output_c", output_c));
+      TF_RETURN_IF_ERROR(
+          context->input("output_c_backprop", output_c_backprop));
+    }
+    TF_RETURN_IF_ERROR(context->input("reserve_space", reserve_space));
+    const TensorShape& hidden_state_shape = model_shapes.hidden_state_shape;
+    const TensorShape& output_shape = model_shapes.output_shape;
+    const TensorShape& cell_state_shape = model_shapes.cell_state_shape;
+
+    if (output_shape != (*output)->shape()) {
+      return errors::InvalidArgument(
+          "Invalid output shape: ", (*output)->shape().DebugString(), " ",
+          output_shape.DebugString());
+    }
+    if (hidden_state_shape != (*output_h)->shape()) {
+      return errors::InvalidArgument(
+          "Invalid output_h shape: ", (*output_h)->shape().DebugString(), " ",
+          hidden_state_shape.DebugString());
+    }
+
+    if (output_shape != (*output_backprop)->shape()) {
+      return errors::InvalidArgument("Invalid output_backprop shape: ",
+                                     (*output_backprop)->shape().DebugString(),
+                                     " ", output_shape.DebugString());
+    }
+    if (hidden_state_shape != (*output_h_backprop)->shape()) {
+      return errors::InvalidArgument(
+          "Invalid output_h_backprop shape: ",
+          (*output_h_backprop)->shape().DebugString(), " ",
+          hidden_state_shape.DebugString());
+    }
+
+    if (model_types.HasInputC()) {
+      if (cell_state_shape != (*output_c)->shape()) {
+        return errors::InvalidArgument(
+            "Invalid output_c shape: ", (*output_c)->shape().DebugString(), " ",
+            cell_state_shape.DebugString());
+      }
+      if (cell_state_shape != (*output_c_backprop)->shape()) {
+        return errors::InvalidArgument(
+            "Invalid output_c_backprop shape: ",
+            (*output_c_backprop)->shape().DebugString(), " ",
+            cell_state_shape.DebugString());
+      }
+    }
+    return Status::OK();
+  }
+
+  Status AllocateOutputs(OpKernelContext* context,
+                         const VERnnModelShapes& model_shapes,
+                         const TensorShape& params_shape,
+                         Tensor** input_backprop, Tensor** input_h_backprop,
+                         Tensor** input_c_backprop, Tensor** params_backprop) {
+    const TensorShape& input_shape = model_shapes.input_shape;
+    const TensorShape& hidden_state_shape = model_shapes.hidden_state_shape;
+    const TensorShape& cell_state_shape = model_shapes.cell_state_shape;
+
+    TF_RETURN_IF_ERROR(
+        context->allocate_output(0, input_shape, input_backprop));
+    TF_RETURN_IF_ERROR(
+        context->allocate_output(1, hidden_state_shape, input_h_backprop));
+    if (HasInputC()) {
+      TF_RETURN_IF_ERROR(
+          context->allocate_output(2, cell_state_shape, input_c_backprop));
+    } else {
+      // Only LSTM uses input_c and output_c. So for all other models, we only
+      // need to create dummy outputs.
+      TF_RETURN_IF_ERROR(context->allocate_output(2, {}, input_c_backprop));
+    }
+    TF_RETURN_IF_ERROR(
+        context->allocate_output(3, params_shape, params_backprop));
+    return Status::OK();
+  }
+};
+
+#define REGISTER_VE(T)                                                    \
+  REGISTER_KERNEL_BUILDER(                                                \
+      Name("CudnnRNNBackprop").Device(DEVICE_VE).TypeConstraint<T>("T"), \
+      VERNNBackwardOp<T>);
+
+//TF_CALL_half(REGISTER_VE);
+TF_CALL_float(REGISTER_VE);
+//TF_CALL_double(REGISTER_VE);
+#undef REGISTER_VE
+
 #endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
