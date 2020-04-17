@@ -185,9 +185,9 @@ class VEO {
     virtual Status read_mem(void* vh_buff, uint64_t ve_addr, size_t len) {
       int rc;
       if (isTracerEnabled()) {
-        uint64_t start = Env::Default()->NowMicros();
+        uint64_t start = tensorflow::EnvTime::NowNanos();
         rc = veo_read_mem(proc_, vh_buff, ve_addr, len);
-        uint64_t end = Env::Default()->NowMicros();
+        uint64_t end = tensorflow::EnvTime::NowNanos();
         callbackTracer(start, end, 1); // 1: DtoH
       } else
         rc = veo_read_mem(proc_, vh_buff, ve_addr, len);
