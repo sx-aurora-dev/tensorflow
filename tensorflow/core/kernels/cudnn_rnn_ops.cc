@@ -51,6 +51,10 @@ limitations under the License.
 #include "tensorflow/core/util/stream_executor_util.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 /*
  * This module implements ops that fuse a multi-layer multi-step RNN/LSTM model
  * using the underlying Cudnn library.
@@ -2644,6 +2648,27 @@ class VERNNForwardOp : public VERNNKernelCommon {
           &workspace_allocator, /*output_profile_result=*/nullptr);
     }
     OP_REQUIRES_OK(context, launch_status);
+
+#else
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    args.addArg<int32>( time_major      ? 1 : 0 ) ;	// 0
+    args.addArg<int32>( num_proj ) ;
+
+    args.addArg<Tensor>(*input) ;
+    args.addArg<Tensor>(*input_h) ;
+    args.addArg<Tensor>(*input_c) ;
+    args.addArg<Tensor>(*params) ;			// 5
+
+    args.addArg<Tensor>(*output) ;
+    args.addArg<Tensor>(*output_h) ;
+    args.addArg<Tensor>(*output_c) ;			// 8
+
+//    args.addArg<int>( var_seq_lengths ? 1 : 0 ) ;
+//    if( var_seq_lengths )
+//      args.addArg<Tensor>(*sequence_lengths) ;
+
+    VEOpKernelHelper::Call(context, "RnnForward", args);
 
 #endif
 #endif
