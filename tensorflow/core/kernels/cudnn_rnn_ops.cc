@@ -2652,20 +2652,20 @@ class VERNNForwardOp : public VERNNKernelCommon {
 #else
     VEOpKernelHelper::ArgsImpl<> args;
 
-
     args.addArg<Tensor>(*input) ;	// 0
     args.addArg<Tensor>(*input_h) ;
     args.addArg<Tensor>(*input_c) ;
 
+    args.addArg<Tensor>(*params) ;
+
     args.addArg<Tensor>(*output) ;
-    args.addArg<Tensor>(*output_h) ;
-    args.addArg<Tensor>(*output_c) ;	// 5
+    args.addArg<Tensor>(*output_h) ;	// 5
+    args.addArg<Tensor>(*output_c) ;
 
     args.addArg<int32>( time_major      ? 1 : 0 ) ;
     args.addArg<float>(dropout()) ;
 
 //    args.addArg<int32>( num_proj ) ;
-//    args.addArg<Tensor>(*params) ;
 
 //    args.addArg<int>( var_seq_lengths ? 1 : 0 ) ;
 //    if( var_seq_lengths )
