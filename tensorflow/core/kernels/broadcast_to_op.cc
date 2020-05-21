@@ -118,6 +118,7 @@ namespace functor {
   extern template struct BroadcastTo<GPUDevice, Type>;
 
 TF_CALL_GPU_ALL_TYPES(DECLARE_GPU_TEMPLATE);
+TF_CALL_int64(DECLARE_GPU_TEMPLATE);
 #undef DECLARE_GPU_KERNEL
 }  // namespace functor
 
@@ -129,6 +130,7 @@ TF_CALL_GPU_ALL_TYPES(DECLARE_GPU_TEMPLATE);
                           BroadcastToOp<GPUDevice, type>);
 
 TF_CALL_GPU_ALL_TYPES(REGISTER_KERNEL);
+TF_CALL_int64(REGISTER_KERNEL);
 #undef REGISTER_KERNEL
 
 // A special GPU kernel for int32.
