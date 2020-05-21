@@ -490,7 +490,7 @@ TF_CALL_double(REGISTER_VE);
 //TF_CALL_int64(REGISTER_VE);
 
 REGISTER_KERNEL_BUILDER(Name("Slice")
-                            .Device(DEVICE_GPU)
+                            .Device(DEVICE_VE)
                             .TypeConstraint<int32>("T")
                             .HostMemory("input")
                             .HostMemory("begin")
