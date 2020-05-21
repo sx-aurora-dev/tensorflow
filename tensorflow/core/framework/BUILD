@@ -636,7 +636,7 @@ cc_library(
     ],
     visibility = [
         "//tensorflow/core:__pkg__",
-        "//tensorflow/core/runtime_fallback:__pkg__",
+        "//tensorflow/core/runtime_fallback:__subpackages__",
     ],
     deps = [
         ":bounds_check",
