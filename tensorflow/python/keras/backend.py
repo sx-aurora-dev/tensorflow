@@ -76,6 +76,7 @@ from tensorflow.python.ops.ragged import ragged_tensor
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training import moving_averages
 from tensorflow.python.training.tracking import util as tracking_util
+from tensorflow.python.util import dispatch
 from tensorflow.python.util import nest
 from tensorflow.python.util import object_identity
 from tensorflow.python.util import tf_contextlib
@@ -91,10 +92,13 @@ py_any = any
 
 # The internal graph maintained by Keras and used by the symbolic Keras APIs
 # while executing eagerly (such as the functional API for model-building).
-_GRAPH = None
+# This is thread-local to allow building separate models in different threads
+# concurrently, but comes at the cost of not being able to build one model
+# across threads.
+_GRAPH = threading.local()
 
 # A graph which is used for constructing functions in eager mode.
-_CURRENT_SCRATCH_GRAPH = None
+_CURRENT_SCRATCH_GRAPH = threading.local()
 
 # This is a thread local object that will hold the default internal TF session
 # used by Keras. It can be set manually via `set_session(sess)`.
@@ -133,6 +137,7 @@ class _DummyEagerGraph(threading.local):
     # get a different key.
     super(_DummyEagerGraph, self).__init__()
     self.key = _DummyEagerGraph._WeakReferencableClass()
+    self.learning_phase_is_set = False
 
 
 _DUMMY_EAGER_GRAPH = _DummyEagerGraph()
@@ -169,6 +174,7 @@ def backend():
 
 
 @keras_export('keras.backend.cast_to_floatx')
+@dispatch.add_dispatch_support
 def cast_to_floatx(x):
   """Cast a Numpy array to the default Keras float type.
 
@@ -289,12 +295,13 @@ def clear_session():
   global _GRAPH_TF_OPTIMIZERS  # pylint: disable=global-variable-not-assigned
   global _GRAPH
   global _FREEZABLE_VARS
-  _GRAPH = None
+  _GRAPH.graph = None
   ops.reset_default_graph()
   reset_uids()
   _SESSION.session = None
   graph = get_graph()
   with graph.as_default():
+    _DUMMY_EAGER_GRAPH.learning_phase_is_set = False
     _GRAPH_LEARNING_PHASES.clear()
     # Create the learning phase placeholder in graph using the default factory.
     _GRAPH_LEARNING_PHASES.setdefault(graph)
@@ -332,7 +339,7 @@ def learning_phase():
       Learning phase (scalar integer tensor or Python integer).
   """
   graph = ops.get_default_graph()
-  if graph is _GRAPH:
+  if graph is getattr(_GRAPH, 'graph', None):
     # Don't enter an init_scope for the learning phase if eager execution
     # is enabled but we're inside the Keras workspace graph.
     learning_phase = symbolic_learning_phase()
@@ -351,7 +358,7 @@ def learning_phase():
 
 
 def global_learning_phase_is_set():
-  return _DUMMY_EAGER_GRAPH.key in _GRAPH_LEARNING_PHASES
+  return _DUMMY_EAGER_GRAPH.learning_phase_is_set
 
 
 def _mark_func_graph_as_unsaveable(graph, learning_phase):
@@ -388,6 +395,9 @@ def _default_learning_phase():
           False, shape=(), name='keras_learning_phase')
 
 
+@deprecated('2020-10-11',
+            'Simply pass a True/False value to the `training` argument '
+            'of the `__call__` method of your layer or model.')
 @keras_export('keras.backend.set_learning_phase')
 def set_learning_phase(value):
   """Sets the learning phase to a fixed value.
@@ -420,6 +430,7 @@ def set_learning_phase(value):
     if context.executing_eagerly():
       # In an eager context, the learning phase values applies to both the eager
       # context and the internal Keras graph.
+      _DUMMY_EAGER_GRAPH.learning_phase_is_set = True
       _GRAPH_LEARNING_PHASES[_DUMMY_EAGER_GRAPH.key] = value
     _GRAPH_LEARNING_PHASES[get_graph()] = value
 
@@ -451,11 +462,14 @@ def learning_phase_scope(value):
           _DUMMY_EAGER_GRAPH.key, None)
     previous_graph_value = _GRAPH_LEARNING_PHASES.get(get_graph(), None)
 
+  learning_phase_previously_set = _DUMMY_EAGER_GRAPH.learning_phase_is_set
   try:
     set_learning_phase(value)
     yield
   finally:
     # Restore learning phase to initial value.
+    if not learning_phase_previously_set:
+      _DUMMY_EAGER_GRAPH.learning_phase_is_set = False
     with ops.init_scope():
       if context.executing_eagerly():
         if previous_eager_value is not None:
@@ -569,9 +583,9 @@ tracking_util.register_session_provider(get_session)
 def get_graph():
   if context.executing_eagerly():
     global _GRAPH
-    if _GRAPH is None:
-      _GRAPH = func_graph.FuncGraph('keras_graph')
-    return _GRAPH
+    if not getattr(_GRAPH, 'graph', None):
+      _GRAPH.graph = func_graph.FuncGraph('keras_graph')
+    return _GRAPH.graph
   else:
     return ops.get_default_graph()
 
@@ -594,20 +608,22 @@ def _scratch_graph(graph=None):
     The current scratch graph.
   """
   global _CURRENT_SCRATCH_GRAPH
-  if (_CURRENT_SCRATCH_GRAPH is not None and graph is not None and
-      _CURRENT_SCRATCH_GRAPH is not graph):
+  scratch_graph = getattr(_CURRENT_SCRATCH_GRAPH, 'graph', None)
+  # If scratch graph and `graph` are both configured, they must match.
+  if (scratch_graph is not None and graph is not None and
+      scratch_graph is not graph):
     raise ValueError('Multiple scratch graphs specified.')
 
-  if _CURRENT_SCRATCH_GRAPH:
-    yield _CURRENT_SCRATCH_GRAPH
+  if scratch_graph:
+    yield scratch_graph
     return
 
   graph = graph or func_graph.FuncGraph('keras_scratch_graph')
   try:
-    _CURRENT_SCRATCH_GRAPH = graph
+    _CURRENT_SCRATCH_GRAPH.graph = graph
     yield graph
   finally:
-    _CURRENT_SCRATCH_GRAPH = None
+    _CURRENT_SCRATCH_GRAPH.graph = None
 
 
 @keras_export(v1=['keras.backend.set_session'])
@@ -801,6 +817,7 @@ def is_sparse(tensor):
 
 
 @keras_export('keras.backend.to_dense')
+@dispatch.add_dispatch_support
 def to_dense(tensor):
   """Converts a sparse tensor into a dense tensor and returns it.
 
@@ -1009,6 +1026,7 @@ def _initialize_variables(session):
 
 
 @keras_export('keras.backend.constant')
+@dispatch.add_dispatch_support
 def constant(value, dtype=None, shape=None, name=None):
   """Creates a constant tensor.
 
@@ -1164,54 +1182,8 @@ def is_placeholder(x):
     return False
 
 
-def freezable_variable(value, shape=None, name=None):
-  """A tensor-like object whose value can be updated only up until execution.
-
-  After creating the freezable variable, you can update its value by calling
-  `var.update_value(new_value)` (similar to a regular variable).
-  Unlike an actual variable, the value used during execution is the current
-  value at the time the execution function (`backend.function()`) was created.
-
-  This is an internal API, expected to be temporary. It is used to implement a
-  mutable `trainable` property for `BatchNormalization` layers, with a frozen
-  value after model compilation.
-
-  We don't use a plain variable in this case because we need the value used
-  in a specific model to be frozen after `compile` has been called
-  (e.g. GAN use case).
-
-  Arguments:
-    value: The initial value for the tensor-like object.
-    shape: The shape for the tensor-like object (cannot be changed).
-    name: The name for the tensor-like object.
-
-  Returns:
-    A tensor-like object with a static value that can be updated via
-    `x.update_value(new_value)`, up until creating an execution function
-    (afterwards the value is fixed).
-  """
-  graph = get_graph()
-  with graph.as_default():
-    x = array_ops.placeholder_with_default(
-        value, shape=shape, name=name)
-    x._initial_value = value
-    x._current_value = value
-
-    def update_value(new_value):
-      x._current_value = new_value
-
-    def get_value():
-      return x._current_value
-
-    x.update_value = update_value
-    x.get_value = get_value
-
-    global _FREEZABLE_VARS
-    _FREEZABLE_VARS[graph].add(x)
-  return x
-
-
 @keras_export('keras.backend.shape')
+@dispatch.add_dispatch_support
 def shape(x):
   """Returns the symbolic shape of a tensor or variable.
 
@@ -1294,6 +1266,7 @@ def ndim(x):
 
 
 @keras_export('keras.backend.dtype')
+@dispatch.add_dispatch_support
 def dtype(x):
   """Returns the dtype of a Keras tensor or variable, as a string.
 
@@ -1392,6 +1365,7 @@ def zeros(shape, dtype=None, name=None):
 
 
 @keras_export('keras.backend.ones')
+@dispatch.add_dispatch_support
 def ones(shape, dtype=None, name=None):
   """Instantiates an all-ones variable and returns it.
 
@@ -1426,6 +1400,7 @@ def ones(shape, dtype=None, name=None):
 
 
 @keras_export('keras.backend.eye')
+@dispatch.add_dispatch_support
 def eye(size, dtype=None, name=None):
   """Instantiate an identity matrix and returns it.
 
@@ -1482,6 +1457,7 @@ def zeros_like(x, dtype=None, name=None):
 
 
 @keras_export('keras.backend.ones_like')
+@dispatch.add_dispatch_support
 def ones_like(x, dtype=None, name=None):
   """Instantiates an all-ones variable of the same shape as another tensor.
 
@@ -1612,6 +1588,7 @@ def count_params(x):
 
 
 @keras_export('keras.backend.cast')
+@dispatch.add_dispatch_support
 def cast(x, dtype):
   """Casts a tensor to a different dtype and returns it.
 
@@ -1696,6 +1673,7 @@ def moving_average_update(x, value, momentum):
 
 
 @keras_export('keras.backend.dot')
+@dispatch.add_dispatch_support
 def dot(x, y):
   """Multiplies 2 tensors (and/or variables) and returns a tensor.
 
@@ -1756,6 +1734,7 @@ def dot(x, y):
 
 
 @keras_export('keras.backend.batch_dot')
+@dispatch.add_dispatch_support
 def batch_dot(x, y, axes=None):
   """Batchwise dot product.
 
@@ -1944,6 +1923,7 @@ def batch_dot(x, y, axes=None):
 
 
 @keras_export('keras.backend.transpose')
+@dispatch.add_dispatch_support
 def transpose(x):
   """Transposes a tensor and returns it.
 
@@ -1975,6 +1955,7 @@ def transpose(x):
 
 
 @keras_export('keras.backend.gather')
+@dispatch.add_dispatch_support
 def gather(reference, indices):
   """Retrieves the elements of indices `indices` in the tensor `reference`.
 
@@ -2010,6 +1991,7 @@ def gather(reference, indices):
 
 
 @keras_export('keras.backend.max')
+@dispatch.add_dispatch_support
 def max(x, axis=None, keepdims=False):
   """Maximum value in a tensor.
 
@@ -2028,6 +2010,7 @@ def max(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.min')
+@dispatch.add_dispatch_support
 def min(x, axis=None, keepdims=False):
   """Minimum value in a tensor.
 
@@ -2046,6 +2029,7 @@ def min(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.sum')
+@dispatch.add_dispatch_support
 def sum(x, axis=None, keepdims=False):
   """Sum of the values in a tensor, alongside the specified axis.
 
@@ -2064,6 +2048,7 @@ def sum(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.prod')
+@dispatch.add_dispatch_support
 def prod(x, axis=None, keepdims=False):
   """Multiplies the values in a tensor, alongside the specified axis.
 
@@ -2082,6 +2067,7 @@ def prod(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.cumsum')
+@dispatch.add_dispatch_support
 def cumsum(x, axis=0):
   """Cumulative sum of the values in a tensor, alongside the specified axis.
 
@@ -2096,6 +2082,7 @@ def cumsum(x, axis=0):
 
 
 @keras_export('keras.backend.cumprod')
+@dispatch.add_dispatch_support
 def cumprod(x, axis=0):
   """Cumulative product of the values in a tensor, alongside the specified axis.
 
@@ -2130,6 +2117,7 @@ def var(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.std')
+@dispatch.add_dispatch_support
 def std(x, axis=None, keepdims=False):
   """Standard deviation of a tensor, alongside the specified axis.
 
@@ -2156,6 +2144,7 @@ def std(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.mean')
+@dispatch.add_dispatch_support
 def mean(x, axis=None, keepdims=False):
   """Mean of a tensor, alongside the specified axis.
 
@@ -2176,6 +2165,7 @@ def mean(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.any')
+@dispatch.add_dispatch_support
 def any(x, axis=None, keepdims=False):
   """Bitwise reduction (logical OR).
 
@@ -2192,6 +2182,7 @@ def any(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.all')
+@dispatch.add_dispatch_support
 def all(x, axis=None, keepdims=False):
   """Bitwise reduction (logical AND).
 
@@ -2208,6 +2199,7 @@ def all(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.argmax')
+@dispatch.add_dispatch_support
 def argmax(x, axis=-1):
   """Returns the index of the maximum value along an axis.
 
@@ -2222,6 +2214,7 @@ def argmax(x, axis=-1):
 
 
 @keras_export('keras.backend.argmin')
+@dispatch.add_dispatch_support
 def argmin(x, axis=-1):
   """Returns the index of the minimum value along an axis.
 
@@ -2236,6 +2229,7 @@ def argmin(x, axis=-1):
 
 
 @keras_export('keras.backend.square')
+@dispatch.add_dispatch_support
 def square(x):
   """Element-wise square.
 
@@ -2249,6 +2243,7 @@ def square(x):
 
 
 @keras_export('keras.backend.abs')
+@dispatch.add_dispatch_support
 def abs(x):
   """Element-wise absolute value.
 
@@ -2262,6 +2257,7 @@ def abs(x):
 
 
 @keras_export('keras.backend.sqrt')
+@dispatch.add_dispatch_support
 def sqrt(x):
   """Element-wise square root.
 
@@ -2278,6 +2274,7 @@ def sqrt(x):
 
 
 @keras_export('keras.backend.exp')
+@dispatch.add_dispatch_support
 def exp(x):
   """Element-wise exponential.
 
@@ -2291,6 +2288,7 @@ def exp(x):
 
 
 @keras_export('keras.backend.log')
+@dispatch.add_dispatch_support
 def log(x):
   """Element-wise log.
 
@@ -2325,6 +2323,7 @@ def logsumexp(x, axis=None, keepdims=False):
 
 
 @keras_export('keras.backend.round')
+@dispatch.add_dispatch_support
 def round(x):
   """Element-wise rounding to the closest integer.
 
@@ -2340,6 +2339,7 @@ def round(x):
 
 
 @keras_export('keras.backend.sign')
+@dispatch.add_dispatch_support
 def sign(x):
   """Element-wise sign.
 
@@ -2353,6 +2353,7 @@ def sign(x):
 
 
 @keras_export('keras.backend.pow')
+@dispatch.add_dispatch_support
 def pow(x, a):
   """Element-wise exponentiation.
 
@@ -2367,6 +2368,7 @@ def pow(x, a):
 
 
 @keras_export('keras.backend.clip')
+@dispatch.add_dispatch_support
 def clip(x, min_value, max_value):
   """Element-wise value clipping.
 
@@ -2390,6 +2392,7 @@ def clip(x, min_value, max_value):
 
 
 @keras_export('keras.backend.equal')
+@dispatch.add_dispatch_support
 def equal(x, y):
   """Element-wise equality between two tensors.
 
@@ -2404,6 +2407,7 @@ def equal(x, y):
 
 
 @keras_export('keras.backend.not_equal')
+@dispatch.add_dispatch_support
 def not_equal(x, y):
   """Element-wise inequality between two tensors.
 
@@ -2418,6 +2422,7 @@ def not_equal(x, y):
 
 
 @keras_export('keras.backend.greater')
+@dispatch.add_dispatch_support
 def greater(x, y):
   """Element-wise truth value of (x > y).
 
@@ -2432,6 +2437,7 @@ def greater(x, y):
 
 
 @keras_export('keras.backend.greater_equal')
+@dispatch.add_dispatch_support
 def greater_equal(x, y):
   """Element-wise truth value of (x >= y).
 
@@ -2446,6 +2452,7 @@ def greater_equal(x, y):
 
 
 @keras_export('keras.backend.less')
+@dispatch.add_dispatch_support
 def less(x, y):
   """Element-wise truth value of (x < y).
 
@@ -2460,6 +2467,7 @@ def less(x, y):
 
 
 @keras_export('keras.backend.less_equal')
+@dispatch.add_dispatch_support
 def less_equal(x, y):
   """Element-wise truth value of (x <= y).
 
@@ -2474,6 +2482,7 @@ def less_equal(x, y):
 
 
 @keras_export('keras.backend.maximum')
+@dispatch.add_dispatch_support
 def maximum(x, y):
   """Element-wise maximum of two tensors.
 
@@ -2498,6 +2507,7 @@ def maximum(x, y):
 
 
 @keras_export('keras.backend.minimum')
+@dispatch.add_dispatch_support
 def minimum(x, y):
   """Element-wise minimum of two tensors.
 
@@ -2512,6 +2522,7 @@ def minimum(x, y):
 
 
 @keras_export('keras.backend.sin')
+@dispatch.add_dispatch_support
 def sin(x):
   """Computes sin of x element-wise.
 
@@ -2525,6 +2536,7 @@ def sin(x):
 
 
 @keras_export('keras.backend.cos')
+@dispatch.add_dispatch_support
 def cos(x):
   """Computes cos of x element-wise.
 
@@ -2670,6 +2682,7 @@ def normalize_batch_in_training(x, gamma, beta, reduction_axes, epsilon=1e-3):
 
 
 @keras_export('keras.backend.batch_normalization')
+@dispatch.add_dispatch_support
 def batch_normalization(x, mean, var, beta, gamma, axis=-1, epsilon=1e-3):
   """Applies batch normalization on x given mean, var, beta and gamma.
 
@@ -2732,6 +2745,7 @@ def batch_normalization(x, mean, var, beta, gamma, axis=-1, epsilon=1e-3):
 
 
 @keras_export('keras.backend.concatenate')
+@dispatch.add_dispatch_support
 def concatenate(tensors, axis=-1):
   """Concatenates a list of tensors alongside the specified axis.
 
@@ -2769,6 +2783,7 @@ def concatenate(tensors, axis=-1):
 
 
 @keras_export('keras.backend.reshape')
+@dispatch.add_dispatch_support
 def reshape(x, shape):
   """Reshapes a tensor to the specified shape.
 
@@ -2798,6 +2813,7 @@ def reshape(x, shape):
 
 
 @keras_export('keras.backend.permute_dimensions')
+@dispatch.add_dispatch_support
 def permute_dimensions(x, pattern):
   """Permutes axes in a tensor.
 
@@ -2829,6 +2845,7 @@ def permute_dimensions(x, pattern):
 
 
 @keras_export('keras.backend.resize_images')
+@dispatch.add_dispatch_support
 def resize_images(x, height_factor, width_factor, data_format,
                   interpolation='nearest'):
   """Resizes the images contained in a 4D tensor.
@@ -2892,6 +2909,7 @@ def resize_images(x, height_factor, width_factor, data_format,
 
 
 @keras_export('keras.backend.resize_volumes')
+@dispatch.add_dispatch_support
 def resize_volumes(x, depth_factor, height_factor, width_factor, data_format):
   """Resizes the volume contained in a 5D tensor.
 
@@ -2924,6 +2942,7 @@ def resize_volumes(x, depth_factor, height_factor, width_factor, data_format):
 
 
 @keras_export('keras.backend.repeat_elements')
+@dispatch.add_dispatch_support
 def repeat_elements(x, rep, axis):
   """Repeats the elements of a tensor along an axis, like `np.repeat`.
 
@@ -2985,6 +3004,7 @@ def repeat_elements(x, rep, axis):
 
 
 @keras_export('keras.backend.repeat')
+@dispatch.add_dispatch_support
 def repeat(x, n):
   """Repeats a 2D tensor.
 
@@ -3020,6 +3040,7 @@ def repeat(x, n):
 
 
 @keras_export('keras.backend.arange')
+@dispatch.add_dispatch_support
 def arange(start, stop=None, step=1, dtype='int32'):
   """Creates a 1D tensor containing a sequence of integers.
 
@@ -3058,6 +3079,7 @@ def arange(start, stop=None, step=1, dtype='int32'):
 
 
 @keras_export('keras.backend.tile')
+@dispatch.add_dispatch_support
 def tile(x, n):
   """Creates a tensor by tiling `x` by `n`.
 
@@ -3075,6 +3097,7 @@ def tile(x, n):
 
 
 @keras_export('keras.backend.flatten')
+@dispatch.add_dispatch_support
 def flatten(x):
   """Flatten a tensor.
 
@@ -3100,6 +3123,7 @@ def flatten(x):
 
 
 @keras_export('keras.backend.batch_flatten')
+@dispatch.add_dispatch_support
 def batch_flatten(x):
   """Turn a nD tensor into a 2D tensor with same 0th dimension.
 
@@ -3125,6 +3149,7 @@ def batch_flatten(x):
 
 
 @keras_export('keras.backend.expand_dims')
+@dispatch.add_dispatch_support
 def expand_dims(x, axis=-1):
   """Adds a 1-sized dimension at index "axis".
 
@@ -3139,6 +3164,7 @@ def expand_dims(x, axis=-1):
 
 
 @keras_export('keras.backend.squeeze')
+@dispatch.add_dispatch_support
 def squeeze(x, axis):
   """Removes a 1-dimension from the tensor at index "axis".
 
@@ -3153,6 +3179,7 @@ def squeeze(x, axis):
 
 
 @keras_export('keras.backend.temporal_padding')
+@dispatch.add_dispatch_support
 def temporal_padding(x, padding=(1, 1)):
   """Pads the middle dimension of a 3D tensor.
 
@@ -3170,6 +3197,7 @@ def temporal_padding(x, padding=(1, 1)):
 
 
 @keras_export('keras.backend.spatial_2d_padding')
+@dispatch.add_dispatch_support
 def spatial_2d_padding(x, padding=((1, 1), (1, 1)), data_format=None):
   """Pads the 2nd and 3rd dimensions of a 4D tensor.
 
@@ -3201,6 +3229,7 @@ def spatial_2d_padding(x, padding=((1, 1), (1, 1)), data_format=None):
 
 
 @keras_export('keras.backend.spatial_3d_padding')
+@dispatch.add_dispatch_support
 def spatial_3d_padding(x, padding=((1, 1), (1, 1), (1, 1)), data_format=None):
   """Pads 5D tensor with zeros along the depth, height, width dimensions.
 
@@ -3245,6 +3274,7 @@ def spatial_3d_padding(x, padding=((1, 1), (1, 1), (1, 1)), data_format=None):
 
 
 @keras_export('keras.backend.stack')
+@dispatch.add_dispatch_support
 def stack(x, axis=0):
   """Stacks a list of rank `R` tensors into a rank `R+1` tensor.
 
@@ -3271,6 +3301,7 @@ def stack(x, axis=0):
 
 
 @keras_export('keras.backend.one_hot')
+@dispatch.add_dispatch_support
 def one_hot(indices, num_classes):
   """Computes the one-hot representation of an integer tensor.
 
@@ -3290,6 +3321,7 @@ def one_hot(indices, num_classes):
 
 
 @keras_export('keras.backend.reverse')
+@dispatch.add_dispatch_support
 def reverse(x, axes):
   """Reverse a tensor along the specified axes.
 
@@ -3370,6 +3402,7 @@ def get_value(x):
 
 
 @keras_export('keras.backend.batch_get_value')
+@dispatch.add_dispatch_support
 def batch_get_value(tensors):
   """Returns the value of more than one tensor variable.
 
@@ -3431,6 +3464,7 @@ def set_value(x, value):
 
 
 @keras_export('keras.backend.batch_set_value')
+@dispatch.add_dispatch_support
 def batch_set_value(tuples):
   """Sets the values of many tensor variables at once.
 
@@ -3473,6 +3507,7 @@ set_value.__doc__ = set_value.__doc__.format(snippet=_VALUE_SET_CODE_STRING)
 
 
 @keras_export('keras.backend.print_tensor')
+@dispatch.add_dispatch_support
 def print_tensor(x, message=''):
   """Prints `message` and the tensor value when evaluated.
 
@@ -3890,7 +3925,8 @@ def function(inputs, outputs, updates=None, name=None, **kwargs):
         msg = ('Invalid argument "%s" passed to K.function with TensorFlow '
                'backend') % key
         raise ValueError(msg)
-  return GraphExecutionFunction(inputs, outputs, updates=updates, **kwargs)
+  return GraphExecutionFunction(
+      inputs, outputs, updates=updates, name=name, **kwargs)
 
 
 @keras_export('keras.backend.gradients')
@@ -3909,6 +3945,7 @@ def gradients(loss, variables):
 
 
 @keras_export('keras.backend.stop_gradient')
+@dispatch.add_dispatch_support
 def stop_gradient(variables):
   """Returns `variables` but with zero gradient w.r.t. every other variable.
 
@@ -3930,6 +3967,7 @@ def stop_gradient(variables):
 
 
 @keras_export('keras.backend.rnn')
+@dispatch.add_dispatch_support
 def rnn(step_function,
         inputs,
         initial_states,
@@ -4324,6 +4362,7 @@ def rnn(step_function,
 
 
 @keras_export('keras.backend.switch')
+@dispatch.add_dispatch_support
 def switch(condition, then_expression, else_expression):
   """Switches between two operations depending on a scalar value.
 
@@ -4457,6 +4496,7 @@ def in_test_phase(x, alt, training=None):
 
 
 @keras_export('keras.backend.relu')
+@dispatch.add_dispatch_support
 def relu(x, alpha=0., max_value=None, threshold=0):
   """Rectified linear unit.
 
@@ -4510,6 +4550,7 @@ def relu(x, alpha=0., max_value=None, threshold=0):
 
 
 @keras_export('keras.backend.elu')
+@dispatch.add_dispatch_support
 def elu(x, alpha=1.):
   """Exponential linear unit.
 
@@ -4528,6 +4569,7 @@ def elu(x, alpha=1.):
 
 
 @keras_export('keras.backend.softmax')
+@dispatch.add_dispatch_support
 def softmax(x, axis=-1):
   """Softmax of a tensor.
 
@@ -4543,6 +4585,7 @@ def softmax(x, axis=-1):
 
 
 @keras_export('keras.backend.softplus')
+@dispatch.add_dispatch_support
 def softplus(x):
   """Softplus of a tensor.
 
@@ -4556,6 +4599,7 @@ def softplus(x):
 
 
 @keras_export('keras.backend.softsign')
+@dispatch.add_dispatch_support
 def softsign(x):
   """Softsign of a tensor.
 
@@ -4575,6 +4619,7 @@ def _backtrack_identity(tensor):
 
 
 @keras_export('keras.backend.categorical_crossentropy')
+@dispatch.add_dispatch_support
 def categorical_crossentropy(target, output, from_logits=False, axis=-1):
   """Categorical crossentropy between an output tensor and a target tensor.
 
@@ -4643,6 +4688,7 @@ def categorical_crossentropy(target, output, from_logits=False, axis=-1):
 
 
 @keras_export('keras.backend.sparse_categorical_crossentropy')
+@dispatch.add_dispatch_support
 def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
   """Categorical crossentropy with integer targets.
 
@@ -4724,6 +4770,7 @@ def sparse_categorical_crossentropy(target, output, from_logits=False, axis=-1):
 
 
 @keras_export('keras.backend.binary_crossentropy')
+@dispatch.add_dispatch_support
 def binary_crossentropy(target, output, from_logits=False):
   """Binary crossentropy between an output tensor and a target tensor.
 
@@ -4760,6 +4807,7 @@ def binary_crossentropy(target, output, from_logits=False):
 
 
 @keras_export('keras.backend.sigmoid')
+@dispatch.add_dispatch_support
 def sigmoid(x):
   """Element-wise sigmoid.
 
@@ -4773,6 +4821,7 @@ def sigmoid(x):
 
 
 @keras_export('keras.backend.hard_sigmoid')
+@dispatch.add_dispatch_support
 def hard_sigmoid(x):
   """Segment-wise linear approximation of sigmoid.
 
@@ -4795,6 +4844,7 @@ def hard_sigmoid(x):
 
 
 @keras_export('keras.backend.tanh')
+@dispatch.add_dispatch_support
 def tanh(x):
   """Element-wise tanh.
 
@@ -4808,6 +4858,7 @@ def tanh(x):
 
 
 @keras_export('keras.backend.dropout')
+@dispatch.add_dispatch_support
 def dropout(x, level, noise_shape=None, seed=None):
   """Sets entries in `x` to zero at random, while scaling the entire tensor.
 
@@ -4828,6 +4879,7 @@ def dropout(x, level, noise_shape=None, seed=None):
 
 
 @keras_export('keras.backend.l2_normalize')
+@dispatch.add_dispatch_support
 def l2_normalize(x, axis=None):
   """Normalizes a tensor wrt the L2 norm alongside the specified axis.
 
@@ -4842,6 +4894,7 @@ def l2_normalize(x, axis=None):
 
 
 @keras_export('keras.backend.in_top_k')
+@dispatch.add_dispatch_support
 def in_top_k(predictions, targets, k):
   """Returns whether the `targets` are in the top `k` `predictions`.
 
@@ -4944,6 +4997,7 @@ def _preprocess_padding(padding):
 
 
 @keras_export('keras.backend.conv1d')
+@dispatch.add_dispatch_support
 def conv1d(x,
            kernel,
            strides=1,
@@ -4994,6 +5048,7 @@ def conv1d(x,
 
 
 @keras_export('keras.backend.conv2d')
+@dispatch.add_dispatch_support
 def conv2d(x,
            kernel,
            strides=(1, 1),
@@ -5037,6 +5092,7 @@ def conv2d(x,
 
 
 @keras_export('keras.backend.conv2d_transpose')
+@dispatch.add_dispatch_support
 def conv2d_transpose(x,
                      kernel,
                      output_shape,
@@ -5177,6 +5233,7 @@ def separable_conv1d(x,
 
 
 @keras_export('keras.backend.separable_conv2d')
+@dispatch.add_dispatch_support
 def separable_conv2d(x,
                      depthwise_kernel,
                      pointwise_kernel,
@@ -5234,6 +5291,7 @@ def separable_conv2d(x,
 
 
 @keras_export('keras.backend.depthwise_conv2d')
+@dispatch.add_dispatch_support
 def depthwise_conv2d(x,
                      depthwise_kernel,
                      strides=(1, 1),
@@ -5283,6 +5341,7 @@ def depthwise_conv2d(x,
 
 
 @keras_export('keras.backend.conv3d')
+@dispatch.add_dispatch_support
 def conv3d(x,
            kernel,
            strides=(1, 1, 1),
@@ -5385,6 +5444,7 @@ def conv3d_transpose(x,
 
 
 @keras_export('keras.backend.pool2d')
+@dispatch.add_dispatch_support
 def pool2d(x,
            pool_size,
            strides=(1, 1),
@@ -5444,6 +5504,7 @@ def pool2d(x,
 
 
 @keras_export('keras.backend.pool3d')
+@dispatch.add_dispatch_support
 def pool3d(x,
            pool_size,
            strides=(1, 1, 1),
@@ -5574,6 +5635,7 @@ def local_conv(inputs,
 
 
 @keras_export('keras.backend.local_conv1d')
+@dispatch.add_dispatch_support
 def local_conv1d(inputs, kernel, kernel_size, strides, data_format=None):
   """Apply 1D conv with un-shared weights.
 
@@ -5609,6 +5671,7 @@ def local_conv1d(inputs, kernel, kernel_size, strides, data_format=None):
 
 
 @keras_export('keras.backend.local_conv2d')
+@dispatch.add_dispatch_support
 def local_conv2d(inputs,
                  kernel,
                  kernel_size,
@@ -5650,6 +5713,7 @@ def local_conv2d(inputs,
 
 
 @keras_export('keras.backend.bias_add')
+@dispatch.add_dispatch_support
 def bias_add(x, bias, data_format=None):
   """Adds a bias vector to a tensor.
 
@@ -5694,6 +5758,7 @@ def bias_add(x, bias, data_format=None):
 
 
 @keras_export('keras.backend.random_normal')
+@dispatch.add_dispatch_support
 def random_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
   """Returns a tensor with normal distribution of values.
 
@@ -5730,6 +5795,7 @@ def random_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
 
 
 @keras_export('keras.backend.random_uniform')
+@dispatch.add_dispatch_support
 def random_uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
   """Returns a tensor with uniform distribution of values.
 
@@ -5763,6 +5829,7 @@ def random_uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
 
 @deprecated(None, 'Use `tf.keras.backend.random_bernoulli` instead.')
 @keras_export('keras.backend.random_binomial')
+@dispatch.add_dispatch_support
 def random_binomial(shape, p=0.0, dtype=None, seed=None):
   """Returns a tensor with random binomial distribution of values.
 
@@ -5799,6 +5866,7 @@ def random_binomial(shape, p=0.0, dtype=None, seed=None):
 
 
 @keras_export('keras.backend.random_bernoulli')
+@dispatch.add_dispatch_support
 def random_bernoulli(shape, p=0.0, dtype=None, seed=None):
   """Returns a tensor with random bernoulli distribution of values.
 
@@ -5815,6 +5883,7 @@ def random_bernoulli(shape, p=0.0, dtype=None, seed=None):
 
 
 @keras_export('keras.backend.truncated_normal')
+@dispatch.add_dispatch_support
 def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
   """Returns a tensor with truncated random normal distribution of values.
 
@@ -5849,6 +5918,7 @@ def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
 
 
 @keras_export('keras.backend.ctc_label_dense_to_sparse')
+@dispatch.add_dispatch_support
 def ctc_label_dense_to_sparse(labels, label_lengths):
   """Converts CTC labels from dense to sparse.
 
@@ -5895,6 +5965,7 @@ def ctc_label_dense_to_sparse(labels, label_lengths):
 
 
 @keras_export('keras.backend.ctc_batch_cost')
+@dispatch.add_dispatch_support
 def ctc_batch_cost(y_true, y_pred, input_length, label_length):
   """Runs CTC loss algorithm on each batch element.
 
@@ -5927,6 +5998,7 @@ def ctc_batch_cost(y_true, y_pred, input_length, label_length):
 
 
 @keras_export('keras.backend.ctc_decode')
+@dispatch.add_dispatch_support
 def ctc_decode(y_pred, input_length, greedy=True, beam_width=100, top_paths=1):
   """Decodes the output of a softmax.
 
