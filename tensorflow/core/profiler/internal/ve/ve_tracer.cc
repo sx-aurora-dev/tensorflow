@@ -143,7 +143,7 @@ Status VEDeviceTracer::Export(XSpace* space) {
   double ghz = ve_resolution_ / 1e9;
 
   std::string name = absl::StrCat(kVePlanePrefix, device_ordinal);
-  XPlaneBuilder device_plane(GetOrCreatePlane(space, name));
+  XPlaneBuilder device_plane(FindOrAddMutablePlaneWithName(space, name));
   device_plane.SetId(kVePlaneBaseId + device_ordinal);
 
   // Flush

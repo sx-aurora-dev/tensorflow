@@ -38,7 +38,7 @@ $ scl enable rh-python36 bash
 $ virtualenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
-(tmp)$ pip install -U six numpy wheel setuptools
+(tmp)$ pip install -U six numpy wheel setuptools keras-preprocessing
 (tmp)% pip install -U tensorflow_ve-2.1.0-cp36-cp36m-linux_x86_64.whl
 ```
 
