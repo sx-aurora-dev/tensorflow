@@ -2151,6 +2151,7 @@ struct VERnnModelShapes {
   TensorShape output_shape;
   TensorShape hidden_state_shape;
   TensorShape cell_state_shape;
+  TensorShape reserve_space_shape;
   // At present only fields related to cached RnnDescriptor are concerned.
   bool IsCompatibleWith(const VERnnModelShapes& rhs) const {
     return num_layers == rhs.num_layers && input_size == rhs.input_size &&
@@ -2375,6 +2376,9 @@ Status VEExtractForwardInput(OpKernelContext* context,
         TensorShape({model_shapes->batch_size, model_shapes->max_seq_length,
                      model_shapes->dir_count * model_shapes->num_units});
   }
+  model_shapes->reserve_space_shape = 
+      TensorShape({model_shapes->max_seq_length *
+                    model_shapes->batch_size * model_shapes->num_units * 6});
   return Status::OK();
 }
 
@@ -2597,6 +2601,7 @@ class VERNNForwardOp : public VERNNKernelCommon {
                      VEExtractForwardInput(context, model_types(), time_major,
                                            &input, &input_h, &input_c, &params,
                                            num_proj, &model_shapes));
+                                           
 //    }
 
 //    RnnInputMode input_mode;
@@ -2610,6 +2615,10 @@ class VERNNForwardOp : public VERNNKernelCommon {
 
     OP_REQUIRES_OK(context, AllocateOutputs(context, model_shapes, &output,
                                             &output_h, &output_c));
+
+    Tensor* reserve_space = nullptr;
+
+    OP_REQUIRES_OK(context, AllocateReserveSpace(context, model_shapes, &reserve_space));
 
 #if 0     // current VERNN impl does not use working memory
     // Creates a memory callback for the reserve_space. The memory lives in the
@@ -2662,8 +2671,11 @@ class VERNNForwardOp : public VERNNKernelCommon {
     args.addArg<Tensor>(*output_h) ;	// 5
     args.addArg<Tensor>(*output_c) ;
 
+    args.addArg<Tensor>(*reserve_space) ;
+
     args.addArg<int32>( time_major      ? 1 : 0 ) ;
     args.addArg<float>(dropout()) ;
+    args.addArg<int32>( is_training_ ? 1 : 0 );
 
 //    args.addArg<int32>( num_proj ) ;
 
@@ -2794,16 +2806,19 @@ class VERNNForwardOp : public VERNNKernelCommon {
       // need to create dummy outputs.
       TF_RETURN_IF_ERROR(context->allocate_output(2, {}, output_c));
     }
-#if 0
-    if (!is_training_) {
-      Tensor* dummy_reserve_space = nullptr;
-      TF_RETURN_IF_ERROR(context->allocate_output(3, {}, &dummy_reserve_space));
+    return Status::OK();
+  }
+
+ private:
+  Status AllocateReserveSpace(OpKernelContext* context,
+                         const VERnnModelShapes& model_shapes,
+                         Tensor **reserve_space) {
+    const TensorShape& reserve_space_shape = model_shapes.reserve_space_shape;
+    if (is_training_) {
+      TF_RETURN_IF_ERROR(context->allocate_output(3, reserve_space_shape, reserve_space));
+    } else {
+      TF_RETURN_IF_ERROR(context->allocate_output(3, {}, reserve_space));
     }
-#else
-    // current VERNN impl does not use working memory
-    Tensor* dummy_reserve_space = nullptr;
-    TF_RETURN_IF_ERROR(context->allocate_output(3, {}, &dummy_reserve_space));
-#endif
     return Status::OK();
   }
 
@@ -2912,6 +2927,31 @@ class VERNNBackwardOp : public VERNNKernelCommon {
     }
     OP_REQUIRES_OK(context, launch_status);
 #endif
+
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    args.addArg<Tensor>(*input);
+    args.addArg<Tensor>(*input_h);
+    args.addArg<Tensor>(*input_c);
+    args.addArg<Tensor>(*params);
+
+    args.addArg<Tensor>(*output);
+    args.addArg<Tensor>(*output_h);
+    args.addArg<Tensor>(*output_c);
+
+    args.addArg<Tensor>(*output_backprop);
+    args.addArg<Tensor>(*output_h_backprop);
+    args.addArg<Tensor>(*output_c_backprop);
+    args.addArg<Tensor>(*reserve_space);
+
+    args.addArg<Tensor>(*input_backprop);
+    args.addArg<Tensor>(*input_h_backprop);
+    args.addArg<Tensor>(*input_c_backprop);
+    args.addArg<Tensor>(*params_backprop);
+
+    args.addArg<int32>(time_major ? 1 : 0);
+
+    VEOpKernelHelper::Call(context, "RnnBackward", args);
 
 #endif
   }
