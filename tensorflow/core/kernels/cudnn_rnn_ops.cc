@@ -2831,12 +2831,10 @@ class VERNNForwardOp : public VERNNKernelCommon {
 
 #define REGISTER_VE(T)                                            \
   REGISTER_KERNEL_BUILDER(                                        \
-      Name("CudnnRNN").Device(DEVICE_VE).TypeConstraint<T>("T"),  \
+      Name("VERNN").Device(DEVICE_VE).TypeConstraint<T>("T"),  \
       VERNNForwardOp<T>);
 
-//TF_CALL_half(REGISTER_VE);
 TF_CALL_float(REGISTER_VE);
-//TF_CALL_double(REGISTER_VE);
 #undef REGISTER_VE
 
 // Run the backward operation of the RNN model.
@@ -3134,12 +3132,10 @@ class VERNNBackwardOp : public VERNNKernelCommon {
 
 #define REGISTER_VE(T)                                                    \
   REGISTER_KERNEL_BUILDER(                                                \
-      Name("CudnnRNNBackprop").Device(DEVICE_VE).TypeConstraint<T>("T"), \
+      Name("VERNNBackprop").Device(DEVICE_VE).TypeConstraint<T>("T"), \
       VERNNBackwardOp<T>);
 
-//TF_CALL_half(REGISTER_VE);
 TF_CALL_float(REGISTER_VE);
-//TF_CALL_double(REGISTER_VE);
 #undef REGISTER_VE
 
 #endif // TENSORFLOW_USE_VE
