@@ -1629,12 +1629,6 @@ def ve_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias,
   init_h = array_ops.expand_dims(init_h, axis=seq_axis)
   init_c = array_ops.expand_dims(init_c, axis=seq_axis)
 
-#   weights = array_ops.split(kernel, 4, axis=1)
-#   weights += array_ops.split(recurrent_kernel, 4, axis=1)
-  # CuDNN has an extra set of bias for inputs, we disable them (setting to 0),
-  # so that mathematically it is same as the canonical LSTM implementation.
-#   full_bias = array_ops.concat((array_ops.zeros_like(bias), bias), 0)
-
 #   if build_info.is_rocm_build:
 #     # ROCm MIOpen's weight sequence for LSTM is different from both canonical
 #     # and Cudnn format
@@ -1648,11 +1642,6 @@ def ve_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias,
 #     full_bias = array_ops.split(full_bias, 8, axis=0)
 #     full_bias = [full_bias[x] for x in (0, 1, 3, 2, 4, 5, 7, 6)]
 
-#   params = _canonical_to_params(
-#       weights=weights,
-#       biases=array_ops.split(full_bias, 8),
-#       shape=constant_op.constant([-1]),
-#       transpose_weights=True)
   
   # # Fill the array with shape [batch] with value of max timesteps.
   # sequence_length = array_ops.fill([array_ops.shape(inputs)[1]],
@@ -1660,9 +1649,6 @@ def ve_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias,
   if go_backwards:
     # Reverse axis 0 since the input is already convert to time major.
     inputs = array_ops.reverse(inputs, axis=[0])
-#   outputs, h, c, _ = gen_cudnn_rnn_ops.vernn(
-#       inputs, input_h=init_h, input_c=init_c, params=params, is_training=True,
-#       rnn_mode='lstm')
   outputs, h, c, _ = gen_cudnn_rnn_ops.vernn(
       inputs, input_h=init_h, input_c=init_c, 
       kernel=kernel, recurrent_kernel=recurrent_kernel,
@@ -1680,7 +1666,7 @@ def ve_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias,
   # get the final effect output instead just 0s at the last timestep.
   # In order to mimic the default keras behavior, we copy the final h state as
   # the last_output, since it is numerically same as the output.
-  return last_output, outputs, h, c, _runtime(_RUNTIME_GPU)
+  return last_output, outputs, h, c, _runtime(_RUNTIME_CPU)
 
 def ve_lstm_with_backend_selection(inputs, init_h, init_c, kernel,
                                    recurrent_kernel, bias, mask, time_major,
