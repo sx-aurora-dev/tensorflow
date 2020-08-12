@@ -1629,30 +1629,30 @@ def ve_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias,
   init_h = array_ops.expand_dims(init_h, axis=seq_axis)
   init_c = array_ops.expand_dims(init_c, axis=seq_axis)
 
-  weights = array_ops.split(kernel, 4, axis=1)
-  weights += array_ops.split(recurrent_kernel, 4, axis=1)
+#   weights = array_ops.split(kernel, 4, axis=1)
+#   weights += array_ops.split(recurrent_kernel, 4, axis=1)
   # CuDNN has an extra set of bias for inputs, we disable them (setting to 0),
   # so that mathematically it is same as the canonical LSTM implementation.
-  full_bias = array_ops.concat((array_ops.zeros_like(bias), bias), 0)
+#   full_bias = array_ops.concat((array_ops.zeros_like(bias), bias), 0)
 
-  if build_info.is_rocm_build:
-    # ROCm MIOpen's weight sequence for LSTM is different from both canonical
-    # and Cudnn format
-    # MIOpen: [i, f, o, c] Cudnn/Canonical: [i, f, c, o]
-    # i is input gate weights.
-    # f is forget gate weights.
-    # o is output gate weights.
-    # c is cell gate weights.
-    weights = [weights[x] for x in (0, 1, 3, 2, 4, 5, 7, 6)]
-    # full_bias is a tensor of shape (8*n,)
-    full_bias = array_ops.split(full_bias, 8, axis=0)
-    full_bias = [full_bias[x] for x in (0, 1, 3, 2, 4, 5, 7, 6)]
+#   if build_info.is_rocm_build:
+#     # ROCm MIOpen's weight sequence for LSTM is different from both canonical
+#     # and Cudnn format
+#     # MIOpen: [i, f, o, c] Cudnn/Canonical: [i, f, c, o]
+#     # i is input gate weights.
+#     # f is forget gate weights.
+#     # o is output gate weights.
+#     # c is cell gate weights.
+#     weights = [weights[x] for x in (0, 1, 3, 2, 4, 5, 7, 6)]
+#     # full_bias is a tensor of shape (8*n,)
+#     full_bias = array_ops.split(full_bias, 8, axis=0)
+#     full_bias = [full_bias[x] for x in (0, 1, 3, 2, 4, 5, 7, 6)]
 
-  params = _canonical_to_params(
-      weights=weights,
-      biases=array_ops.split(full_bias, 8),
-      shape=constant_op.constant([-1]),
-      transpose_weights=True)
+#   params = _canonical_to_params(
+#       weights=weights,
+#       biases=array_ops.split(full_bias, 8),
+#       shape=constant_op.constant([-1]),
+#       transpose_weights=True)
   
   # # Fill the array with shape [batch] with value of max timesteps.
   # sequence_length = array_ops.fill([array_ops.shape(inputs)[1]],
@@ -1660,9 +1660,13 @@ def ve_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias,
   if go_backwards:
     # Reverse axis 0 since the input is already convert to time major.
     inputs = array_ops.reverse(inputs, axis=[0])
+#   outputs, h, c, _ = gen_cudnn_rnn_ops.vernn(
+#       inputs, input_h=init_h, input_c=init_c, params=params, is_training=True,
+#       rnn_mode='lstm')
   outputs, h, c, _ = gen_cudnn_rnn_ops.vernn(
-      inputs, input_h=init_h, input_c=init_c, params=params, is_training=True,
-      rnn_mode='lstm')
+      inputs, input_h=init_h, input_c=init_c, 
+      kernel=kernel, recurrent_kernel=recurrent_kernel,
+      bias=bias, is_training=True, rnn_mode='lstm')
 
   last_output = outputs[-1]
   if not time_major :

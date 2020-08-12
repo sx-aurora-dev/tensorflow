@@ -2261,7 +2261,8 @@ Status VEParseRNNDirectionMode(const string& str,
 Status VEExtractForwardInput(OpKernelContext* context,
                              const VERNNModelTypes& model_types, bool time_major,
                              const Tensor** input, const Tensor** input_h,
-                             const Tensor** input_c, const Tensor** params,
+                             const Tensor** input_c, const Tensor** kernel,
+			     const Tensor** recurrent_kernel, const Tensor** bias,
                              const int num_proj,
                              VERnnModelShapes* model_shapes) {
 
@@ -2270,7 +2271,9 @@ Status VEExtractForwardInput(OpKernelContext* context,
   if (model_types.HasInputC()) {
     TF_RETURN_IF_ERROR(context->input("input_c", input_c));
   }
-  TF_RETURN_IF_ERROR(context->input("params", params));
+  TF_RETURN_IF_ERROR(context->input("kernel", kernel));
+  TF_RETURN_IF_ERROR(context->input("recurrent_kernel", recurrent_kernel));
+  TF_RETURN_IF_ERROR(context->input("bias", bias));
 
   if ((*input)->dims() != 3) {
     return errors::InvalidArgument("RNN input must be a 3-D vector.");
@@ -2583,7 +2586,9 @@ class VERNNForwardOp : public VERNNKernelCommon {
     const Tensor* input = nullptr;
     const Tensor* input_h = nullptr;
     const Tensor* input_c = nullptr;
-    const Tensor* params = nullptr;
+    const Tensor* kernel = nullptr;
+    const Tensor* recurrent_kernel = nullptr;
+    const Tensor* bias = nullptr;
     const Tensor* sequence_lengths = nullptr;
 
 
@@ -2599,7 +2604,8 @@ class VERNNForwardOp : public VERNNKernelCommon {
 //    } else {
       OP_REQUIRES_OK(context,
                      VEExtractForwardInput(context, model_types(), time_major,
-                                           &input, &input_h, &input_c, &params,
+                                           &input, &input_h, &input_c,
+					   &kernel, &recurrent_kernel, &bias,
                                            num_proj, &model_shapes));
                                            
 //    }
@@ -2665,17 +2671,19 @@ class VERNNForwardOp : public VERNNKernelCommon {
     args.addArg<Tensor>(*input_h) ;
     args.addArg<Tensor>(*input_c) ;
 
-    args.addArg<Tensor>(*params) ;
+    args.addArg<Tensor>(*kernel) ;
+    args.addArg<Tensor>(*recurrent_kernel) ;
+    args.addArg<Tensor>(*bias) ;	// 5
 
     args.addArg<Tensor>(*output) ;
-    args.addArg<Tensor>(*output_h) ;	// 5
+    args.addArg<Tensor>(*output_h) ;
     args.addArg<Tensor>(*output_c) ;
 
     args.addArg<Tensor>(*reserve_space) ;
 
-    args.addArg<int32>( time_major      ? 1 : 0 ) ;
+    args.addArg<int32>( time_major ? 1 : 0 ) ;	// 10
     args.addArg<float>(dropout()) ;
-    args.addArg<int32>( is_training_ ? 1 : 0 );
+    args.addArg<int32>( is_training_ ? 1 : 0 );	// 12
 
 //    args.addArg<int32>( num_proj ) ;
 
@@ -2855,7 +2863,9 @@ class VERNNBackwardOp : public VERNNKernelCommon {
     const Tensor* input = nullptr;
     const Tensor* input_h = nullptr;
     const Tensor* input_c = nullptr;
-    const Tensor* params = nullptr;
+    const Tensor* kernel = nullptr;
+    const Tensor* recurrent_kernel = nullptr;
+    const Tensor* bias = nullptr;
     const Tensor* sequence_lengths = nullptr;
     VERnnModelShapes model_shapes;
     bool use_padded_io = false;
@@ -2870,7 +2880,8 @@ class VERNNBackwardOp : public VERNNKernelCommon {
 //    } else {
       OP_REQUIRES_OK(context,
                      VEExtractForwardInput(context, model_types(), time_major,
-                                           &input, &input_h, &input_c, &params,
+                                           &input, &input_h, &input_c,
+					   &kernel, &recurrent_kernel, &bias,
                                            num_proj, &model_shapes));
 //    }
 
@@ -2895,11 +2906,15 @@ class VERNNBackwardOp : public VERNNKernelCommon {
     Tensor* input_backprop = nullptr;
     Tensor* input_h_backprop = nullptr;
     Tensor* input_c_backprop = nullptr;
-    Tensor* params_backprop = nullptr;
+    Tensor* kernel_backprop = nullptr;
+    Tensor* recurrent_kernel_backprop = nullptr;
+    Tensor* bias_backprop = nullptr;
     OP_REQUIRES_OK(context,
-                   AllocateOutputs(context, model_shapes, params->shape(),
+                   AllocateOutputs(context, model_shapes, kernel->shape(),
+				   recurrent_kernel->shape(), bias->shape(),
                                    &input_backprop, &input_h_backprop,
-                                   &input_c_backprop, &params_backprop));
+                                   &input_c_backprop, &kernel_backprop,
+				   &recurrent_kernel_backprop, &bias_backprop));
 
 #if 0
     // Creates a memory callback for the workspace. The memory lives to the end
@@ -2928,26 +2943,30 @@ class VERNNBackwardOp : public VERNNKernelCommon {
 
     VEOpKernelHelper::ArgsImpl<> args;
 
-    args.addArg<Tensor>(*input);
+    args.addArg<Tensor>(*input);		// 0
     args.addArg<Tensor>(*input_h);
     args.addArg<Tensor>(*input_c);
-    args.addArg<Tensor>(*params);
+    args.addArg<Tensor>(*kernel);
+    args.addArg<Tensor>(*recurrent_kernel);
+    args.addArg<Tensor>(*bias);			// 5
 
     args.addArg<Tensor>(*output);
     args.addArg<Tensor>(*output_h);
     args.addArg<Tensor>(*output_c);
 
     args.addArg<Tensor>(*output_backprop);
-    args.addArg<Tensor>(*output_h_backprop);
+    args.addArg<Tensor>(*output_h_backprop);	// 10
     args.addArg<Tensor>(*output_c_backprop);
     args.addArg<Tensor>(*reserve_space);
 
     args.addArg<Tensor>(*input_backprop);
     args.addArg<Tensor>(*input_h_backprop);
-    args.addArg<Tensor>(*input_c_backprop);
-    args.addArg<Tensor>(*params_backprop);
+    args.addArg<Tensor>(*input_c_backprop);	// 15
+    args.addArg<Tensor>(*kernel_backprop);
+    args.addArg<Tensor>(*recurrent_kernel_backprop);
+    args.addArg<Tensor>(*bias_backprop);
 
-    args.addArg<int32>(time_major ? 1 : 0);
+    args.addArg<int32>(time_major ? 1 : 0);	// 19
 
     VEOpKernelHelper::Call(context, "RnnBackward", args);
 
@@ -3105,9 +3124,12 @@ class VERNNBackwardOp : public VERNNKernelCommon {
 
   Status AllocateOutputs(OpKernelContext* context,
                          const VERnnModelShapes& model_shapes,
-                         const TensorShape& params_shape,
+                         const TensorShape& kernel_shape,
+			 const TensorShape& recurrent_kernel_shape,
+			 const TensorShape& bias_shape,
                          Tensor** input_backprop, Tensor** input_h_backprop,
-                         Tensor** input_c_backprop, Tensor** params_backprop) {
+                         Tensor** input_c_backprop, Tensor** kernel_backprop,
+			 Tensor** recurrent_kernel_backprop, Tensor** bias_backprop) {
     const TensorShape& input_shape = model_shapes.input_shape;
     const TensorShape& hidden_state_shape = model_shapes.hidden_state_shape;
     const TensorShape& cell_state_shape = model_shapes.cell_state_shape;
@@ -3124,8 +3146,9 @@ class VERNNBackwardOp : public VERNNKernelCommon {
       // need to create dummy outputs.
       TF_RETURN_IF_ERROR(context->allocate_output(2, {}, input_c_backprop));
     }
-    TF_RETURN_IF_ERROR(
-        context->allocate_output(3, params_shape, params_backprop));
+    TF_RETURN_IF_ERROR(context->allocate_output(3, kernel_shape, kernel_backprop));
+    TF_RETURN_IF_ERROR(context->allocate_output(4, recurrent_kernel_shape, recurrent_kernel_backprop));
+    TF_RETURN_IF_ERROR(context->allocate_output(5, bias_shape, bias_backprop));
     return Status::OK();
   }
 };
