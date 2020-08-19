@@ -134,7 +134,7 @@ Status VEDeviceTracer::Stop() {
 Status VEDeviceTracer::Export(XSpace* space) {
   LOG(INFO) << "VEDeviceTracer has collected " << kernel_records_.size()
             << " events.";
-  const absl::string_view kVePlanePrefix = "/device/VE:";
+  const absl::string_view kVePlanePrefix = "/device:VE:";
   const int32 kVePlaneBaseId = 0; // OK?
 
   mutex_lock guard(lock_);
