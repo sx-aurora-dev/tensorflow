@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 REGISTER4(UnaryOp, CPU, "Neg", functor::neg, int8, int16, int32, int64);
 
@@ -27,6 +32,16 @@ REGISTER_KERNEL_BUILDER(Name("Neg")
                             .TypeConstraint<int32>("T"),
                         UnaryOp<CPUDevice, functor::neg<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Neg, float);
+REGISTER_KERNEL_BUILDER(Name("Neg")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .TypeConstraint<int32>("T"),
+                        UnaryOp<CPUDevice, functor::neg<int32>>);
+#endif  // TENSORFLOW_USE_VE
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER3(UnaryOp, GPU, "Neg", functor::neg, int8, int16, int64);

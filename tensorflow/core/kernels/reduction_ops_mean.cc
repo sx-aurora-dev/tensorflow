@@ -79,4 +79,9 @@ REGISTER_SYCL_KERNELS(double);
 #undef REGISTER_SYCL_KERNELS
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+DEFINE_VE_REDUCTION_OP(Mean);
+REGISTER_VE_REDUCTION_OP(Mean, float);
+#endif // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

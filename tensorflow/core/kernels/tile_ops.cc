@@ -37,6 +37,10 @@ limitations under the License.
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -44,6 +48,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 // Forward declarations of functors that will be defined in tile_ops_impl.h
 namespace functor {
@@ -728,5 +735,69 @@ TF_CALL_double(REGISTER_SYCL);
 
 #undef REGISTER_SYCL
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+
+template <>
+template <DataType DT>
+inline void TileOp<VEDevice, int32>::HandleCase(
+    OpKernelContext* context,
+    const gtl::ArraySlice<int32>& multiples_array, Tensor* result) {
+  const Tensor& input = context->input(0);
+
+  VEOpKernelHelper::ArgsImpl<> args;
+  args.addArg<Tensor>(input);
+  args.addArg<Tensor>(*result);
+
+  VEOpKernelHelper::Call(context, "Tile", args);
+}
+template <>
+template <DataType DT>
+inline void TileOp<VEDevice, int64>::HandleCase(
+    OpKernelContext* context,
+    const gtl::ArraySlice<int64>& multiples_array, Tensor* result) {
+  const Tensor& input = context->input(0);
+
+  VEOpKernelHelper::ArgsImpl<> args;
+  args.addArg<Tensor>(input);
+  args.addArg<Tensor>(*result);
+
+  VEOpKernelHelper::Call(context, "Tile", args);
+}
+
+#define REGISTER_VE_TILE(type)                                     \
+  REGISTER_KERNEL_BUILDER(Name("Tile")                             \
+                              .Device(DEVICE_VE)                   \
+                              .TypeConstraint<type>("T")           \
+                              .TypeConstraint<int32>("Tmultiples") \
+                              .HostMemory("multiples"),            \
+                          TileOp<VEDevice, int32>);                \
+  REGISTER_KERNEL_BUILDER(Name("Tile")                             \
+                              .Device(DEVICE_VE)                   \
+                              .TypeConstraint<type>("T")           \
+                              .TypeConstraint<int64>("Tmultiples") \
+                              .HostMemory("multiples"),            \
+                          TileOp<VEDevice, int64>);
+
+// [todo] impl TileGrad for VE
+#define REGISTER_VE_TILE_GRAD(type)
+
+#define REGISTER_VE(type)	\
+  REGISTER_VE_TILE(type);	\
+  REGISTER_VE_TILE_GRAD(type);
+
+TF_CALL_bool(REGISTER_VE_TILE);
+TF_CALL_float(REGISTER_VE);
+//TF_CALL_double(REGISTER_VE);
+//TF_CALL_half(REGISTER_VE);
+//TF_CALL_int16(REGISTER_VE);
+TF_CALL_int32(REGISTER_VE);
+TF_CALL_int64(REGISTER_VE);
+//TF_CALL_complex64(REGISTER_VE);
+//TF_CALL_complex128(REGISTER_VE)
+
+#undef REGISTER_VE
+#undef REGISTER_VE_TILE
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

@@ -59,6 +59,7 @@ namespace Eigen {
 struct ThreadPoolDevice;
 struct GpuDevice;
 struct SyclDevice;
+struct VeDevice;
 }  // end namespace Eigen
 
 namespace tensorflow {

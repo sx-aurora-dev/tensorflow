@@ -221,6 +221,9 @@ function prepare_src() {
     cp -r ${TMPDIR}/tensorflow/python/keras/api/_v2/keras/ ${TMPDIR}/tensorflow/keras/
     sed -i'.original' -e 's/.python.keras.api._v2/tensorflow/g' ${TMPDIR}/tensorflow/__init__.py
   fi
+
+  mkdir -p ${TMPDIR}/tensorflow/aux-bin
+  cp -v third_party/veoffload/veorun_tf ${TMPDIR}/tensorflow/aux-bin
 }
 
 function build_wheel() {

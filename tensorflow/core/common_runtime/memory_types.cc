@@ -48,9 +48,10 @@ struct EndpointEq {
 static Status ProcessMemoryTypes(
     const DeviceType& device_type, const Graph* g,
     const std::function<Status(const Edge*, MemoryType, MemoryType)>& fn) {
-  if (device_type != DEVICE_GPU && device_type != DEVICE_SYCL) {
-    // On non-GPU and non-SYCL devices, HOST_MEMORY and DEVICE_MEMORY are always
-    // compatible.
+  if (device_type != DEVICE_GPU && device_type != DEVICE_SYCL &&
+      device_type != DEVICE_VE) {
+    // On non-GPU, non-SYCL, and non-VE devices, HOST_MEMORY and DEVICE_MEMORY
+    // are always compatible.
     return Status::OK();
   }
   // For GPU and SYCL device, HOST_MEMORY and DEVICE_MEMORY is not

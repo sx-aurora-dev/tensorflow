@@ -37,6 +37,11 @@ ABSL_CONST_INIT extern const absl::string_view kMetadataPlaneName;
 // Name of XPlane that contains kpi related metrics.
 ABSL_CONST_INIT extern const absl::string_view kTFStreamzPlaneName;
 
+#ifdef TENSORFLOW_USE_VE
+// Name prefix of XPlane that contains VE events.
+ABSL_CONST_INIT extern const absl::string_view kVePlanePrefix;
+#endif
+
 // Names of XLines that contain ML-level events.
 ABSL_CONST_INIT extern const absl::string_view kStepLineName;
 ABSL_CONST_INIT extern const absl::string_view kTensorFlowNameScopeLineName;

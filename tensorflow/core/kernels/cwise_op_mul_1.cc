@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 REGISTER6(BinaryOp, CPU, "Mul", functor::mul, float, Eigen::half, double, uint8,
@@ -59,4 +64,15 @@ REGISTER_KERNEL_BUILDER(Name("Mul")
                             .TypeConstraint<int32>("T"),
                         BinaryOp<CPUDevice, functor::mul<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(Mul, float, float, float);
+REGISTER_KERNEL_BUILDER(Name("Mul")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::mul<int32>>);
+#endif
 }  // namespace tensorflow

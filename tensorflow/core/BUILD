@@ -135,6 +135,8 @@ load(
     "if_mkl",
     "mkl_deps",
 )
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
+
 # Placeholder for Google-internal load statements.
 
 package(
@@ -515,6 +517,8 @@ tf_cuda_library(
         "//tensorflow/core/public:version.h",
     ] + if_mkl([
         "//tensorflow/core/util:mkl_util_hdrs",
+    ]) + if_ve([
+        "//tensorflow/core/framework:ve_ops_common.h",
     ]),
     visibility = ["//visibility:public"],
     deps = [
@@ -2269,7 +2273,8 @@ tf_cuda_library(
     ] + if_static(
         extra_deps = ["@com_google_protobuf//:protobuf"],
         otherwise = ["@com_google_protobuf//:protobuf_headers"],
-    ) + mkl_deps(),
+    ) + mkl_deps()
+      + if_ve(["//tensorflow/core:core_cpu_impl", ":ve_runtime"]),
     alwayslink = 1,
 )
 
@@ -2380,6 +2385,18 @@ alias(
     name = "core_cpu_internal",
     actual =
         "//tensorflow/core/common_runtime:core_cpu_internal",
+)
+
+alias(
+  name = "ve_runtime",
+  actual = 
+        "//tensorflow/core/common_runtime/ve:ve_runtime",
+)
+
+alias(
+  name = "ve_runtime_impl",
+  actual = 
+        "//tensorflow/core/common_runtime/ve:ve_runtime_impl",
 )
 
 alias(

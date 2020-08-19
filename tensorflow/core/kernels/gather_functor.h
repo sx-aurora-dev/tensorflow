@@ -27,6 +27,11 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/work_sharder.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
@@ -178,6 +183,50 @@ struct GatherFunctor<GPUDevice, Variant, Index> {
     return GatherFunctorCPU<Variant, Index>()(ctx, params, indices, out);
   }
 };
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T, typename Index>
+struct VEGatherFunctor {
+  int64 operator()(OpKernelContext* ctx,
+                   const Tensor *params,
+                   const Tensor *indices,
+                   Tensor *out,
+		   int64 outer_size,
+		   int64 gather_dim_size,
+		   int64 inner_size,
+		   int64 nindex)
+  {
+
+    struct {
+      int dtype, idxtype;
+      int64_t outer_size ;
+      int64_t gather_dim_size ;
+      int64_t inner_size ;
+      int64_t nindex ;
+      uint64_t src_ptr, idx_ptr, dst_ptr ;
+    } args;
+
+    args.dtype = params->dtype() ;
+    args.idxtype = indices->dtype() ;
+    args.outer_size = outer_size ;
+    args.gather_dim_size = gather_dim_size ;
+    args.inner_size = inner_size ;
+    args.nindex = nindex ;
+
+    args.src_ptr = (uint64_t) DMAHelper::base(params) ;
+    args.idx_ptr = (uint64_t) DMAHelper::base(indices) ;
+    args.dst_ptr = (uint64_t) DMAHelper::base(out) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("Gather", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+
+    // FIXME : use return value
+    return 0 ;
+  }
+};
+#endif
 
 }  // namespace functor
 }  // namespace tensorflow

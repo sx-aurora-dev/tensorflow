@@ -78,6 +78,7 @@ package_group(
         "//third_party/car/...",
     ],
 )
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
 
 package_group(
     name = "optimizer_helper_friends",
@@ -1000,7 +1001,7 @@ ARRAY_DEPS = [
     "//tensorflow/core:lib_internal",
     "//tensorflow/core:protos_all_cc",
     "//third_party/eigen3",
-] + if_sycl(["//tensorflow/core/common_runtime/sycl:sycl_runtime"])
+] + if_sycl(["//tensorflow/core/common_runtime/sycl:sycl_runtime"]) + if_ve(["//tensorflow/core:ve_runtime"])
 
 tf_kernel_library(
     name = "immutable_constant_op",
@@ -2059,7 +2060,8 @@ tf_kernel_library(
         ":bounds_check",
         "//tensorflow/core:framework",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime",
+               "//tensorflow/core:core_cpu"]),
 )
 
 # Unlike gather_functor library, this does not include the CUDA code and deps.
@@ -2083,7 +2085,8 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime",
+               "//tensorflow/core:core_cpu"]),
     alwayslink = 0,
 )
 
@@ -2390,7 +2393,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime"]),
     alwayslink = 1,
 )
 
@@ -4028,7 +4031,9 @@ cc_library(
 tf_kernel_library(
     name = "aggregate_ops",
     prefix = "aggregate_ops",
-    deps = MATH_DEPS,
+    deps = MATH_DEPS + [
+        "//tensorflow/core:ve_runtime",
+    ],
 )
 
 cc_library(
@@ -4093,7 +4098,7 @@ cc_library(
 tf_kernel_library(
     name = "argmax_op",
     prefix = "argmax_op",
-    deps = MATH_DEPS,
+    deps = MATH_DEPS + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -4151,40 +4156,7 @@ tf_kernel_library(
     name = "cwise_op",
     copts = if_mlir_generated_gpu_kernels_enabled(if_true = ["-DMLIR_GENERATED_GPU_KERNELS_ENABLED=1"]),
     prefix = "cwise_op",
-    deps = MATH_DEPS + if_mlir_generated_gpu_kernels_enabled(if_true = [":mlir_generated_cwise_op"]),
-)
-
-tf_kernel_library(
-    name = "mlir_generated_cwise_op",
-    gpu_srcs = ["mlir_generated_cwise_op_gpu_tanh.cu.cc"],
-    tags = ["manual"],
-    deps = if_cuda([
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "//tensorflow/core:framework",
-        "//tensorflow/core:lib",
-        "//tensorflow/core:stream_executor",
-        "//tensorflow/core/kernels/cubin_headers:tanh_kernels",
-    ]),
-)
-
-tf_cuda_cc_test(
-    name = "mlir_generated_op_gpu_tanh_test",
-    size = "small",
-    srcs = if_mlir_generated_gpu_kernels_enabled(["mlir_generated_op_gpu_tanh_test.cc"]),
-    tags = tf_cuda_tests_tags() + ["no_rocm"],
-    deps = [
-        ":cwise_op",
-        ":ops_testutil",
-        "//tensorflow/core:framework",
-        "//tensorflow/core:framework_internal",
-        "//tensorflow/core:tensorflow",
-        "//tensorflow/core:test",
-        "//tensorflow/core:test_main",
-        "//tensorflow/core:testlib",
-        "//tensorflow/core/common_runtime:device",
-        "//tensorflow/core/common_runtime:device_factory",
-    ],
+    deps = MATH_DEPS + if_mlir_generated_gpu_kernels_enabled(if_true = [":mlir_generated_cwise_op"]) + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -4227,7 +4199,7 @@ tf_kernel_library(
         "//conditions:default": [],
     }) + mkl_deps() + if_cuda([
         "//tensorflow/core/platform/default/build_config:cublas_plugin",
-    ]) + if_cuda_or_rocm([":gpu_utils"]),
+    ]) + if_cuda_or_rocm([":gpu_utils"]) + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_mkl_kernel_library(
@@ -4247,7 +4219,7 @@ tf_kernel_library(
     deps = MATH_DEPS + [
         ":gpu_prim_hdrs",
         ":transpose_functor",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -4255,7 +4227,8 @@ tf_kernel_library(
     prefix = "segment_reduction_ops",
     deps = MATH_DEPS + if_cuda_or_rocm([
         ":cuda_solvers",
-    ]),
+    ])
+    + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -4676,7 +4649,7 @@ tf_kernel_library(
     ] + select({
         ":xsmm_convolutions": ["xsmm_conv2d.h"],
         "//conditions:default": [],
-    }),
+    }) + if_ve(["transpose_functor.h"]),
     defines = select({
         ":xsmm_convolutions": ["TENSORFLOW_USE_LIBXSMM_CONVOLUTIONS"],
         "//conditions:default": [],
@@ -4705,6 +4678,7 @@ tf_kernel_library(
         "//tensorflow/core:lib_internal",
         "//tensorflow/core/util/proto:proto_utils",
         "//tensorflow/stream_executor/gpu:gpu_asm_opts",
+        "//tensorflow/core:ve_runtime",
     ] + select({
         ":xsmm_convolutions": [
             "@libxsmm_archive//:xsmm_avx",
@@ -4719,7 +4693,7 @@ tf_kernel_library(
     ]) + if_cuda_or_rocm([
         ":gpu_utils",
         "//tensorflow/stream_executor/gpu:redzone_allocator",
-    ]),
+    ]) + if_ve([":transpose_functor"]),
 )
 
 cc_library(
@@ -4829,7 +4803,7 @@ NN_DEPS = [
     "//tensorflow/core:lib_internal",
     "//tensorflow/core:nn_grad",
     "//third_party/eigen3",
-]
+] + if_ve(["//tensorflow/core:ve_runtime", "//tensorflow/core:core_cpu"])
 
 tf_kernel_library(
     name = "batch_norm_op",
@@ -5572,6 +5546,8 @@ tf_kernel_library(
         "@cub_archive//:cub",
     ]) + if_rocm([
         "@local_config_rocm//rocm:rocprim",
+    ]) + if_ve(["//tensorflow/core:ve_runtime",
+             "//tensorflow/core:core_cpu",
     ]),
 )
 
@@ -6116,7 +6092,9 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//third_party/eigen3",
-    ],
+    ] 
+    + if_ve(["//tensorflow/core:ve_runtime",
+             "//tensorflow/core:core_cpu"]),
 )
 
 tf_cc_test(
@@ -8649,7 +8627,10 @@ cc_library(
         "//tensorflow/core:lib",
         "//third_party/eigen3",
         "@gemmlowp",
-    ],
+    ] + if_ve([
+        "//tensorflow/core:ve_runtime",
+        "//tensorflow/core:core_cpu_lib",
+    ]),
 )
 
 # Header-only version of cwise_lib for clients that want to use the cwise_ops

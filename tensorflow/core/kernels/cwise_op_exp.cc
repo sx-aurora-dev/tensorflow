@@ -27,4 +27,8 @@ REGISTER5(UnaryOp, GPU, "Exp", functor::exp, float, Eigen::half, double,
 #if TENSORFLOW_USE_SYCL
 REGISTER2(UnaryOp, SYCL, "Exp", functor::exp, float, double);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Exp, float);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

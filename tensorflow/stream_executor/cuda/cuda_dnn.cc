@@ -4476,12 +4476,15 @@ bool CudnnSupport::DoPoolForward(
   CudnnPoolingDescriptor pooling_desc(pooling_dimensions);
 
   auto cudnn = cudnn_->GetHandle(parent_, stream);
+
+
   const auto status = [&] {
     RETURN_IF_CUDNN_ERROR(cudnnPoolingForward(
         cudnn.handle(), pooling_desc.handle(), &alpha, src_desc.handle(),
         input_data.opaque(), &beta, dest_desc.handle(), output_data->opaque()));
     return port::Status::OK();
   }();
+
   return IsStatusOk(status, /*report_error=*/true);
 }
 
@@ -4584,6 +4587,7 @@ bool CudnnSupport::DoPoolBackward(
   CudnnPoolingDescriptor pooling_desc(pooling_dimensions);
 
   auto cudnn = cudnn_->GetHandle(parent_, stream);
+
   const auto status = [&] {
     RETURN_IF_CUDNN_ERROR(cudnnPoolingBackward(
         cudnn.handle(), pooling_desc.handle(), &alpha, dest_desc.handle(),
@@ -4592,6 +4596,7 @@ bool CudnnSupport::DoPoolBackward(
         output_diff_data->opaque()));
     return port::Status::OK();
   }();
+
   return IsStatusOk(status, /*report_error=*/true);
 }
 

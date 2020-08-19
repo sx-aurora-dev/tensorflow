@@ -27,4 +27,8 @@ REGISTER4(BinaryOp, GPU, "Pow", functor::pow, float, Eigen::half, double,
 #ifdef TENSORFLOW_USE_SYCL
 REGISTER2(BinaryOp, SYCL, "Pow", functor::pow, float, double);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(Pow, float, float, float);
+#endif
 }  // namespace tensorflow

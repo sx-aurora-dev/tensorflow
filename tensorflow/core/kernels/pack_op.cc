@@ -37,6 +37,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 // --------------------------------------------------------------------------
 template <typename Device, typename T>
@@ -121,6 +124,12 @@ class PackOp : public OpKernel {
         return;
       }
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+      if (std::is_same<Device, VEDevice>::value) {
+        ConcatVE<T>(c, inputs_flat, &output_flat);
+        return;
+      }
+#endif  // TENSORFLOW_USE_VE
       ConcatCPU<T>(c->device(), inputs_flat, &output_flat);
     }
   }
@@ -185,4 +194,29 @@ REGISTER_KERNEL_BUILDER(Name("Pack")
                         PackOp<CPUDevice, int32>);
 #undef REGISTER_SYCL
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE(type)                                       \
+  REGISTER_KERNEL_BUILDER(                                      \
+      Name("Pack").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PackOp<VEDevice, type>)
+
+//TF_CALL_half(REGISTER_VE);
+TF_CALL_float(REGISTER_VE);
+TF_CALL_double(REGISTER_VE);
+//TF_CALL_bfloat16(REGISTER_VE);
+//TF_CALL_int64(REGISTER_VE);
+//TF_CALL_int16(REGISTER_VE);
+//TF_CALL_bool(REGISTER_VE);
+
+#undef REGISTER_VE
+
+REGISTER_KERNEL_BUILDER(Name("Pack")
+                            .Device(DEVICE_VE)
+                            .HostMemory("values")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PackOp<CPUDevice, int32>);
+
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

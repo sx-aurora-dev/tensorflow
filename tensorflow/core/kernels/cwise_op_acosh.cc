@@ -27,4 +27,7 @@ REGISTER2(UnaryOp, SYCL, "Acosh", functor::acosh, float, double);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER2(UnaryOp, GPU, "Acosh", functor::acosh, float, double);
 #endif
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Acosh, float);
+#endif
 }  // namespace tensorflow

@@ -1578,10 +1578,12 @@ def is_gpu_available(cuda_only=False, min_cuda_compute_capability=None):
 
 
 @contextlib.contextmanager
-def device(use_gpu):
+def device(use_gpu, use_ve=False):
   """Uses gpu when requested and available."""
   if use_gpu and is_gpu_available():
     dev = "/device:GPU:0"
+  elif use_ve:
+    dev = "/device:VE:0"
   else:
     dev = "/device:CPU:0"
   with ops.device(dev):
@@ -2163,7 +2165,7 @@ class TensorFlowTestCase(googletest.TestCase):
 
   # pylint: disable=g-doc-return-or-yield
   @contextlib.contextmanager
-  def session(self, graph=None, config=None, use_gpu=False, force_gpu=False):
+  def session(self, graph=None, config=None, use_gpu=False, force_gpu=False, use_ve=False):
     """A context manager for a TensorFlow Session for use in executing tests.
 
     Note that this will set this session and the graph as global defaults.
@@ -2203,7 +2205,7 @@ class TensorFlowTestCase(googletest.TestCase):
       yield EagerSessionWarner()
     else:
       with self._create_session(graph, config, force_gpu) as sess:
-        with self._constrain_devices_and_set_default(sess, use_gpu, force_gpu):
+        with self._constrain_devices_and_set_default(sess, use_gpu, force_gpu, use_ve):
           yield sess
 
   @contextlib.contextmanager
@@ -2211,7 +2213,8 @@ class TensorFlowTestCase(googletest.TestCase):
                      graph=None,
                      config=None,
                      use_gpu=False,
-                     force_gpu=False):
+                     force_gpu=False,
+                     use_ve=False):
     """Returns a TensorFlow Session for use in executing tests.
 
     This method behaves differently than self.session(): for performance reasons
@@ -2255,7 +2258,7 @@ class TensorFlowTestCase(googletest.TestCase):
       sess = self._get_cached_session(
           graph, config, force_gpu, crash_if_inconsistent_args=True)
       with self._constrain_devices_and_set_default(sess, use_gpu,
-                                                   force_gpu) as cached:
+                                                   force_gpu, use_ve) as cached:
         yield cached
 
   @contextlib.contextmanager
@@ -2265,7 +2268,8 @@ class TensorFlowTestCase(googletest.TestCase):
                    graph=None,
                    config=None,
                    use_gpu=False,
-                   force_gpu=False):
+                   force_gpu=False,
+                   use_ve=False):
     """Use cached_session instead."""
     if self.id().endswith(".test_session"):
       self.skipTest(
@@ -2280,10 +2284,10 @@ class TensorFlowTestCase(googletest.TestCase):
         sess = self._get_cached_session(
             graph, config, force_gpu, crash_if_inconsistent_args=False)
         with self._constrain_devices_and_set_default(sess, use_gpu,
-                                                     force_gpu) as cached:
+                                                     force_gpu, use_ve) as cached:
           yield cached
       else:
-        with self.session(graph, config, use_gpu, force_gpu) as sess:
+        with self.session(graph, config, use_gpu, force_gpu, use_ve) as sess:
           yield sess
 
   # pylint: enable=g-doc-return-or-yield
@@ -3066,7 +3070,7 @@ class TensorFlowTestCase(googletest.TestCase):
     # pylint: enable=invalid-name
 
   @contextlib.contextmanager
-  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu):
+  def _constrain_devices_and_set_default(self, sess, use_gpu, force_gpu, use_ve):
     """Set the session and its graph to global default and constrain devices."""
     if context.executing_eagerly():
       yield None
@@ -3079,6 +3083,9 @@ class TensorFlowTestCase(googletest.TestCase):
           if not gpu_name:
             gpu_name = "/device:GPU:0"
           with sess.graph.device(gpu_name):
+            yield sess
+        elif use_ve:
+          with sess.graph.device("/device:VE:0"):
             yield sess
         elif use_gpu:
           yield sess

@@ -47,4 +47,17 @@ REGISTER_KERNEL_BUILDER(Name("NotEqual")
                         BinaryOp<CPUDevice, functor::not_equal_to<int32>>);
 #endif  // TENSORFLOW_USE_SYCL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(NotEqual, float, bool, float);
+
+REGISTER_KERNEL_BUILDER(Name("NotEqual")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::not_equal_to<int32>>);
+#endif  // TENSORFLOW_USE_VE
+
+
 }  // namespace tensorflow

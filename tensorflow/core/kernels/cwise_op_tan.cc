@@ -26,4 +26,7 @@ REGISTER3(UnaryOp, GPU, "Tan", functor::tan, Eigen::half, float, double);
 #ifdef TENSORFLOW_USE_SYCL
 REGISTER2(UnaryOp, SYCL, "Tan", functor::tan, float, double);
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Tan, float);
+#endif
 }  // namespace tensorflow

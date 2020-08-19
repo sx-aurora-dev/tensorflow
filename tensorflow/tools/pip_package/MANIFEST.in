@@ -21,4 +21,5 @@ recursive-include tensorflow/include/include *.h
 recursive-include tensorflow/include/third_party *
 recursive-include tensorflow/include/unsupported *
 recursive-include tensorflow/xla_aot_runtime_src *
+recursive-include tensorflow/aux-bin *
 

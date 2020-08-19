@@ -24,6 +24,11 @@ limitations under the License.
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/kernels/aggregate_ops_cpu.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -31,6 +36,9 @@ typedef Eigen::GpuDevice GPUDevice;
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 #define REGISTER_ADDN(type, dev)                                   \
   REGISTER_KERNEL_BUILDER(                                         \
@@ -82,6 +90,62 @@ REGISTER_KERNEL_BUILDER(
         .HostMemory("sum"),
     AddNOp<CPUDevice, int32, OpKernel, OpKernelConstruction, OpKernelContext>);
 #endif  // TENSORFLOW_USE_SYCL
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T, class OpKernelT,
+          class OpKernelConstructionT, class OpKernelContextT>
+class AddNOp<VEDevice, T, OpKernelT, OpKernelConstructionT, OpKernelContextT> : public OpKernel {
+ public:
+  explicit AddNOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    if (!ctx->ValidateInputsAreSameShape(this)) return;
+
+    const Tensor& input0 = ctx->input(0);
+    const int num = ctx->num_inputs();
+
+    if (num == 1) {
+      ctx->set_output(0, input0);
+      return;
+    } else {
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(0, input0.shape(), &output));
+
+      struct Args {
+        int output_type;
+        uint64_t out;
+        size_t num_elems;
+        size_t num_inputs;
+        uint64_t in[1];	// variable length
+      } ;
+
+      size_t argSize = sizeof(struct Args) + sizeof(uint64_t)*(num-1) ;
+      struct Args *args = (struct Args *) malloc(argSize) ;
+
+      args->output_type = DataTypeToEnum<T>::v();
+      args->out = (uint64_t)DMAHelper::base(output);
+      args->num_elems = input0.NumElements();
+      args->num_inputs = num;
+      for (int i = 0; i < num; ++i) {
+        OP_REQUIRES(ctx, ctx->input(i).dtype() == args->output_type,
+                    errors::InvalidArgument("type mismatch"));
+        args->in[i] = (uint64_t)DMAHelper::base(&ctx->input(i));
+      }
+
+      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("AddN", (void*)args, argSize);
+      if (!s.ok())
+        ctx->SetStatus(s);
+
+      free(args) ;
+    }
+  }
+};
+
+REGISTER_ADDN(float, VE);
+// REGISTER_ADDN(double, VE);
+#endif // TENSORFLOW_USE_VE
 
 #undef REGISTER_ADDN
 
