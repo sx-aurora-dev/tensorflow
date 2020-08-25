@@ -721,6 +721,7 @@ tf_cuda_library(
     visibility = [
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/util:__pkg__",
+        "//tensorflow/security/fuzzing:__subpackages__",
     ],
     deps = [
         ":allocation_description_proto_cc",
@@ -1010,6 +1011,7 @@ tf_cc_tests(
     srcs = [
         "allocator_test.cc",
         "attr_value_util_test.cc",
+        "batch_util_test.cc",
         "bfloat16_test.cc",
         "cancellation_test.cc",
         "common_shape_fns_test.cc",

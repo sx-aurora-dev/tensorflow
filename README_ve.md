@@ -8,8 +8,8 @@ We are providing a whl package on github. See [releases](https://github.com/sx-a
 
 We have tested on CentOS 7.7 and:
 
-- veos: 2.4.1
-- veoffload: 2.4.1
+- veos: 2.5.0
+- veoffload: 2.5.0
 - python: 3.6
 
 ### Enable Huge Page for DMA
@@ -53,7 +53,7 @@ program to support NCHW format.
 
 We have tested on above envirionment with:
 
-- bazel 2.0.0
+- bazel 3.1.0
 - gcc 8.3.1 (devtoolset-8)
 - git 2.9.3 (rh-git29)
 
@@ -84,8 +84,9 @@ Build tensorflow with scl and virtualenv.
 ```
 $ scl enable rh-python36 devtoolset-8 rh-git29 bash
 $ source ~/.virtualenvs/tmp/bin/activate
+(tmp)% pip install keras-preprocessing
 (tmp)% ./configure # answer N for all questions. You can probably ignore an error on getsitepackages.
-(tmp)% BAZEL_LINKLIBS=-l%:libstdc++.a BAZEL_LINKOPTS=-static-libstdc++ bazel build --jobs 12 --config=ve --config=opt //tensorflow/tools/pip_package:build_pip_package
+(tmp)% BAZEL_LINKLIBS="-lstdc++" BAZEL_LINKOPTS="" bazel build --jobs 24 --config=ve --config=opt $* //tensorflow/tools/pip_package:build_pip_package
 (tmp)% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .
 ```
 
