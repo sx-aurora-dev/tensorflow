@@ -1645,13 +1645,14 @@ struct FusedBatchNorm<VEDevice, T, U, is_training> {
             is_training, epsilon, reserve_space_allocator);
 #endif
 
-    // copid from CPU implementation
     if (use_reserved_space) {
       Tensor* dummy_reserve_space = nullptr;
       OP_REQUIRES_OK(context,
                      context->allocate_output(5, {}, &dummy_reserve_space));
+#if 0	// Initialize is not needed. FusedBatchNorm<VE> does not use ReservedSpace.
       // Initialize the memory, to avoid sanitizer alerts.
       dummy_reserve_space->flat<U>()(0) = U();
+#endif
     }
 
     const int64 batch = GetTensorDim(x_input, tensor_format, 'N');
