@@ -101,6 +101,17 @@ class VEO {
       return s;
     }
 
+    // VEO will provide posix_memaligned in future release, but now we use a
+    // user kernel.
+    virtual Status posix_memalign(void **memptr, size_t alignment, size_t size) {
+      Args a;
+      veo_args_set_stack(a.args, VEO_INTENT_OUT, 0, (char*)memptr, sizeof(void*));
+      veo_args_set_u64(a.args, 1, alignment);
+      veo_args_set_u64(a.args, 2, size);
+
+      return call_and_wait(sym_posix_memalign_, a);
+    }
+
     virtual uint64_t alloc_mem(size_t size) {
 #if 0
       VLOG(2) << "VEO::alloc_mem: tid=" << syscall(SYS_gettid);
@@ -300,6 +311,7 @@ class VEO {
 
     std::map<std::string, uint64_t> kernel_map_;
     uint64_t sym_get_timestamp_;
+    uint64_t sym_posix_memalign_;
     cb_t cb_;
     void* cb_data_;
 
@@ -769,6 +781,10 @@ Status VEO::init(int nodeid) {
   if (sym_get_timestamp_ == 0)
     return errors::Internal("Failed to veo_get_sym for vetfkl_get_timestamp");
 
+  sym_posix_memalign_ = veo_get_sym(proc_, lib_id, "vetfkl_posix_memalign");
+  if (sym_posix_memalign_ == 0)
+    return errors::Internal("Failed to veo_get_sym for vetfkl_posix_memalign");
+
 #ifdef USE_DMA
   {
     Status s = init_dma(proc_, lib_id);
@@ -804,35 +820,18 @@ VEMemAllocator::~VEMemAllocator() {}
 
 void* VEMemAllocator::Alloc(size_t alignments, size_t num_bytes) {
   VLOG(2) << "VEMemAllocator::Alloc: alignments=" << alignments << " num_bytes=" << num_bytes;
-#if 0
-  return veo_->alloc_mem(num_bytes);
-#else
-#if 0
-  void* p = veo_->alloc_mem(num_bytes);
-  if (reinterpret_cast<uintptr_t>(p) % alignments != 0) {
-    VLOG(2) << "VEMemAllocator::Alloc: alignment error. addr=" << p;
-    return NULL;
-  }
-#endif
 
-  size_t n = num_bytes + alignments + sizeof(uintptr_t);
-  uint64_t addr = veo_->alloc_mem(n);
-  uint64_t addr0 = (addr + sizeof(uint64_t) + alignments) & ~(alignments - 1);
-  VLOG(2) << "VEMemAllocator::Alloc addr=" << std::hex << addr
-    << " addr0=" << std::hex << addr0;
-  *reinterpret_cast<uint64_t*>(addr0 - sizeof(uint64_t)) = addr;
-  return reinterpret_cast<void*>(addr0);
-#endif
+  void* addr;
+  Status s = veo_->posix_memalign(&addr, alignments, num_bytes);
+  if (!s.ok())
+      addr = nullptr;
+  VLOG(2) << "VEMemAllocator::Alloc: return " << addr;
+  return addr;
 }
 
 void VEMemAllocator::Free(void* ptr, size_t num_bytes) {
   VLOG(2) << "VEMemAllocator::Free: ptr=" << ptr;
-
-  uint64_t addr = reinterpret_cast<uintptr_t>(ptr) - sizeof(uint64_t);
-
-  VLOG(2) << "VEMemAllocator::Free: addr=" << std::hex << addr;
-
-  veo_->free_mem(addr);
+  veo_->free_mem(reinterpret_cast<uint64_t>(ptr));
 }
 
 
