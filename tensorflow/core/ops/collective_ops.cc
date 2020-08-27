@@ -31,6 +31,7 @@ REGISTER_OP("CollectiveReduce")
     .Attr("subdiv_offsets: list(int)")
     .Attr("wait_for: list(int) = []")
     .Attr("communication_hint: string = 'auto'")
+    .Attr("timeout_seconds: float = 0")
     .SetIsStateful()
     .SetShapeFn(shape_inference::UnchangedShape);
 
@@ -43,6 +44,7 @@ REGISTER_OP("CollectiveGather")
     .Attr("instance_key: int")
     .Attr("shape: shape")
     .Attr("communication_hint: string = 'auto'")
+    .Attr("timeout_seconds: float = 0")
     .SetIsStateful()
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       // Scalar input is not supported.
@@ -80,23 +82,25 @@ REGISTER_OP("CollectiveGather")
 REGISTER_OP("CollectiveBcastSend")
     .Input("input: T")
     .Output("data: T")
-    .Attr("T: {float, float16, float64, int32, int64}")
+    .Attr("T: {bool, float, float16, float64, int32, int64}")
     .Attr("group_size: int")
     .Attr("group_key: int")
     .Attr("instance_key: int")
     .Attr("shape: shape")
     .Attr("communication_hint: string = 'auto'")
+    .Attr("timeout_seconds: float = 0")
     .SetIsStateful()
     .SetShapeFn(shape_inference::ExplicitShape);
 
 REGISTER_OP("CollectiveBcastRecv")
     .Output("data: T")
-    .Attr("T: {float, float16, float64, int32, int64}")
+    .Attr("T: {bool, float, float16, float64, int32, int64}")
     .Attr("group_size: int")
     .Attr("group_key: int")
     .Attr("instance_key: int")
     .Attr("shape: shape")
     .Attr("communication_hint: string = 'auto'")
+    .Attr("timeout_seconds: float = 0")
     .SetIsStateful()
     .SetShapeFn(shape_inference::ExplicitShape);
 

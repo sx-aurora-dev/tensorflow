@@ -22,12 +22,13 @@ limitations under the License.
 #include "tensorflow/lite/micro/micro_error_reporter.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
+#include "tensorflow/lite/micro/micro_optional_debug_tools.h"
 #include "tensorflow/lite/micro/testing/micro_test.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
 
 // Create an area of memory to use for input, output, and intermediate arrays.
-constexpr int tensor_arena_size = 73 * 1024;
+constexpr int tensor_arena_size = 93 * 1024;
 uint8_t tensor_arena[tensor_arena_size];
 
 TF_LITE_MICRO_TESTS_BEGIN
@@ -41,11 +42,12 @@ TF_LITE_MICRO_TEST(TestInvoke) {
   // copying or parsing, it's a very lightweight operation.
   const tflite::Model* model = ::tflite::GetModel(g_person_detect_model_data);
   if (model->version() != TFLITE_SCHEMA_VERSION) {
-    error_reporter->Report(
-        "Model provided is schema version %d not equal "
-        "to supported version %d.\n",
-        model->version(), TFLITE_SCHEMA_VERSION);
+    TF_LITE_REPORT_ERROR(error_reporter,
+                         "Model provided is schema version %d not equal "
+                         "to supported version %d.\n",
+                         model->version(), TFLITE_SCHEMA_VERSION);
   }
+  PrintModelData(model, error_reporter);
 
   // Pull in only the operation implementations we need.
   // This relies on a complete list of all the ops needed by this graph.
@@ -53,21 +55,15 @@ TF_LITE_MICRO_TEST(TestInvoke) {
   // incur some penalty in code space for op implementations that are not
   // needed by this graph.
   //
-  // tflite::ops::micro::AllOpsResolver resolver;
-  tflite::MicroMutableOpResolver micro_mutable_op_resolver;
-  micro_mutable_op_resolver.AddBuiltin(
-      tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
-      tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
-  micro_mutable_op_resolver.AddBuiltin(tflite::BuiltinOperator_CONV_2D,
-                                       tflite::ops::micro::Register_CONV_2D());
-  micro_mutable_op_resolver.AddBuiltin(
-      tflite::BuiltinOperator_AVERAGE_POOL_2D,
-      tflite::ops::micro::Register_AVERAGE_POOL_2D());
+  // tflite::AllOpsResolver resolver;
+  tflite::MicroMutableOpResolver<3> micro_op_resolver;
+  micro_op_resolver.AddAveragePool2D();
+  micro_op_resolver.AddConv2D();
+  micro_op_resolver.AddDepthwiseConv2D();
 
   // Build an interpreter to run the model with.
-  tflite::MicroInterpreter interpreter(model, micro_mutable_op_resolver,
-                                       tensor_arena, tensor_arena_size,
-                                       error_reporter);
+  tflite::MicroInterpreter interpreter(model, micro_op_resolver, tensor_arena,
+                                       tensor_arena_size, error_reporter);
   interpreter.AllocateTensors();
 
   // Get information about the memory area to use for the model's input.
@@ -91,7 +87,7 @@ TF_LITE_MICRO_TEST(TestInvoke) {
   // Run the model on this input and make sure it succeeds.
   TfLiteStatus invoke_status = interpreter.Invoke();
   if (invoke_status != kTfLiteOk) {
-    error_reporter->Report("Invoke failed\n");
+    TF_LITE_REPORT_ERROR(error_reporter, "Invoke failed\n");
   }
   TF_LITE_MICRO_EXPECT_EQ(kTfLiteOk, invoke_status);
 
@@ -108,9 +104,9 @@ TF_LITE_MICRO_TEST(TestInvoke) {
   // Make sure that the expected "Person" score is higher than the other class.
   uint8_t person_score = output->data.uint8[kPersonIndex];
   uint8_t no_person_score = output->data.uint8[kNotAPersonIndex];
-  error_reporter->Report(
-      "person data.  person score: %d, no person score: %d\n", person_score,
-      no_person_score);
+  TF_LITE_REPORT_ERROR(error_reporter,
+                       "person data.  person score: %d, no person score: %d\n",
+                       person_score, no_person_score);
   TF_LITE_MICRO_EXPECT_GT(person_score, no_person_score);
 
   // Now test with a different input, from an image without a person.
@@ -122,7 +118,7 @@ TF_LITE_MICRO_TEST(TestInvoke) {
   // Run the model on this "No Person" input.
   invoke_status = interpreter.Invoke();
   if (invoke_status != kTfLiteOk) {
-    error_reporter->Report("Invoke failed\n");
+    TF_LITE_REPORT_ERROR(error_reporter, "Invoke failed\n");
   }
   TF_LITE_MICRO_EXPECT_EQ(kTfLiteOk, invoke_status);
 
@@ -139,12 +135,13 @@ TF_LITE_MICRO_TEST(TestInvoke) {
   // Make sure that the expected "No Person" score is higher.
   person_score = output->data.uint8[kPersonIndex];
   no_person_score = output->data.uint8[kNotAPersonIndex];
-  error_reporter->Report(
+  TF_LITE_REPORT_ERROR(
+      error_reporter,
       "no person data.  person score: %d, no person score: %d\n", person_score,
       no_person_score);
   TF_LITE_MICRO_EXPECT_GT(no_person_score, person_score);
 
-  error_reporter->Report("Ran successfully\n");
+  TF_LITE_REPORT_ERROR(error_reporter, "Ran successfully\n");
 }
 
 TF_LITE_MICRO_TESTS_END

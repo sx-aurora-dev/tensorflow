@@ -173,7 +173,7 @@ def xla_test(
 
         test_names.append(test_name)
 
-    native.test_suite(name = name, tests = test_names)
+    native.test_suite(name = name, tags = tags, tests = test_names)
 
 def xla_test_library(
         name,
@@ -266,11 +266,6 @@ def generate_backend_test_macros(backends = []):
                 "-DXLA_DISABLED_MANIFEST=\\\"%s\\\"" % manifest,
             ],
             deps = [
-                "@com_google_absl//absl/container:flat_hash_map",
-                "@com_google_absl//absl/strings",
-                "//tensorflow/compiler/xla:types",
-                "//tensorflow/core:lib",
-                "//tensorflow/core:regexp_internal",
-                "//tensorflow/core:test",
+                "//tensorflow/core/platform:logging",
             ],
         )

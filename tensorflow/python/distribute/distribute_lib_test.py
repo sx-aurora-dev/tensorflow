@@ -28,6 +28,7 @@ from tensorflow.python.distribute import distribute_lib
 from tensorflow.python.distribute import distribution_strategy_context as ds_context
 from tensorflow.python.distribute import input_lib
 from tensorflow.python.distribute import reduce_util
+from tensorflow.python.distribute.cluster_resolver import SimpleClusterResolver
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.framework import constant_op
@@ -36,6 +37,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
+from tensorflow.python.training import server_lib
 from tensorflow.python.util import nest
 
 
@@ -77,7 +79,7 @@ class _TestExtended(distribute_lib.StrategyExtendedV1):
         replica_id_in_sync_group=constant_op.constant(0, dtypes.int32)):
       return fn(*args, **kwargs)
 
-  def _create_variable(self, next_creator, *args, **kwargs):
+  def _create_variable(self, next_creator, **kwargs):
     return _get_test_variable(kwargs["name"], kwargs["synchronization"],
                               kwargs["aggregation"])
 
@@ -89,14 +91,15 @@ class _TestExtended(distribute_lib.StrategyExtendedV1):
                                            [distribute_lib.InputContext()],
                                            self._container_strategy())
 
-  def _experimental_distribute_datasets_from_function(self, dataset_fn):
+  def _experimental_distribute_datasets_from_function(self, dataset_fn,
+                                                      options):
     return dataset_fn(distribute_lib.InputContext())
 
   def _local_results(self, value):
     return (value,)
 
-  def _reduce_to(self, reduce_op, value, destinations):
-    del reduce_op, destinations
+  def _reduce_to(self, reduce_op, value, destinations, experimental_hints):
+    del reduce_op, destinations, experimental_hints
     return value
 
   def _experimental_make_numpy_dataset(self, numpy_input, session):
@@ -421,6 +424,17 @@ class TestStrategyTest(test.TestCase):
 
     test_fn()
 
+  def testClusterResolverDefaultNotImplemented(self):
+    dist = _TestStrategy()
+    self.assertIsNone(dist.cluster_resolver)
+    base_cluster_spec = server_lib.ClusterSpec({
+        "ps": ["ps0:2222", "ps1:2222"],
+        "worker": ["worker0:2222", "worker1:2222", "worker2:2222"]
+    })
+    cluster_resolver = SimpleClusterResolver(base_cluster_spec)
+    dist.extended._cluster_resolver = cluster_resolver
+    self.assertIs(dist.cluster_resolver, cluster_resolver)
+
 
 # _TestStrategy2 is like _TestStrategy, except it doesn't change variable
 # creation.
@@ -432,8 +446,8 @@ class _TestStrategy2(distribute_lib.Strategy):
 
 class _TestExtended2(_TestExtended):
 
-  def _create_variable(self, next_creator, *args, **kwargs):
-    return next_creator(*args, **kwargs)
+  def _create_variable(self, next_creator, **kwargs):
+    return next_creator(**kwargs)
 
 
 class DefaultDistributionStrategyTest(test.TestCase, parameterized.TestCase):
@@ -510,7 +524,7 @@ class DefaultDistributionStrategyTest(test.TestCase, parameterized.TestCase):
       return input_data
 
     for _ in range(2):
-      default_strategy.experimental_run_v2(train_step, args=(next_val,))
+      default_strategy.run(train_step, args=(next_val,))
 
   @combinations.generate(combinations.combine(mode=["graph", "eager"]))
   def testDistributedDatasets(self):
@@ -562,6 +576,18 @@ class InputContextTest(test.TestCase):
     self.assertEqual(2, input_context.get_per_replica_batch_size(12))
     with self.assertRaises(ValueError):
       input_context.get_per_replica_batch_size(13)
+
+  def testStr(self):
+    input_context = distribute_lib.InputContext(
+        num_input_pipelines=1, input_pipeline_id=0, num_replicas_in_sync=42)
+    self.assertEqual(
+        "tf.distribute.InputContext(input pipeline id 0, total: 1)",
+        str(input_context))
+    input_context = distribute_lib.InputContext(
+        num_input_pipelines=3, input_pipeline_id=1, num_replicas_in_sync=42)
+    self.assertEqual(
+        "tf.distribute.InputContext(input pipeline id 1, total: 3)",
+        str(input_context))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,9 @@
 # Reverses a space-separated list of words.
 reverse = $(if $(1),$(call reverse,$(wordlist 2,$(words $(1)),$(1)))) $(firstword $(1))
 
+# Get macros only (i.e. the ones starting with -D) from two lists and remove duplicates
+getmacros = $(patsubst -D%,%,$(filter -D%,$(sort $(filter -D%, $(1)) $(filter -D%, $(2)))))
+
 # Look for platform or target-specific implementation files to replace reference
 # implementations with, given a tag. These are expected to occur in subfolders
 # of a directory where a reference implementation exists, and have the same
@@ -62,10 +65,20 @@ specialize = $(call specialize_on_tags,$(1),$(strip $(call reverse,$(ALL_TAGS)))
 # 6 - Linker flags required.
 # 7 - C++ compilation flags needed.
 # 8 - C compilation flags needed.
+# 9 - Target Toolchian root directory
+# 10 - Target Toolchain prefix
 # Calling eval on the output will create a <Name>_makefile target that you
 # can invoke to create the standalone project.
 define generate_project
 $(PRJDIR)$(3)/$(1)/%: % third_party_downloads
+	@mkdir -p $$(dir $$@)
+	@cp $$< $$@
+
+$(PRJDIR)$(3)/cmake/boards/%: tensorflow/lite/micro/examples/$(3)/zephyr_riscv/boards/%
+	@mkdir -p $$(dir $$@)
+	@cp $$< $$@
+
+$(PRJDIR)$(3)/cmake/%: tensorflow/lite/micro/examples/$(3)/zephyr_riscv/%
 	@mkdir -p $$(dir $$@)
 	@cp $$< $$@
 
@@ -79,7 +92,9 @@ $(PRJDIR)$(3)/$(1)/%: tensorflow/lite/micro/tools/make/templates/%.tpl
 	sed -E 's#\%\{EXECUTABLE\}\%#$(3)#g' | \
 	sed -E 's#\%\{LINKER_FLAGS\}\%#$(6)#g' | \
 	sed -E 's#\%\{CXX_FLAGS\}\%#$(7)#g' | \
-	sed -E 's#\%\{CC_FLAGS\}\%#$(8)#g' > $$@
+	sed -E 's#\%\{CC_FLAGS\}\%#$(8)#g' | \
+	sed -E 's#\%\{TARGET_TOOLCHAIN_ROOT\}\%#$(9)#g' | \
+	sed -E 's#\%\{TARGET_TOOLCHAIN_PREFIX\}\%#$(10)#g' > $$@
 
 $(PRJDIR)$(3)/$(1)/keil_project.uvprojx: tensorflow/lite/micro/tools/make/templates/keil_project.uvprojx.tpl
 	@mkdir -p $$(dir $$@)
@@ -92,6 +107,12 @@ $(PRJDIR)$(3)/$(1)/.vscode/tasks.json : tensorflow/lite/micro/tools/make/templat
 	@cp $$< $$@
 
 generate_$(3)_$(1)_project: $(addprefix $(PRJDIR)$(3)/$(1)/, $(4) $(5) $(2))
+ifeq (mbed, $(1))
+	$(eval macrolist := $(call getmacros, $7, $8))
+	$(eval jsonfilename := $(PRJDIR)$(3)/$(1)/mbed_app)
+	@awk 'FNR==NR{ if (/}/) p=NR; next} 1; FNR==(p-1){ n=split("$(macrolist)",a," "); print("    ,\"macros\": [");for (i=1; i <= n; i++){ printf("        \"%s\"", a[i]); if(i<n){printf(",\n")}}printf("\n    ]\n")}' \
+        $(jsonfilename).json $(jsonfilename).json > $(jsonfilename).tmp && mv $(jsonfilename).tmp $(jsonfilename).json
+endif
 
 list_$(3)_$(1)_files:
 	@echo $(4) $(5)
@@ -111,27 +132,42 @@ endef
 # 6 - Linker flags required.
 # 7 - C++ compilation flags needed.
 # 8 - C compilation flags needed.
+
 # Calling eval on the output will create a <Name>_makefile target that you
 # can invoke to create the standalone project.
 define generate_arc_project
 
 ifeq ($(TARGET_ARCH), arc)
-$(PRJDIR)$(3)/$(1)/Makefile: tensorflow/lite/micro/tools/make/templates/Makefile.tpl
+
+$(PRJDIR)$(3)/$(1)/Makefile: tensorflow/lite/micro/tools/make/templates/arc/arc_app_makefile.tpl
 	@mkdir -p $$(dir $$@)
 	@sed -E 's#\%\{SRCS\}\%#$(4)#g' $$< | \
-	sed -E '1 i\CC = ccac\nCXX = ccac\nLD = ccac\n' | \
+	sed -E 's#\%\{CC\}\%#$(CC_TOOL)#g' | \
+	sed -E 's#\%\{CXX\}\%#$(CXX_TOOL)#g' | \
+	sed -E 's#\%\{LD\}\%#$(LD_TOOL)#g' | \
 	sed -E 's#\%\{EXECUTABLE\}\%#$(3).elf#g' | \
 	sed -E 's#\%\{LINKER_FLAGS\}\%#$(6)#g' | \
 	sed -E 's#\%\{CXX_FLAGS\}\%#$(7)#g' | \
-	sed -E 's#\%\{CC_FLAGS\}\%#$(8)#g' > $$@
+	sed -E 's#\%\{CC_FLAGS\}\%#$(8)#g' | \
+	sed -E 's#\%\{EXTRA_APP_SETTINGS\}\%#$(ARC_EXTRA_APP_SETTINGS)#g' | \
+	sed -E 's#\%\{EXTRA_APP_RULES\}\%#$(ARC_EXTRA_APP_RULES)#g' | \
+	sed -E 's#\%\{BIN_DEPEND\}\%#$(ARC_BIN_DEPEND)#g' | \
+	sed -E 's#\%\{BIN_RULE\}\%#$(ARC_BIN_RULE)#g' | \
+	sed -E 's#\%\{EXTRA_RM_TARGETS\}\%#$(ARC_EXTRA_RM_TARGETS)#g' | \
+	sed -E 's#\%\{APP_RUN_CMD\}\%#$(ARC_APP_RUN_CMD)#g' | \
+	sed -E 's#\%\{APP_DEBUG_CMD\}\%#$(ARC_APP_DEBUG_CMD)#g' | \
+	sed -E 's#\%\{EXTRA_EXECUTE_RULES\}\%#$(ARC_EXTRA_EXECUTE_RULES)#g' > $$@
 
-# Special rule to copy TCF in case the local filesystem file name has been defined
-ifneq ($(TCF_FILE_NAME), )
-$(PRJDIR)$(3)/$(1)/$(TCF_FILE_NAME): $(TCF_FILE)
+$(PRJDIR)$(3)/$(1)/%: tensorflow/lite/micro/tools/make/templates/arc/%.tpl
 	@cp $$< $$@
-endif
+
+$(foreach var,$(ARC_TARGET_FILES_DIRS),$(eval $(call path_changing_copy_file,$(PRJDIR)$(3)/$(1),$(var))))
+
 endif
 endef
+
+
+
 
 # Creates a set of rules to build a standalone Arduino project for an
 # executable, including all of the source and header files required in a
@@ -147,6 +183,14 @@ endef
 # Calling eval on the output will create a <Name>_makefile target that you
 # can invoke to create the standalone project.
 define generate_arduino_project
+
+$(PRJDIR)$(2)/arduino/examples/%.c: tensorflow/lite/micro/examples/%.c
+	@mkdir -p $$(dir $$@)
+	@python tensorflow/lite/micro/tools/make/transform_source.py \
+        --platform=arduino \
+        --is_example_source \
+        --source_path="$$<" \
+        --third_party_headers="$(4)" < $$< > $$@
 
 $(PRJDIR)$(2)/arduino/examples/%.cpp: tensorflow/lite/micro/examples/%.cc
 	@mkdir -p $$(dir $$@)
@@ -284,7 +328,19 @@ $(PRJDIR)$(2)/esp-idf/LICENSE: LICENSE
 	@mkdir -p $$(dir $$@)
 	@cp $$< $$@
 
+$(PRJDIR)$(2)/esp-idf/%: tensorflow/lite/micro/examples/$(2)/esp/%
+	@mkdir -p $$(dir $$@)
+	@cp $$< $$@
+
 $(PRJDIR)$(2)/esp-idf/main/%.cc: tensorflow/lite/micro/examples/$(2)/%.cc
+	@mkdir -p $$(dir $$@)
+	@python tensorflow/lite/micro/tools/make/transform_source.py \
+        --platform=esp \
+        --is_example_source \
+        --source_path="$$<" \
+        < $$< > $$@
+
+$(PRJDIR)$(2)/esp-idf/main/%.h: tensorflow/lite/micro/examples/$(2)/%.h
 	@mkdir -p $$(dir $$@)
 	@python tensorflow/lite/micro/tools/make/transform_source.py \
         --platform=esp \
@@ -304,11 +360,20 @@ $(PRJDIR)$(2)/esp-idf/components/tfmicro/third_party/%: tensorflow/lite/micro/to
 	@mkdir -p $$(dir $$@)
 	@cp $$< $$@
 
+$(PRJDIR)$(2)/esp-idf/sdkconfig.defaults: tensorflow/lite/micro/examples/$(2)/esp/sdkconfig.defaults
+	@mkdir -p $$(dir $$@)
+	@cp $$< $$@
+
 $(PRJDIR)$(2)/esp-idf/%: tensorflow/lite/micro/tools/make/templates/esp/%.tpl
-	$(eval MAIN_SRCS_RELATIVE := $(patsubst tensorflow/lite/micro/examples/$(2)/%,%,$(5)))
+# Split the sources into 2 components:
+# - Main component contains only the example's sources, relative from its dir.
+# - TFL Micro component contains everything but the example sources.
+  $(eval MAIN_SRCS := $(filter tensorflow/lite/micro/examples/%,$(5)))
+  $(eval MAIN_SRCS_RELATIVE := $(patsubst tensorflow/lite/micro/examples/$(2)/%,%,$(MAIN_SRCS)))
+  $(eval TFLM_SRCS := $(filter-out tensorflow/lite/micro/examples/%,$(5)) $(3))
 
 	@mkdir -p $$(dir $$@)
-	@sed -E 's#\%\{COMPONENT_SRCS\}\%#$(3)#g' $$< | \
+	@sed -E 's#\%\{COMPONENT_SRCS\}\%#$(TFLM_SRCS)#g' $$< | \
 	sed -E 's#\%\{MAIN_SRCS\}\%#$(MAIN_SRCS_RELATIVE)#g' | \
 	sed -E 's#\%\{EXECUTABLE\}\%#$(2)#g' | \
 	sed -E 's#\%\{COMPONENT_INCLUDES\}\%#$(10)#g' | \
@@ -336,12 +401,14 @@ endef
 # Calling eval on the output will create targets that you can invoke to
 # generate the standalone project.
 define generate_microlite_projects
-$(call generate_project,make,$(MAKE_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(LDFLAGS) $(MICROLITE_LIBS),$(CXXFLAGS) $(GENERATED_PROJECT_INCLUDES), $(CCFLAGS) $(GENERATED_PROJECT_INCLUDES))
-$(call generate_arc_project,make,$(MAKE_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(LDFLAGS) $(GENERATED_PROJECT_LIBS),$(CXXFLAGS) $(GENERATED_PROJECT_INCLUDES), $(CCFLAGS) $(GENERATED_PROJECT_INCLUDES))
-$(call generate_project,mbed,$(MBED_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(MICROLITE_LIBS),$(CXXFLAGS),$(CCFLAGS))
-$(call generate_project,keil,$(KEIL_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(MICROLITE_LIBS),$(CXXFLAGS),$(CCFLAGS))
-$(call generate_arduino_project,$(ARDUINO_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(MICROLITE_LIBS),$(CXXFLAGS),$(CCFLAGS))
-$(call generate_esp_project,$(ESP_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS),$(2),$(3),$(MICROLITE_LIBS),$(CXXFLAGS),$(CCFLAGS),$(PROJECT_INCLUDES))
+$(call generate_project,make,$(MAKE_PROJECT_FILES) $($(1)_MAKE_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(LDFLAGS) $(MICROLITE_LIBS),$(CXXFLAGS) $(GENERATED_PROJECT_INCLUDES), $(CCFLAGS) $(GENERATED_PROJECT_INCLUDES),$(TARGET_TOOLCHAIN_ROOT),$(TARGET_TOOLCHAIN_PREFIX))
+$(call generate_arc_project,make,$(MAKE_PROJECT_FILES) $($(1)_MAKE_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(LDFLAGS) $(GENERATED_PROJECT_LIBS),$(CXXFLAGS) $(GENERATED_PROJECT_INCLUDES), $(CCFLAGS) $(GENERATED_PROJECT_INCLUDES))
+$(call generate_project,mbed,$(MBED_PROJECT_FILES) $($(1)_MBED_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(MICROLITE_LIBS),$(CXXFLAGS),$(CCFLAGS),$(TARGET_TOOLCHAIN_ROOT),$(TARGET_TOOLCHAIN_PREFIX))
+$(call generate_project,keil,$(KEIL_PROJECT_FILES) $($(1)_KEIL_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(MICROLITE_LIBS),$(CXXFLAGS),$(CCFLAGS),$(TARGET_TOOLCHAIN_ROOT),$(TARGET_TOOLCHAIN_PREFIX))
+ifeq (,$(findstring _benchmark,$(1)))
+  $(call generate_arduino_project,$(ARDUINO_PROJECT_FILES) $($(1)_ARDUINO_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS) $(2),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS) $(3),$(MICROLITE_LIBS),$(CXXFLAGS),$(CCFLAGS))
+endif
+$(call generate_esp_project,$(ESP_PROJECT_FILES) $($(1)_ESP_PROJECT_FILES),$(1),$(MICROLITE_CC_SRCS) $(THIRD_PARTY_CC_SRCS),$(MICROLITE_CC_HDRS) $(THIRD_PARTY_CC_HDRS) $(MICROLITE_TEST_HDRS),$(2),$(3),$(MICROLITE_LIBS),$(CXXFLAGS),$(CCFLAGS),$(PROJECT_INCLUDES))
 endef
 
 # Handles the details of generating a binary target, including specializing
@@ -352,6 +419,9 @@ endef
 # 3 - C/C++ header files needed for the test.
 # Calling eval on the output will create the targets that you need.
 define microlite_test
+ifeq (,$(findstring _test, $(1)))
+	$(eval $(call generate_project_third_party_parsing))
+endif
 $(1)_LOCAL_SRCS := $(2)
 $(1)_LOCAL_SRCS := $$(call specialize,$$($(1)_LOCAL_SRCS))
 ALL_SRCS += $$($(1)_LOCAL_SRCS)
@@ -371,6 +441,7 @@ test_$(1): $$($(1)_BINARY)
 	$$(TEST_SCRIPT) $$($(1)_BINARY) '~~~ALL TESTS PASSED~~~'
 ifneq (,$(findstring _test,$(1)))
   MICROLITE_TEST_TARGETS += test_$(1)
+  MICROLITE_BUILD_TARGETS += $$($(1)_BINARY)
 endif
 $(eval $(call generate_microlite_projects,$(1),$(call specialize,$(2)),$(3)))
 endef
@@ -397,4 +468,46 @@ define create_download_rule
 $(word 3, $(subst !, ,$(1))):
 	tensorflow/lite/micro/tools/make/download_and_extract.sh $(subst !, ,$(1))
 THIRD_PARTY_TARGETS += $(word 3, $(subst !, ,$(1)))
+endef
+
+# Recursively find all files of given pattern
+# Arguments are:
+# 1 - Starting path
+# 2 - File pattern, e.g: *.h
+recursive_find = $(wildcard $(1)$(2)) $(foreach dir,$(wildcard $(1)*),$(call recursive_find,$(dir)/,$(2)))
+
+
+# Modifies the Makefile to include all third party Srcs so that generate
+# projects will create a Makefile that can be immediatley compiled without
+# modification
+define generate_project_third_party_parsing
+
+ifeq ($$(PARSE_THIRD_PARTY), true)
+# Get generated src includes with update path to third party
+THIRD_PARTY_CC_SRCS += $$(filter $$(MAKEFILE_DIR)/downloads/%, $$(MICROLITE_CC_SRCS))
+MICROLITE_CC_SRCS := $$(filter-out $$(THIRD_PARTY_CC_SRCS), $$(MICROLITE_CC_SRCS))
+THIRD_PARTY_CC_SRCS :=  $$(sort $$(patsubst  $$(MAKEFILE_DIR)/downloads/%, third_party/%,  $$(THIRD_PARTY_CC_SRCS)))
+
+# Get generated project includes from the includes with update path to third_party
+GENERATED_PROJECT_INCLUDES += $$(filter -I$$(MAKEFILE_DIR)/downloads/%, $$(INCLUDES))
+GENERATED_PROJECT_INCLUDES := $$(patsubst  -I$$(MAKEFILE_DIR)/downloads/%, -Ithird_party/%,  $$(GENERATED_PROJECT_INCLUDES))
+GENERATED_PROJECT_INCLUDES += $$(filter -isystem$$(MAKEFILE_DIR)/downloads/%, $$(INCLUDES))
+GENERATED_PROJECT_INCLUDES := $$(sort $$(patsubst  -isystem$$(MAKEFILE_DIR)/downloads/%, -isystemthird_party/%,  $$(GENERATED_PROJECT_INCLUDES)))
+
+# We dont copy the libraries, we just want to make sure we link to them correctly.
+MICROLITE_LIBS :=  $$(sort $$(patsubst  $$(MAKEFILE_DIR)/downloads/%, $$(TENSORFLOW_ROOT)$$(MAKEFILE_DIR)/downloads/%, $$(MICROLITE_LIBS)))
+LDFLAGS :=   $$(sort $$(patsubst  $$(MAKEFILE_DIR)/downloads/%, $$(TENSORFLOW_ROOT)$$(MAKEFILE_DIR)/downloads/%, $$(LDFLAGS)))
+
+# Copy all third party headers that are mentioned in includes
+THIRD_PARTY_CC_HDRS += $$(filter $$(MAKEFILE_DIR)/downloads/%, $$(MICROLITE_CC_HDRS))
+MICROLITE_CC_HDRS:= $$(sort $$(filter-out $$(THIRD_PARTY_CC_HDRS), $$(MICROLITE_CC_HDRS)))
+THIRD_PARTY_CC_HDRS :=  $$(sort $$(patsubst  $$(MAKEFILE_DIR)/downloads/%, third_party/%,  $$(THIRD_PARTY_CC_HDRS)))
+
+# Copy all third party headers that are mentioned in includes
+INCLUDE_HDRS := $$(wildcard $$(addsuffix /*.h,$$(filter $$(MAKEFILE_DIR)/downloads/%, $$(patsubst -I%,%,$$(INCLUDES)))))
+INCLUDE_HDRS += $$(wildcard $$(addsuffix /*.h,$$(filter $$(MAKEFILE_DIR)/downloads/%,  $$(patsubst -isystem%,%,$$(INCLUDES)))))
+INCLUDE_HDRS :=  $$(sort $$(INCLUDE_HDRS))
+THIRD_PARTY_CC_HDRS += $ $$(sort $(patsubst  $$(MAKEFILE_DIR)/downloads/%, third_party/%,  $$(INCLUDE_HDRS)))
+endif
+
 endef

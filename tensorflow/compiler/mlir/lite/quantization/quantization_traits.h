@@ -18,15 +18,20 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_LITE_QUANTIZATION_QUANTIZATION_TRAITS_H_
 #define TENSORFLOW_COMPILER_MLIR_LITE_QUANTIZATION_QUANTIZATION_TRAITS_H_
 
-#include "mlir/Dialect/QuantOps/QuantTypes.h"  // TF:llvm-project
-#include "mlir/Support/LLVM.h"  // TF:llvm-project
-
-namespace mlir {
-namespace OpTrait {
-namespace quant {
+#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 
 using QuantizedType = mlir::quant::QuantizedType;
 using UniformQuantizedType = mlir::quant::UniformQuantizedType;
+
+namespace mlir {
+
+// This includes the interface class definition. It couldn't be in a namespace
+// because the table gen doesn't emit the namespace when it is used.
+#include "tensorflow/compiler/mlir/lite/quantization/quantization_interface.h.inc"
+
+namespace OpTrait {
+namespace quant {
 
 // The base class that all the quantization related OpTrait implements.
 template <typename ConcreteType, template <typename> class TraitType>
@@ -70,7 +75,8 @@ class FixedResultUniformScale {
     QuantizedType GetResultQuantizedType(int index) {
       auto op = this->getOperation();
       auto result_type =
-          op->getResult(index).getType().template cast<TensorType>();
+          op->getResult(index).getType().template cast<ShapedType>();
+      if (!result_type.getElementType().template isa<FloatType>()) return {};
       Builder builder(op->getContext());
       IntegerType storage_type = builder.getIntegerType(BitWidth);
       const double scale = static_cast<double>(ScaleMantissa) *

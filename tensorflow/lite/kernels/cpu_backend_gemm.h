@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "ruy/profiler/instrumentation.h"  // from @ruy
 #include "tensorflow/lite/kernels/cpu_backend_context.h"
 #include "tensorflow/lite/kernels/cpu_backend_gemm_custom_gemv.h"
 #include "tensorflow/lite/kernels/cpu_backend_gemm_params.h"
@@ -94,15 +95,24 @@ void Gemm(const MatrixParams<LhsScalar>& lhs_params, const LhsScalar* lhs_data,
           CpuBackendContext* context) {
   ruy::profiler::ScopeLabel label("cpu_backend_gemm::Gemm");
   ValidateParams(lhs_params, rhs_params, dst_params, params);
-#ifndef TFLITE_WITH_RUY_GEMV
-  if (dst_params.cols == 1) {
+  if (context->use_caching()) {
+    // Dispatch to backend that supports caching of prepacked weights
+    // matrices.
+    detail::GemmImplUsingRuy<LhsScalar, RhsScalar, AccumScalar, DstScalar,
+                             quantization_flavor>::Run(lhs_params, lhs_data,
+                                                       rhs_params, rhs_data,
+                                                       dst_params, dst_data,
+                                                       params, context);
+    return;
+  }
+  const bool do_custom_gemv = (dst_params.cols == 1);
+  if (do_custom_gemv) {
     // GEMV case: try a custom fast GEMV path.
     if (detail::CustomGemv(lhs_params, lhs_data, rhs_params, rhs_data,
                            dst_params, dst_data, params, context)) {
       return;
     }
   }
-#endif
   ruy::profiler::ScopeLabel label2("cpu_backend_gemm::Gemm: general GEMM");
   GemmImpl<LhsScalar, RhsScalar, AccumScalar, DstScalar,
            quantization_flavor>::Run(lhs_params, lhs_data, rhs_params, rhs_data,

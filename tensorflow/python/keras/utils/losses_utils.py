@@ -21,6 +21,7 @@ from __future__ import print_function
 from tensorflow.python.distribute import distribution_strategy_context
 from tensorflow.python.framework import ops
 from tensorflow.python.keras import backend as K
+from tensorflow.python.keras.engine import keras_tensor
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops.losses import loss_reduction
@@ -101,8 +102,12 @@ def compute_weighted_loss(losses,
     # to multiple replicas. Used only for estimator + v1 optimizer flow.
     ops.get_default_graph()._last_loss_reduction = reduction  # pylint: disable=protected-access
 
-    losses = ops.convert_to_tensor(losses)
+    if not isinstance(losses, keras_tensor.KerasTensor):
+      losses = ops.convert_to_tensor_v2(losses)
     input_dtype = losses.dtype
+
+    if not isinstance(sample_weight, keras_tensor.KerasTensor):
+      sample_weight = ops.convert_to_tensor_v2(sample_weight)
     weighted_losses = tf_losses_utils.scale_losses_by_sample_weight(
         losses, sample_weight)
     # Apply reduction function to the individual weighted losses.
@@ -119,3 +124,30 @@ def scale_loss_for_distribution(loss_value):
   if num_replicas > 1:
     loss_value *= (1. / num_replicas)
   return loss_value
+
+
+def cast_losses_to_common_dtype(losses):
+  """Cast a list of losses to a common dtype.
+
+  If any loss is floating-point, they will all be casted to the most-precise
+  floating-point loss. Otherwise the losses are not casted. We also skip casting
+  losses if there are any complex losses.
+
+  Args:
+    losses: A list of losses.
+
+  Returns:
+    `losses`, but they have been casted to a common dtype.
+  """
+  highest_float = None
+  for loss in losses:
+    if loss.dtype.is_floating:
+      if highest_float is None or loss.dtype.size > highest_float.size:
+        highest_float = loss.dtype
+      elif {loss.dtype, highest_float} == {'bfloat16', 'float16'}:
+        highest_float = 'float32'
+    if loss.dtype.is_complex:
+      return losses  # If we find any complex losses, do not cast any losses
+  if highest_float:
+    losses = [math_ops.cast(loss, highest_float) for loss in losses]
+  return losses

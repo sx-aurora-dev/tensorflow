@@ -652,12 +652,12 @@ def _GradientsHelper(ys,
               # TODO(apassos) gradients of resource handles might be an
               # issue here because of zeros.
               if loop_state:
-                out_grads[i] = loop_state.ZerosLike(op, i)
+                out_grads[i] = loop_state.ZerosLikeV1WhileLoop(op, i)
               elif default_gradient.supports_default_grad(op.outputs[i]):
                 # TODO(b/143286622): The supports_default_grad check is needed
                 # because While op emits non-differentiable resource tensors
                 # as outputs. Remove this check when that is not the case.
-                out_grads[i] = control_flow_state.ZerosLikeOutsideLoop(op, i)
+                out_grads[i] = control_flow_state.ZerosLike(op, i)
           with ops.name_scope(op.name + "_grad"):
             # pylint: disable=protected-access
             with src_graph._original_op(op):
@@ -781,18 +781,22 @@ def _SetGrad(grads, t, grad):
     op_grads[t.value_index] = grad
 
 
+def _ZerosLike(t):
+  t_dtype = default_gradient.get_zeros_dtype(t)
+  if t.dtype == dtypes.resource:
+    return array_ops.zeros(
+        resource_variable_ops.variable_shape(t), dtype=t_dtype)
+  else:
+    return array_ops.zeros_like(t, dtype=t_dtype)
+
+
 def _GetGrad(grads, t, unconnected_gradients):
   """Gets gradient for tensor "t"."""
   op = t.op
   op_grads = grads.get(op)
   if not op_grads:
     if unconnected_gradients == UnconnectedGradients.ZERO:
-      t_dtype = default_gradient.get_zeros_dtype(t)
-      if t.dtype == dtypes.resource:
-        return array_ops.zeros(
-            resource_variable_ops.variable_shape(t), dtype=t_dtype)
-      else:
-        return array_ops.zeros_like(t, dtype=t_dtype)
+      return _ZerosLike(t)
     elif unconnected_gradients == UnconnectedGradients.NONE:
       return None
     else:
@@ -800,6 +804,10 @@ def _GetGrad(grads, t, unconnected_gradients):
           "Unknown value for unconnected_gradients: %r" % unconnected_gradients)
 
   t_grad = op_grads[t.value_index]
+  # This can happen if some other output of `t.op` has non-None grad.
+  if unconnected_gradients == UnconnectedGradients.ZERO and t_grad is None:
+    return _ZerosLike(t)
+
   assert not isinstance(
       t_grad, list), ("gradients list should have been aggregated by now.")
   return t_grad

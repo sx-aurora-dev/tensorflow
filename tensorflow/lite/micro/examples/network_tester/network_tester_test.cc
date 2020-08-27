@@ -10,10 +10,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "tensorflow/lite/micro/all_ops_resolver.h"
 #include "tensorflow/lite/micro/examples/network_tester/expected_output_data.h"
 #include "tensorflow/lite/micro/examples/network_tester/input_data.h"
 #include "tensorflow/lite/micro/examples/network_tester/network_model.h"
-#include "tensorflow/lite/micro/kernels/all_ops_resolver.h"
 #include "tensorflow/lite/micro/micro_error_reporter.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/testing/micro_test.h"
@@ -59,25 +59,30 @@ TF_LITE_MICRO_TEST(TestInvoke) {
 
   const tflite::Model* model = ::tflite::GetModel(network_model);
   if (model->version() != TFLITE_SCHEMA_VERSION) {
-    error_reporter->Report(
-        "Model provided is schema version %d not equal "
-        "to supported version %d.\n",
-        model->version(), TFLITE_SCHEMA_VERSION);
+    TF_LITE_REPORT_ERROR(error_reporter,
+                         "Model provided is schema version %d not equal "
+                         "to supported version %d.\n",
+                         model->version(), TFLITE_SCHEMA_VERSION);
     return 1;
   }
 
-  tflite::ops::micro::AllOpsResolver resolver;
+  tflite::AllOpsResolver resolver;
 
   tflite::MicroInterpreter interpreter(model, resolver, tensor_arena,
                                        TENSOR_ARENA_SIZE, error_reporter);
-  interpreter.AllocateTensors();
+
+  TfLiteStatus allocate_status = interpreter.AllocateTensors();
+  if (allocate_status != kTfLiteOk) {
+    TF_LITE_REPORT_ERROR(error_reporter, "Tensor allocation failed\n");
+  }
+  TF_LITE_MICRO_EXPECT_EQ(kTfLiteOk, allocate_status);
 
   TfLiteTensor* input = interpreter.input(0);
   memcpy(input->data.uint8, input_data, input->bytes);
 
   TfLiteStatus invoke_status = interpreter.Invoke();
   if (invoke_status != kTfLiteOk) {
-    error_reporter->Report("Invoke failed\n");
+    TF_LITE_REPORT_ERROR(error_reporter, "Invoke failed\n");
   }
   TF_LITE_MICRO_EXPECT_EQ(kTfLiteOk, invoke_status);
 
@@ -92,7 +97,7 @@ TF_LITE_MICRO_TEST(TestInvoke) {
     TF_LITE_MICRO_EXPECT_EQ(output->data.uint8[i], expected_output_data[i]);
   }
 #endif
-  error_reporter->Report("Ran successfully\n");
+  TF_LITE_REPORT_ERROR(error_reporter, "Ran successfully\n");
 }
 
 TF_LITE_MICRO_TESTS_END

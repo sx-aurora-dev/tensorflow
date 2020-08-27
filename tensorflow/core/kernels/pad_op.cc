@@ -70,11 +70,8 @@ class PadOp : public OpKernel {
         TensorShapeUtils::IsMatrix(in1.shape()) && in1.dim_size(1) == 2,
         errors::InvalidArgument("paddings must be a matrix with 2 columns: ",
                                 in1.shape().DebugString()));
-    const int fixed_dims =
-        (allow_legacy_scalars() && dims == 0 && in1.dim_size(0) == 1) ? 1
-                                                                      : dims;
     OP_REQUIRES(
-        context, fixed_dims == in1.dim_size(0),
+        context, dims == in1.dim_size(0),
         errors::InvalidArgument(
             "The first dimension of paddings must be the rank of inputs",
             in1.shape().DebugString(), " ", in0.shape().DebugString()));
@@ -92,15 +89,14 @@ class PadOp : public OpKernel {
     // Compute the shape of the output tensor, and allocate it.
     TensorShape output_shape;
     typename TTypes<Tpadding>::ConstMatrix paddings = in1.matrix<Tpadding>();
-    for (int d = 0; d < fixed_dims; ++d) {
+    for (int d = 0; d < dims; ++d) {
       const Tpadding before_d =
           paddings(d, 0);                       // Pad before existing elements.
       const Tpadding after_d = paddings(d, 1);  // Pad after existing elements.
       OP_REQUIRES(context, before_d >= 0 && after_d >= 0,
                   errors::InvalidArgument("Paddings must be non-negative: ",
                                           before_d, " ", after_d));
-      const int64 size_d =
-          (allow_legacy_scalars() && d == in0.dims()) ? 1 : in0.dim_size(d);
+      const int64 size_d = in0.dim_size(d);
       output_shape.AddDim(before_d + size_d + after_d);
     }
 
@@ -116,24 +112,9 @@ class PadOp : public OpKernel {
     TensorShape collapsed_input_shape;
     TensorShape collapsed_output_shape;
     Tensor collapsed_paddings;
-    if (fixed_dims > 1 &&
-        CollapseAdjacentNonPaddedDimensions(
-            in0.shape(), in1, output_shape, &collapsed_input_shape,
-            &collapsed_paddings, &collapsed_output_shape)) {
-
-#if 0 // debug
-      VLOG(1) << "== Then ==";
-      VLOG(1) << "====== collapsed_input_shape === : " << collapsed_input_shape;
-      VLOG(1) << "                        dims === : " << collapsed_input_shape.dims();
-      VLOG(1) << "====== collapsed_output_shape == : " << collapsed_output_shape;
-      VLOG(1) << "                         dims == : " << collapsed_output_shape.dims();
-
-      VLOG(1) << "====== collapsed_paddings ====== : ";
-      VLOG(1) << "                    shape        - " << collapsed_paddings.shape();
-      VLOG(1) << "                    dims         - " << collapsed_paddings.dims();
-      VLOG(1) << "                    dtype        - " << DataTypeString(collapsed_paddings.dtype());
-#endif
-
+    if (dims > 1 && CollapseAdjacentNonPaddedDimensions(
+                        in0.shape(), in1, output_shape, &collapsed_input_shape,
+                        &collapsed_paddings, &collapsed_output_shape)) {
       Tensor collapsed_input;
       CHECK(collapsed_input.CopyFrom(in0, collapsed_input_shape));
       Tensor collapsed_output;
@@ -170,8 +151,7 @@ class PadOp : public OpKernel {
       Tensor* output = nullptr;
       OP_REQUIRES_OK(context,
                      context->allocate_output(0, output_shape, &output));
-      OperateWithVariableRank(context, fixed_dims, in0, paddings, pad_value,
-                              output);
+      OperateWithVariableRank(context, dims, in0, paddings, pad_value, output);
     }
   }
 
@@ -559,11 +539,8 @@ class VEPadOp : public OpKernel {
         TensorShapeUtils::IsMatrix(in1.shape()) && in1.dim_size(1) == 2,
         errors::InvalidArgument("paddings must be a matrix with 2 columns: ",
                                 in1.shape().DebugString()));
-    const int fixed_dims =
-        (allow_legacy_scalars() && dims == 0 && in1.dim_size(0) == 1) ? 1
-                                                                      : dims;
     OP_REQUIRES(
-        context, fixed_dims == in1.dim_size(0),
+        context, dims == in1.dim_size(0),
         errors::InvalidArgument(
             "The first dimension of paddings must be the rank of inputs",
             in1.shape().DebugString(), " ", in0.shape().DebugString()));
@@ -588,15 +565,14 @@ class VEPadOp : public OpKernel {
     // Compute the shape of the output tensor, and allocate it.
     TensorShape output_shape;
     typename TTypes<Tpadding>::ConstMatrix paddings = in1.matrix<Tpadding>();
-    for (int d = 0; d < fixed_dims; ++d) {
+    for (int d = 0; d < dims; ++d) {
       const Tpadding before_d =
           paddings(d, 0);                       // Pad before existing elements.
       const Tpadding after_d = paddings(d, 1);  // Pad after existing elements.
       OP_REQUIRES(context, before_d >= 0 && after_d >= 0,
                   errors::InvalidArgument("Paddings must be non-negative: ",
                                           before_d, " ", after_d));
-      const int64 size_d =
-          (allow_legacy_scalars() && d == in0.dims()) ? 1 : in0.dim_size(d);
+      const int64 size_d = in0.dim_size(d);
       output_shape.AddDim(before_d + size_d + after_d);
 #if 0 // debug
       VLOG(1) << "** paddings ********";
@@ -617,10 +593,9 @@ class VEPadOp : public OpKernel {
     TensorShape collapsed_input_shape;
     TensorShape collapsed_output_shape;
     Tensor collapsed_paddings;
-    if (fixed_dims > 1 &&
-        CollapseAdjacentNonPaddedDimensions(
-            in0.shape(), in1, output_shape, &collapsed_input_shape,
-            &collapsed_paddings, &collapsed_output_shape)) {
+    if (dims > 1 && CollapseAdjacentNonPaddedDimensions(
+                        in0.shape(), in1, output_shape, &collapsed_input_shape,
+                        &collapsed_paddings, &collapsed_output_shape)) {
 
 #if 0 // debug
       VLOG(1) << "== Then ==";
@@ -702,7 +677,7 @@ class VEPadOp : public OpKernel {
 
 #if 0 // debug
       VLOG(1) << "** add args **";
-      VLOG(1) << "  fixed_dims     = " << fixed_dims;
+      VLOG(1) << "  dims     = " << dims;
       VLOG(1) << "  Tensor type    = " << (DataTypeToEnum<T>::value);
       VLOG(1) << "  in0            = " << std::hex << &in0 << std::dec;
       VLOG(1) << "  pad_value type = " << (DataTypeToEnum<Tpadding>::value);
@@ -713,7 +688,7 @@ class VEPadOp : public OpKernel {
 #endif
 
       VEOpKernelHelper::ArgsImpl<> args;
-      args.addArg<int32_t>(fixed_dims);       // 0 : 
+      args.addArg<int32_t>(dims);       // 0 : 
       args.addArg<int64>(DataTypeToEnum<T>::value);
                                               // 1 : type of Tensor 
       args.addArg<Tensor>(in0);               // 2 : Tensor before padding
@@ -722,7 +697,7 @@ class VEPadOp : public OpKernel {
       args.addArg<T>(pad_value);              // 4 : pad value
       args.addArg<Tensor>(*output);           // 5 : Tensor after padding
 
-      for (int i = 0; i< fixed_dims; i++) {   // 6 : paddings
+      for (int i = 0; i< dims; i++) {   // 6 : paddings
 	args.addArg<int32_t>(paddings(i, 0));
 	args.addArg<int32_t>(paddings(i, 1));
       }

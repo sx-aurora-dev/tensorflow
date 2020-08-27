@@ -107,7 +107,8 @@ Status IsNodeOutputPortHostFriendly(const GraphView& graph,
         /*include_tensor_values=*/false));
   }
   const auto& output_properties = properties->GetOutputProperties(node.name());
-  if (port_id >= output_properties.size()) {
+  int output_properties_size = output_properties.size();
+  if (port_id >= output_properties_size) {
     LOG(WARNING) << "port_id=" << port_id
                  << " but output_properties.size()=" << output_properties.size()
                  << "\n"
@@ -119,7 +120,7 @@ Status IsNodeOutputPortHostFriendly(const GraphView& graph,
   }
 
   // These nodes may be optimized away downstream (even if pinned to Host), we
-  // should (recusively) check their source.
+  // should (recursively) check their source.
   if (IsIdentity(node) || IsIdentityNSingleInput(node)) {
     for (const auto& fanin : graph.GetFanins(node, false)) {
       bool fanin_candidate = false;

@@ -85,6 +85,9 @@ class CollectiveGatherOpKernel : public CollectiveOpKernel {
     OP_REQUIRES_OK(
         c, c->GetAttr("communication_hint",
                       &col_params_.instance.impl_details.communication_hint));
+    OP_REQUIRES_OK(
+        c, c->GetAttr("timeout_seconds",
+                      &col_params_.instance.impl_details.timeout_seconds));
     const NodeDef& real_node = c->def();
     col_params_.name = strings::StrCat(real_node.name(), ": Gather");
     col_params_.group.device_type = c->device_type();
@@ -116,9 +119,12 @@ class CollectiveGatherOpKernel : public CollectiveOpKernel {
     }
     if (!CanProceedWithCompute(c, col_exec, done)) return;
 
-    auto actual_done = [c, done](const Status& s) {
+    auto actual_done = [c, group_key = col_params_.group.group_key,
+                        instance_key = col_params_.instance.instance_key,
+                        done](const Status& s) {
       VLOG(1) << "CollectiveGatherOpKernel ExecuteAsync done for collective "
               << c->op_kernel().name() << " device " << c->device()->name()
+              << " group " << group_key << " instance " << instance_key
               << " status " << s;
       OP_REQUIRES_OK_ASYNC(c, s, done);
       done();
@@ -173,10 +179,14 @@ class CollectiveReduceOpKernel : public CollectiveOpKernel {
     OP_REQUIRES_OK(
         c, c->GetAttr("communication_hint",
                       &col_params_.instance.impl_details.communication_hint));
+    OP_REQUIRES_OK(
+        c, c->GetAttr("timeout_seconds",
+                      &col_params_.instance.impl_details.timeout_seconds));
     VLOG(2) << "CollectiveReduce instance " << col_params_.instance.instance_key
             << " merge_op " << merge_op_name << " final_op " << final_op_name
             << " communication_hint "
-            << col_params_.instance.impl_details.communication_hint;
+            << col_params_.instance.impl_details.communication_hint
+            << " timeout " << col_params_.instance.impl_details.timeout_seconds;
 
     const NodeDef& real_node = c->def();
     col_params_.name = strings::StrCat(real_node.name(), ": Reduce(",
@@ -237,9 +247,12 @@ class CollectiveReduceOpKernel : public CollectiveOpKernel {
     }
     if (!CanProceedWithCompute(c, col_exec, done)) return;
 
-    auto actual_done = [c, done](const Status& s) {
+    auto actual_done = [c, group_key = col_params_.group.group_key,
+                        instance_key = col_params_.instance.instance_key,
+                        done](const Status& s) {
       VLOG(1) << "CollectiveReduceOpKernel ExecuteAsync done for collective "
               << c->op_kernel().name() << " device " << c->device()->name()
+              << " group " << group_key << " instance " << instance_key
               << " status " << s;
       OP_REQUIRES_OK_ASYNC(c, s, done);
       done();
@@ -278,6 +291,9 @@ class CollectiveBcastSendOpKernel : public CollectiveOpKernel {
     OP_REQUIRES_OK(
         c, c->GetAttr("communication_hint",
                       &col_params_.instance.impl_details.communication_hint));
+    OP_REQUIRES_OK(
+        c, c->GetAttr("timeout_seconds",
+                      &col_params_.instance.impl_details.timeout_seconds));
     col_params_.is_source = true;
     col_params_.instance.impl_details.subdiv_offsets = {0};
 
@@ -313,9 +329,12 @@ class CollectiveBcastSendOpKernel : public CollectiveOpKernel {
                          " does not match shape of input"),
         done);
 
-    auto actual_done = [c, done](const Status& s) {
+    auto actual_done = [c, group_key = col_params_.group.group_key,
+                        instance_key = col_params_.instance.instance_key,
+                        done](const Status& s) {
       VLOG(1) << "CollectiveBcastSendOpKernel ExecuteAsync done for collective "
               << c->op_kernel().name() << " device " << c->device()->name()
+              << " group " << group_key << " instance " << instance_key
               << " status " << s;
       OP_REQUIRES_OK_ASYNC(c, s, done);
       done();
@@ -354,6 +373,9 @@ class CollectiveBcastRecvOpKernel : public CollectiveOpKernel {
     OP_REQUIRES_OK(
         c, c->GetAttr("communication_hint",
                       &col_params_.instance.impl_details.communication_hint));
+    OP_REQUIRES_OK(
+        c, c->GetAttr("timeout_seconds",
+                      &col_params_.instance.impl_details.timeout_seconds));
     col_params_.is_source = false;
     col_params_.instance.impl_details.subdiv_offsets = {0};
 
@@ -382,9 +404,12 @@ class CollectiveBcastRecvOpKernel : public CollectiveOpKernel {
     }
     if (!CanProceedWithCompute(c, col_exec, done)) return;
 
-    auto actual_done = [c, done](const Status& s) {
+    auto actual_done = [c, group_key = col_params_.group.group_key,
+                        instance_key = col_params_.instance.instance_key,
+                        done](const Status& s) {
       VLOG(1) << "CollectiveBcastRecvOpKernel ExecuteAsync done for collective "
               << c->op_kernel().name() << " device " << c->device()->name()
+              << " group " << group_key << " instance_key " << instance_key
               << " status  " << s;
       OP_REQUIRES_OK_ASYNC(c, s, done);
       done();

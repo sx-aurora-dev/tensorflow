@@ -59,6 +59,10 @@ class HeapSimulator {
     int64 chunk_end() const { return offset + size; }
 
     bool OverlapsWith(Chunk other_chunk) const;
+
+    bool operator==(const Chunk& other) const {
+      return offset == other.offset && size == other.size;
+    }
   };
 
   // Result represents the result of the heap simulation.
@@ -301,6 +305,8 @@ struct BufferIntervalTreeNode {
   BufferIntervalTreeNode* left;
   // Right child.
   BufferIntervalTreeNode* right;
+  // parent
+  BufferIntervalTreeNode* parent;
 };
 
 // An interval tree that can query buffers overlapping in time.
@@ -311,11 +317,17 @@ class BufferIntervalTree {
   // chunk specified.
   void Add(int64 start, int64 end, const Chunk& chunk);
 
+  // Remove the interval from the tree. Returns true if the chunk is removed.
+  bool Remove(int64 start, int64 end, const Chunk& chunk);
+
   // Returns vector of allocated chunks that overlap with the given time
   // interval.
   std::vector<Chunk> ChunksOverlappingInTime(int64 start, int64 end) const;
 
+  BufferIntervalTreeNode* GetRoot() { return root_; }
+
  private:
+  BufferIntervalTreeNode* root_ = nullptr;
   std::list<BufferIntervalTreeNode> node_storage_;
 };
 
@@ -404,6 +416,7 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm {
   absl::flat_hash_map<const HloValue*, BufferInterval> buffer_intervals_;
   Result result_;
   BufferIntervalCompare buffer_interval_compare_;
+  BufferIntervalTree interval_tree_;
 
  private:
   int64 alignment_;
@@ -411,8 +424,6 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm {
   // The current time represented as an integer. It increments by 1 at each
   // Alloc or Free call.
   int64 current_time_ = 0;
-
-  BufferIntervalTree interval_tree_;
 
   // Returns all transitive colocated buffers of this buffer interval. I.e., If
   // a buffer A is colocated with B and B is colocated with C, this function

@@ -27,6 +27,7 @@ limitations under the License.
 #include <Python.h>
 
 #include "tensorflow/lite/experimental/tflite_api_dispatcher/tflite_api_dispatcher.h"
+#include "tensorflow/lite/interpreter.h"
 
 struct TfLiteDelegate;
 
@@ -39,7 +40,6 @@ class BuiltinOpResolver;
 }  // namespace ops
 
 class FlatBufferModel;
-class Interpreter;
 
 namespace interpreter_wrapper {
 
@@ -63,12 +63,14 @@ class InterpreterWrapper {
 
   PyObject* InputIndices() const;
   PyObject* OutputIndices() const;
-  PyObject* ResizeInputTensor(int i, PyObject* value);
+  PyObject* ResizeInputTensor(int i, PyObject* value, bool strict);
 
   int NumTensors() const;
   std::string TensorName(int i) const;
   PyObject* TensorType(int i) const;
   PyObject* TensorSize(int i) const;
+  PyObject* TensorSizeSignature(int i) const;
+  PyObject* TensorSparsityParameters(int i) const;
   // Deprecated in favor of TensorQuantizationScales, below.
   PyObject* TensorQuantization(int i) const;
   PyObject* TensorQuantizationParameters(int i) const;
@@ -84,6 +86,8 @@ class InterpreterWrapper {
   // Returns a reference to tensor index i as a numpy array. The base_object
   // should be the interpreter object providing the memory.
   PyObject* tensor(PyObject* base_object, int i);
+
+  PyObject* SetNumThreads(int num_threads);
 
   // Adds a delegate to the interpreter.
   PyObject* ModifyGraphWithDelegate(TfLiteDelegate* delegate);
@@ -107,6 +111,9 @@ class InterpreterWrapper {
   // InterpreterWrapper() = delete here for SWIG compatibility.
   InterpreterWrapper();
   InterpreterWrapper(const InterpreterWrapper& rhs);
+
+  // Helper function to resize an input tensor.
+  PyObject* ResizeInputTensorImpl(int i, PyObject* value);
 
   // The public functions which creates `InterpreterWrapper` should ensure all
   // these member variables are initialized successfully. Otherwise it should

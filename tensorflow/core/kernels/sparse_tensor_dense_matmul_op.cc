@@ -445,47 +445,47 @@ Status MOutOfBoundsError(int64 m, std::size_t i, int lhs_index_a,
 
 template <typename T, typename Tindices, bool ADJ_A, bool ADJ_B>
 struct SparseTensorDenseMatMulFunctor<CPUDevice, T, Tindices, ADJ_A, ADJ_B> {
-    // Vectorize certain operations above this size.
-    static const std::size_t kNumVectorize = 32;
+  // Vectorize certain operations above this size.
+  static constexpr std::size_t kNumVectorize = 32;
 
-    static Status Compute(const CPUDevice& d, typename TTypes<T>::Matrix out,
-                          typename TTypes<Tindices>::ConstMatrix a_indices,
-                          typename TTypes<T>::ConstVec a_values,
-                          typename TTypes<T>::ConstMatrix b) {
-        const std::size_t nnz = a_values.size();
-        const std::size_t rhs_right = (ADJ_B ? b.dimension(0) : b.dimension(1));
-        const std::size_t lhs_right = (ADJ_B ? b.dimension(1) : b.dimension(0));
-        const int lhs_index_a = ADJ_A ? 1 : 0;
-        const int rhs_index_a = ADJ_A ? 0 : 1;
+  static Status Compute(const CPUDevice& d, typename TTypes<T>::Matrix out,
+                        typename TTypes<Tindices>::ConstMatrix a_indices,
+                        typename TTypes<T>::ConstVec a_values,
+                        typename TTypes<T>::ConstMatrix b) {
+    const std::size_t nnz = a_values.size();
+    const std::size_t rhs_right = (ADJ_B ? b.dimension(0) : b.dimension(1));
+    const std::size_t lhs_right = (ADJ_B ? b.dimension(1) : b.dimension(0));
+    const int lhs_index_a = ADJ_A ? 1 : 0;
+    const int rhs_index_a = ADJ_A ? 0 : 1;
 
-        out.setZero();
+    out.setZero();
 
-        // TODO(ebrevdo): After many failed experiments, can't find a multi-threaded
-        // approach that achieves the performance of the single threaded
-        // one.  Perhaps Eigen threadpool implementation is just too slow?
+    // TODO(ebrevdo): After many failed experiments, can't find a multi-threaded
+    // approach that achieves the performance of the single threaded
+    // one.  Perhaps Eigen threadpool implementation is just too slow?
 
-        if (rhs_right < kNumVectorize) {
-            // Disable vectorization if the RHS of output is too small
-            auto maybe_adjoint_b = MaybeAdjoint<decltype(b), ADJ_B>(b);
+    if (rhs_right < kNumVectorize) {
+      // Disable vectorization if the RHS of output is too small
+      auto maybe_adjoint_b = MaybeAdjoint<decltype(b), ADJ_B>(b);
 
-            for (std::size_t i = 0; i < nnz; ++i) {
-                const Tindices m = internal::SubtleMustCopy(a_indices(i, lhs_index_a));
-                const Tindices k = internal::SubtleMustCopy(a_indices(i, rhs_index_a));
-                if (!FastBoundsCheck(k, lhs_right)) {
-                    return KOutOfBoundsError(k, i, rhs_index_a, lhs_right);
-                }
-                if (!FastBoundsCheck(m, out.dimension(0))) {
-                    return MOutOfBoundsError(m, i, lhs_index_a, out.dimension(0));
-                }
-                const T a_value = ADJ_A ? MaybeConj(a_values(i)) : a_values(i);
-                for (std::size_t n = 0; n < rhs_right; ++n) {
-                    const T b_value = maybe_adjoint_b(k, n);
-                    out(m, n) += a_value * b_value;
-                }
-            }
-        } else {
-            // Vectorization via Eigen.
-            const int b_chip_index = ADJ_B ? 1 : 0;
+      for (std::size_t i = 0; i < nnz; ++i) {
+        const Tindices m = internal::SubtleMustCopy(a_indices(i, lhs_index_a));
+        const Tindices k = internal::SubtleMustCopy(a_indices(i, rhs_index_a));
+        if (!FastBoundsCheck(k, lhs_right)) {
+          return KOutOfBoundsError(k, i, rhs_index_a, lhs_right);
+        }
+        if (!FastBoundsCheck(m, out.dimension(0))) {
+          return MOutOfBoundsError(m, i, lhs_index_a, out.dimension(0));
+        }
+        const T a_value = ADJ_A ? MaybeConj(a_values(i)) : a_values(i);
+        for (std::size_t n = 0; n < rhs_right; ++n) {
+          const T b_value = maybe_adjoint_b(k, n);
+          out(m, n) += a_value * b_value;
+        }
+      }
+    } else {
+      // Vectorization via Eigen.
+      const int b_chip_index = ADJ_B ? 1 : 0;
 
 #define LOOP_NNZ(b_passed)                                                  \
     for (std::size_t i = 0; i < nnz; ++i) {                                   \

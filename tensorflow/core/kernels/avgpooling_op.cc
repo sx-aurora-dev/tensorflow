@@ -20,7 +20,9 @@ limitations under the License.
 #include "tensorflow/core/kernels/avgpooling_op.h"
 
 #include <vector>
+
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/kernel_shape_util.h"
 #include "tensorflow/core/framework/numeric_op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -46,6 +48,7 @@ limitations under the License.
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/kernels/transpose_functor.h"
 #include "tensorflow/core/framework/ve_ops_common.h"
 #endif // TENSORFLOW_USE_VE
 
@@ -275,6 +278,7 @@ class AvgPoolingOp<VEDevice, T> : public UnaryOp<T> {
       }
       param_.data_format = data_format_;
       param_.padding = padding_;
+
     }
 
     void Compute(OpKernelContext* context) override {
@@ -302,12 +306,64 @@ class AvgPoolingOp<VEDevice, T> : public UnaryOp<T> {
       param_.pad_rows = params.pad_rows;
       param_.pad_cols = params.pad_cols;
 
+      Tensor in_transposed ;
+      Tensor out_transposed ;
+      Param param_nchw = param_ ;
+      if( data_format_ == FORMAT_NHWC ) {
+	// if data_format is NHWC, then transpose in/out tensor
+
+	const int64 batch = GetTensorDim(tensor_in, data_format_, 'N');
+
+	const int64 in_rows = GetTensorDim(tensor_in, data_format_, 'H');
+	const int64 in_cols = GetTensorDim(tensor_in, data_format_, 'W');
+	const int64 in_depths = GetTensorDim(tensor_in, data_format_, 'C');
+
+	const int64 out_rows = GetTensorDim(*output, data_format_, 'H');
+	const int64 out_cols = GetTensorDim(*output, data_format_, 'W');
+	const int64 out_depths = GetTensorDim(*output, data_format_, 'C');
+
+	OP_REQUIRES_OK(context,
+		       context->allocate_temp(
+			   reinterpret_cast<DataType>(tensor_in.dtype()),
+			   ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+			   &in_transposed)
+		       );
+
+	OP_REQUIRES_OK(context,
+		       context->allocate_temp(
+			   reinterpret_cast<DataType>(tensor_in.dtype()),
+			   ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+			   &out_transposed));
+
+	OP_REQUIRES_OK( context, VEDoTranspose(context, tensor_in, {0,3,1,2}, &in_transposed));
+
+	param_nchw.ksize[0]  = param_.stride[0] ;
+	param_nchw.ksize[1]  = param_.stride[3] ;
+	param_nchw.ksize[2]  = param_.stride[1] ;
+	param_nchw.ksize[3]  = param_.stride[2] ;
+
+	param_nchw.stride[0]  = param_.stride[0] ;
+	param_nchw.stride[1]  = param_.stride[3] ;
+	param_nchw.stride[2]  = param_.stride[1] ;
+	param_nchw.stride[3]  = param_.stride[2] ;
+
+      }
+      else {
+	in_transposed  = tensor_in ;
+	out_transposed = *output ;
+      }
+
       VEOpKernelHelper::ArgsImpl<> args;
-      args.addArg<Tensor>(*output);
-      args.addArg<Tensor>(tensor_in);
-      args.addArg<Param>(param_);
+      args.addArg<Tensor>(out_transposed);
+      args.addArg<Tensor>(in_transposed);
+      args.addArg<Param>(param_nchw);
 
       VEOpKernelHelper::Call(context, "AvgPool", args);
+
+      // if data_format is NHWC, then transpose output tensor
+      if ( data_format_ == FORMAT_NHWC ) {
+        OP_REQUIRES_OK( context, VEDoTranspose(context, out_transposed, {0,2,3,1}, output));
+      }
     }
 
   private:
@@ -315,7 +371,7 @@ class AvgPoolingOp<VEDevice, T> : public UnaryOp<T> {
     std::vector<int32> stride_;
     Padding padding_;
     TensorFormat data_format_;
-    Param param_;
+    Param param_ ;
 };
 
 REGISTER_KERNEL_BUILDER(
@@ -782,10 +838,10 @@ class AvgPoolingGradOp<VEDevice, T> : public OpKernel {
     const int64 in_rows = output_shape.dim_size(1);
     const int64 in_cols = output_shape.dim_size(2);
 
-    Tensor* output = nullptr;
-    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
+    Tensor* input_backprop = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &input_backprop));
 #if 0
-    output->flat<T>().setZero();
+    input_backprop->flat<T>().setZero();
 #endif
 
     const int window_rows = ksize_[1];
@@ -823,12 +879,67 @@ class AvgPoolingGradOp<VEDevice, T> : public OpKernel {
     param_.pad_rows = pad_rows;
     param_.pad_cols = pad_cols;
 
+    Tensor out_bp_transposed ;
+    Tensor in_bp_transposed ;
+    Param param_nchw = param_ ;
+    if( data_format_ == FORMAT_NHWC ) {
+	// if data_format is NHWC, then transpose in/out tensor
+
+	const int64 batch = GetTensorDim(out_backprop, data_format_, 'N');
+
+	const int64 out_rows = GetTensorDim(out_backprop, data_format_, 'H');
+	const int64 out_cols = GetTensorDim(out_backprop, data_format_, 'W');
+	const int64 out_depths = GetTensorDim(out_backprop, data_format_, 'C');
+
+
+	const int64 in_rows = GetTensorDim(*input_backprop, data_format_, 'H');
+	const int64 in_cols = GetTensorDim(*input_backprop, data_format_, 'W');
+	const int64 in_depths = GetTensorDim(*input_backprop, data_format_, 'C');
+
+
+	OP_REQUIRES_OK(context,
+		       context->allocate_temp(
+			   reinterpret_cast<DataType>(out_backprop.dtype()),
+			   ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+			   &out_bp_transposed));
+
+	OP_REQUIRES_OK(context,
+		       context->allocate_temp(
+			   reinterpret_cast<DataType>(out_backprop.dtype()),
+			   ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+			   &in_bp_transposed)
+		       );
+
+	OP_REQUIRES_OK( context, VEDoTranspose(context, out_backprop, {0,3,1,2}, &out_bp_transposed));
+
+	param_nchw.ksize[0]  = param_.stride[0] ;
+	param_nchw.ksize[1]  = param_.stride[3] ;
+	param_nchw.ksize[2]  = param_.stride[1] ;
+	param_nchw.ksize[3]  = param_.stride[2] ;
+
+	param_nchw.stride[0]  = param_.stride[0] ;
+	param_nchw.stride[1]  = param_.stride[3] ;
+	param_nchw.stride[2]  = param_.stride[1] ;
+	param_nchw.stride[3]  = param_.stride[2] ;
+
+    }
+    else {
+	out_bp_transposed = out_backprop ;
+	in_bp_transposed  = *input_backprop ;
+    }
+
+
     VEOpKernelHelper::ArgsImpl<> args;
-    args.addArg<Tensor>(*output);
-    args.addArg<Tensor>(out_backprop);
-    args.addArg<Param>(param_);
+    args.addArg<Tensor>(in_bp_transposed);
+    args.addArg<Tensor>(out_bp_transposed);
+    args.addArg<Param>(param_nchw);
 
     VEOpKernelHelper::Call(context, "AvgPoolGrad", args);
+
+    // if data_format is NHWC, then transpose in_backprop tensor
+    if ( data_format_ == FORMAT_NHWC ) {
+      OP_REQUIRES_OK( context, VEDoTranspose(context, in_bp_transposed, {0,2,3,1}, input_backprop));
+    }
   }
 
  private:

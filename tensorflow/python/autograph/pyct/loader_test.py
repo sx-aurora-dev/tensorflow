@@ -19,6 +19,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
 import textwrap
 
 import gast
@@ -37,15 +38,16 @@ class LoaderTest(test.TestCase):
       a = True
       b = ''
       if a:
-        b = x + 1
+        b = (x + 1)
       return b
 
     node, _ = parser.parse_entity(test_fn, future_features=())
     module, _, _ = loader.load_ast(node)
 
+    # astunparse uses fixed 4-space indenting.
     self.assertEqual(
         textwrap.dedent(tf_inspect.getsource(test_fn)),
-        tf_inspect.getsource(module.test_fn))
+        tf_inspect.getsource(module.test_fn).replace('    ', '  '))
 
   def test_load_ast(self):
     node = gast.FunctionDef(
@@ -81,7 +83,7 @@ class LoaderTest(test.TestCase):
     expected_source = """
       # coding=utf-8
       def f(a):
-        return a + 1
+          return (a + 1)
     """
     self.assertEqual(
         textwrap.dedent(expected_source).strip(),
@@ -104,6 +106,12 @@ class LoaderTest(test.TestCase):
     self.assertEqual(
         module.f.__doc__, '日本語 Δθₜ ← Δθₜ₋₁ + ∇Q(sₜ, aₜ)(rₜ + γₜ₊₁ max Q(⋅))')
 
+  def test_cleanup(self):
+    test_source = textwrap.dedent('')
+    _, filename = loader.load_source(test_source, delete_on_exit=True)
+    # Clean up the file before loader.py tries to remove it, to check that the
+    # latter can deal with that situation.
+    os.unlink(filename)
 
 if __name__ == '__main__':
   test.main()

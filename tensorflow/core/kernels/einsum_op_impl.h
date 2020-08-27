@@ -771,20 +771,6 @@ struct EinsumHelper {
     return CopyFrom(input, output_shape, output);
   }
 
-  // Conjugates the input.
-  template <typename Device, typename T>
-  static Status Conjugate(OpKernelContext* ctx, Tensor* input) {
-    std::vector<int> permutation(input->dims());
-    std::iota(permutation.begin(), permutation.end(), 0);
-    Tensor output;
-    TF_RETURN_IF_ERROR(
-        ctx->allocate_temp(DataTypeToEnum<T>::value, input->shape(), &output));
-    const Device& d = ctx->eigen_device<Device>();
-    TF_RETURN_IF_ERROR(DoConjugateTranspose(d, *input, permutation, &output));
-    std::swap(*input, output);
-    return Status::OK();
-  }
-
 #ifdef TENSORFLOW_USE_VE
   // Conjugates the input.
   template <typename T>
@@ -804,12 +790,10 @@ struct EinsumHelper {
   // Contracts the inputs along the last axis. (or the second last if the
   // corresponding value of swap_free_and_contract is true). The batch
   // dimensions are broadcast to the output shape.
-  // TODO(anudhyan): Factor this function into a BatchMatMul functor and support
-  // transpose_x and transpose_y attributes (in addition to adj_x and adj_y).
-  // Also, the BatchMatMul might devolve into a component-wise multiplication
-  // when the matrix shape is [1,1]; in this case BatchMatMul functor would be
-  // very inefficient. The functor should detect if this is the case and perform
-  // componentwise multiplication functor instead.
+  // TODO(anudhyan): BatchMatMul might devolve into a component-wise
+  // multiplication when the matrix shape is [1,1]; in this case BatchMatMul
+  // functor would be very inefficient. The functor should detect if this is the
+  // case and perform componentwise multiplication functor instead.
   template <typename Device, typename T>
   static Status ContractOperands(OpKernelContext* ctx,
                                  absl::Span<const Tensor> inputs,
@@ -834,12 +818,8 @@ struct EinsumHelper {
           inputs[i].dims() - (swap_free_and_contract[i] ? 1 : 2);
       output_shape.AddDim(inputs[i].dim_size(free_axis));
     }
-    bool adj_x = swap_free_and_contract[0];
-    bool adj_y = !swap_free_and_contract[1];
-    if (is_complex<T>::value) {
-      if (adj_x) TF_RETURN_IF_ERROR(Conjugate<Device, T>(ctx, &lhs));
-      if (adj_y) TF_RETURN_IF_ERROR(Conjugate<Device, T>(ctx, &rhs));
-    }
+    bool trans_x = swap_free_and_contract[0];
+    bool trans_y = !swap_free_and_contract[1];
     TF_RETURN_IF_ERROR(
         ctx->allocate_temp(DataTypeToEnum<T>::value, output_shape, output));
     if (lhs.NumElements() == 0 || rhs.NumElements() == 0) {
@@ -850,8 +830,9 @@ struct EinsumHelper {
     Tensor output_reshaped;
     TF_RETURN_IF_ERROR(
         ReshapeToRank3(*output, bcast.output_batch_size(), &output_reshaped));
-    LaunchBatchMatMul<Device, T>::Launch(ctx, lhs, rhs, adj_x, adj_y, bcast,
-                                         &output_reshaped);
+    LaunchBatchMatMul<Device, T>::Launch(ctx, lhs, rhs, /*adj_x=*/false,
+                                         /*adj_y=*/false, trans_x, trans_y,
+                                         bcast, &output_reshaped);
     return Status::OK();
   }
 
@@ -924,13 +905,12 @@ template <typename Device, typename T>
 class EinsumOp : public OpKernel {
  public:
   explicit EinsumOp(OpKernelConstruction* c) : OpKernel(c) {
-    string equation;
-    OP_REQUIRES_OK(c, c->GetAttr("equation", &equation));
-    OP_REQUIRES_OK(c,
-                   EinsumHelper::ParseEquation(
-                       equation, &input_labels_, &output_labels_, &label_types_,
-                       &input_label_counts_, &output_label_counts_,
-                       &input_has_ellipsis_, &output_has_ellipsis_));
+    OP_REQUIRES_OK(c, c->GetAttr("equation", &equation_));
+    OP_REQUIRES_OK(
+        c, EinsumHelper::ParseEquation(
+               equation_, &input_labels_, &output_labels_, &label_types_,
+               &input_label_counts_, &output_label_counts_,
+               &input_has_ellipsis_, &output_has_ellipsis_));
   }
 
   void Compute(OpKernelContext* ctx) override {
@@ -1049,7 +1029,19 @@ class EinsumOp : public OpKernel {
     ctx->set_output(0, output);
   }
 
+  string TraceString(OpKernelContext* ctx, bool verbose) override {
+    if (!verbose) {
+      return strings::StrCat(name_view(), ":", type_string_view(),
+                             "#equation=(", equation_, ")#");
+    } else {
+      string trace_args = GetTraceArgument(ctx);
+      return strings::StrCat(name_view(), ":", type_string_view(),
+                             "#equation=(", equation_, "),", trace_args, "#");
+    }
+  }
+
  private:
+  string equation_;
   OperandLabels input_labels_;
   Labels output_labels_;
   std::vector<EinsumHelper::DimensionType> label_types_;

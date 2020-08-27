@@ -3,7 +3,28 @@ syntax = "proto3";
 package tensorflow.profiler;
 
 import "google/protobuf/any.proto";
-import "tensorflow/core/profiler/protobuf/hardware_types.proto";
+import "tensorflow/core/profiler/protobuf/diagnostics.proto";
+
+// Generic hardware bottleneck.
+message BottleneckAnalysis {
+  // Percentage of step time that is spent on input.
+  double input_percent = 7;
+  // Indicates if input is a bottleneck. Possible values:  "host", "device",
+  // "both", or "unknown"
+  string input_classification = 1;
+  // A human-readable description of the input bottleneck.
+  string input_statement = 2;
+  // Indicates if kernel launching is a bottleneck. Possible values: "no",
+  // "moderate", "high".
+  string kernel_launch_classification = 3;
+  // A human-readable description of the kernel launching overhead.
+  string kernel_launch_statement = 4;
+  // Indicates if all other is a bottleneck. Possible values: "no", "moderate",
+  // "high".
+  string all_other_classification = 5;
+  // A human-readable description of the all other overhead.
+  string all_other_statement = 6;
+}
 
 // Used for both step duration and Op duration.
 message StepSummary {
@@ -80,6 +101,11 @@ message InputOpDetails {
 message InputPipelineAnalysisRecommendation {
   // A list of detailed recommendations.
   repeated string details = 1;
+  // An analysis of different types of bottlenecks. Can be unpacked into a
+  // BottleneckAnalysis.
+  google.protobuf.Any bottleneck_analysis = 2;
+  // A suggested of step to take next.
+  string summary_next_step = 3;
 }
 
 message GenericStepTimeBreakdown {
@@ -108,11 +134,13 @@ message GenericStepTimeBreakdown {
 
 message InputPipelineAnalysisResult {
   // Hardware type.
-  HardwareType hardware_type = 1;
+  string hardware_type = 9;
   // Summary of all step duration across all cores.
   StepSummary step_time_summary = 2;
   // Summary of all input-related stall as percentage of step duration.
   StepSummary input_percent_summary = 3;
+  // Overall percentage of step time that is waiting for input.
+  double overall_input_percent = 11;
   // Details of each step. Can be unpacked into a PerGenericStepDetails.
   repeated google.protobuf.Any step_details = 4;
   // The breakdown of the input processing time.
@@ -124,4 +152,7 @@ message InputPipelineAnalysisResult {
   // Breakdown of the step time. Can be unpacked into a
   // GenericStepTimeBreakdown.
   google.protobuf.Any step_time_breakdown = 8;
+  // Error and warning messages for diagnosing profiling issues.
+  Diagnostics diagnostics = 12;
+  reserved 1, 10;
 }

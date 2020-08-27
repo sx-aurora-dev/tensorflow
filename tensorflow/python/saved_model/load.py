@@ -22,25 +22,29 @@ import functools
 import os
 
 from tensorflow.core.protobuf import graph_debug_info_pb2
+from tensorflow.python.distribute import distribute_utils
 from tensorflow.python.distribute import distribution_strategy_context as ds_context
-from tensorflow.python.distribute import values as ds_values
 from tensorflow.python.eager import context
 from tensorflow.python.eager import function
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import custom_gradient
+from tensorflow.python.ops import lookup_ops
 from tensorflow.python.ops import resource_variable_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.saved_model import function_deserialization
+from tensorflow.python.saved_model import load_options
 from tensorflow.python.saved_model import load_v1_in_v2
 from tensorflow.python.saved_model import loader_impl
 from tensorflow.python.saved_model import nested_structure_coder
 from tensorflow.python.saved_model import revived_types
 from tensorflow.python.saved_model import utils_impl as saved_model_utils
+from tensorflow.python.training.saving import checkpoint_options
 from tensorflow.python.training.tracking import base
 from tensorflow.python.training.tracking import graph_view
 from tensorflow.python.training.tracking import tracking
@@ -86,10 +90,11 @@ class _WrapperFunction(function.ConcreteFunction):
   def _call_flat(self, args, captured_inputs, cancellation_manager=None):
 
     def get_in_replica_handle(x):
-      return x.handle if ds_values.is_distributed_variable(x) else x
+      return x.handle if distribute_utils.is_distributed_variable(x) else x
 
     def get_cross_replica_handle(x):
-      return _unused_handle() if ds_values.is_distributed_variable(x) else x
+      return _unused_handle() if distribute_utils.is_distributed_variable(x)   \
+          else x
 
     if ds_context.get_replica_context() is not None:  # in-replica context
       captured_inputs = list(map(get_in_replica_handle, captured_inputs))
@@ -103,7 +108,8 @@ class _WrapperFunction(function.ConcreteFunction):
 class Loader(object):
   """Helper class to load an object-based SavedModel."""
 
-  def __init__(self, object_graph_proto, saved_model_proto, export_dir):
+  def __init__(self, object_graph_proto, saved_model_proto, export_dir,
+               ckpt_options):
     meta_graph = saved_model_proto.meta_graphs[0]
     self._asset_file_def = meta_graph.asset_file_def
     self._operation_attributes = {
@@ -113,6 +119,7 @@ class Loader(object):
     self._concrete_functions = (
         function_deserialization.load_function_def_library(
             meta_graph.graph_def.library))
+    self._checkpoint_options = ckpt_options
 
     for name, concrete_function in self._concrete_functions.items():
       # Wrap all the concrete function so that they are capable of dealing with
@@ -120,12 +127,6 @@ class Loader(object):
       self._concrete_functions[name] = _WrapperFunction(concrete_function)
 
     self._load_all()
-    # TODO(b/124045874): There are limitations with functions whose captures
-    # trigger other functions to be executed. For now it is only guaranteed to
-    # work if the captures of a function only trigger functions without
-    # captures.
-    self._setup_functions_structures()
-    self._setup_functions_captures()
     self._restore_checkpoint()
 
     for node in self._nodes:
@@ -133,6 +134,35 @@ class Loader(object):
         init_op = node._initialize()  # pylint: disable=protected-access
         if not context.executing_eagerly():
           ops.add_to_collection(ops.GraphKeys.TABLE_INITIALIZERS, init_op)
+
+  def _load_all(self):
+    """Loads all nodes and functions from the SavedModel and their edges."""
+    self._load_nodes()
+    self._load_edges()
+    # TODO(b/124045874): There are limitations with functions whose captures
+    # trigger other functions to be executed. For now it is only guaranteed to
+    # work if the captures of a function only trigger functions without
+    # captures.
+    self._setup_functions_structures()
+    self._setup_functions_captures()
+
+  def _load_edges(self):
+    """Adds edges from objects to other objects and functions."""
+    for node_id, object_proto in enumerate(self._proto.nodes):
+      self._add_object_graph_edges(object_proto, node_id)
+
+  def _add_object_graph_edges(self, proto, node_id):
+    """Adds edges from an object to its children."""
+    obj = self._nodes[node_id]
+    setter = self._node_setters[node_id]
+
+    for reference in proto.children:
+      setter(obj, reference.local_name, self._nodes[reference.node_id])
+      # Note: if an object has an attribute `__call__` add a class method
+      # that allows `obj()` syntax to work. This is done per-instance to
+      # allow `callable` to be used to find out if an object is callable.
+      if reference.local_name == "__call__" and not callable(obj):
+        setattr(type(obj), "__call__", _call_attribute)
 
   def _setup_functions_structures(self):
     """Setup structure for inputs and outputs of restored functions."""
@@ -149,12 +179,12 @@ class Loader(object):
       # The original_outputs here had Tensors converted to TensorSpecs, so
       # the restored function's structured_outputs field will not be
       # exactly the same. Fortunately the repacking logic cares only about
-      # the structure.
-      # TODO(vbardiovsky): Should we just replicate the structures, with
-      # Nones instead of real objects?
+      # the structure; and the unpacking logic cares only about structure
+      # and types.
       concrete_function._func_graph.structured_outputs = original_outputs  # pylint: disable=protected-access
       concrete_function._func_graph.structured_input_signature = (  # pylint: disable=protected-access
           coder.decode_proto(proto.canonicalized_input_signature))
+      concrete_function._initialize_function_spec()  # pylint: disable=protected-access
 
   def _setup_functions_captures(self):
     """Setup captures and variables in restored functions."""
@@ -177,7 +207,7 @@ class Loader(object):
       if bound_inputs:
         for bound_input, internal_capture in zip(
             bound_inputs, concrete_function.inputs[-len(bound_inputs):]):
-          if ds_values.is_distributed_variable(bound_input):
+          if distribute_utils.is_distributed_variable(bound_input):
             concrete_function.graph.capture_distributed_variable(
                 bound_input, internal_capture)
           else:
@@ -203,7 +233,7 @@ class Loader(object):
     """Resolves a node id into a tensor to be captured for a function."""
     with ops.init_scope():
       obj = self._nodes[node_id]
-      if ds_values.is_distributed_variable(obj):
+      if distribute_utils.is_distributed_variable(obj):
         return obj
       elif resource_variable_ops.is_resource_variable(obj):
         return obj.handle
@@ -216,8 +246,8 @@ class Loader(object):
         return obj.resource_handle
       raise ValueError("Can't convert node %s to tensor" % (type(obj)))
 
-  def _load_all(self):
-    """Load all saved objects and wire their properties."""
+  def _load_nodes(self):
+    """Load all saved objects."""
     # Maps from node ids to recreated objects
     nodes = {}
     # Maps from node ids to setter functions (same signature as setattr) for
@@ -237,7 +267,7 @@ class Loader(object):
         # Defer recreating slot variables so we can use the public Optimizer
         # interface.
         continue
-      node, setter = self._recreate(proto)
+      node, setter = self._recreate(proto, node_id)
       nodes[node_id] = node
       node_setters[node_id] = setter
 
@@ -254,21 +284,23 @@ class Loader(object):
         nodes[slot_variable_proto.slot_variable_node_id] = slot_variable
         node_setters[slot_variable_proto.slot_variable_node_id] = setattr
 
-    self._nodes = []
+    self._nodes = [nodes[node_id] for node_id in range(len(self._proto.nodes))]
+    self._node_setters = node_setters
 
-    # After creating the objects, construct the edges between the objects.
-    for node_id, object_proto in enumerate(self._proto.nodes):
-      obj = nodes[node_id]
-      setter = node_setters[node_id]
-      self._nodes.append(obj)
+  @property
+  def _expect_partial_checkpoint(self):
+    """Whether to expect that some objects aren't loaded.
 
-      for reference in object_proto.children:
-        setter(obj, reference.local_name, nodes[reference.node_id])
-        # Note: if an object has an attribute `__call__` add a class method
-        # that allows `obj()` syntax to work. This is done per-instance to
-        # allow `callable` to be used to find out if an object is callable.
-        if reference.local_name == "__call__" and not callable(obj):
-          setattr(type(obj), "__call__", _call_attribute)
+    This should be set to True in subclasses of the Loader class which generate
+    a trackable object with an object graph that is different from the graph
+    in the SavedModel. Setting this property to True suppresses the warnings
+    that are printed out when there are unused parts of the checkpoint or
+    object.
+
+    Returns:
+      boolean
+    """
+    return False
 
   def _restore_checkpoint(self):
     """Load state from checkpoint into the deserialized objects."""
@@ -278,7 +310,11 @@ class Loader(object):
     saver = util.TrackableSaver(graph_view.ObjectGraphView(self.get(0)))
     with ops.device("CPU"):
       saver._file_prefix_placeholder = constant_op.constant(variables_path)
-    load_status = saver.restore(variables_path)
+    if self._expect_partial_checkpoint:
+      load_status = saver.restore(variables_path,
+                                  self._checkpoint_options).expect_partial()
+    else:
+      load_status = saver.restore(variables_path, self._checkpoint_options)
     load_status.assert_existing_objects_matched()
     checkpoint = load_status._checkpoint
 
@@ -295,7 +331,14 @@ class Loader(object):
       restore_ops = position.restore_ops()
       if restore_ops:
         if resource_variable_ops.is_resource_variable(obj):
-          obj._initializer_op = restore_ops
+          if len(restore_ops) == 1:
+            obj._initializer_op = restore_ops[0]
+          else:
+            obj._initializer_op = control_flow_ops.group(*restore_ops)
+        elif isinstance(obj, lookup_ops.LookupInterface):
+          # We don't need to check for eager execution here, since this code
+          # path should only be taken if we are restoring in graph mode.
+          ops.add_to_collection(ops.GraphKeys.TABLE_INITIALIZERS, restore_ops)
         else:
           raise NotImplementedError(
               ("Missing functionality to restore state of object "
@@ -317,10 +360,11 @@ class Loader(object):
   def get(self, node_id):
     return self._nodes[node_id]
 
-  def _recreate(self, proto):
+  def _recreate(self, proto, node_id):
     """Creates a Python object from a SavedObject protocol buffer."""
     factory = {
-        "user_object": lambda: self._recreate_user_object(proto.user_object),
+        "user_object": (
+            lambda: self._recreate_user_object(proto.user_object, node_id)),
         "asset": lambda: self._recreate_asset(proto.asset),
         "function": lambda: self._recreate_function(proto.function),
         "bare_concrete_function": functools.partial(
@@ -335,15 +379,15 @@ class Loader(object):
       raise ValueError("Unknown SavedObject type: %r" % kind)
     return factory[kind]()
 
-  def _recreate_user_object(self, proto):
+  def _recreate_user_object(self, proto, node_id):
     """Instantiates a SavedUserObject."""
     looked_up = revived_types.deserialize(proto)
     if looked_up is None:
-      return self._recreate_base_user_object(proto)
+      return self._recreate_base_user_object(proto, node_id)
     return looked_up
 
-  def _recreate_base_user_object(self, proto):
-    del proto
+  def _recreate_base_user_object(self, proto, node_id):
+    del proto, node_id
     # Note: each user object has its own class. This allows making each one
     # individually callable by adding a `__call__` method to the classes of
     # the objects instances that have a `__call__` property.
@@ -453,7 +497,7 @@ def _call_attribute(instance, *args, **kwargs):
 
 
 @tf_export("saved_model.load", v1=["saved_model.load_v2"])
-def load(export_dir, tags=None):
+def load(export_dir, tags=None, options=None):
   """Load a SavedModel from `export_dir`.
 
   Signatures associated with the SavedModel are available as functions:
@@ -531,6 +575,8 @@ def load(export_dir, tags=None):
     tags: A tag or sequence of tags identifying the MetaGraph to load. Optional
       if the SavedModel contains a single MetaGraph, as for those exported from
       `tf.saved_model.save`.
+    options: Optional, `tf.saved_model.LoadOptions` object that specifies
+      options for loading.
 
   Returns:
     A trackable object with a `signatures` attribute mapping from signature
@@ -541,11 +587,12 @@ def load(export_dir, tags=None):
   Raises:
     ValueError: If `tags` don't match a MetaGraph in the SavedModel.
   """
-  return load_internal(export_dir, tags)
+  return load_internal(export_dir, tags, options)
 
 
-def load_internal(export_dir, tags=None, loader_cls=Loader):
+def load_internal(export_dir, tags=None, options=None, loader_cls=Loader):
   """Loader implementation."""
+  options = options or load_options.LoadOptions()
   if tags is not None and not isinstance(tags, set):
     # Supports e.g. tags=SERVING and tags=[SERVING]. Sets aren't considered
     # sequences for nest.flatten, so we put those through as-is.
@@ -564,10 +611,20 @@ def load_internal(export_dir, tags=None, loader_cls=Loader):
            "it, pass 'None', or pass matching tags.")
           .format(export_dir, meta_graph_def.meta_info_def.tags, tags))
     object_graph_proto = meta_graph_def.object_graph_def
+
+    ckpt_options = checkpoint_options.CheckpointOptions(
+        experimental_io_device=options.experimental_io_device)
     with ops.init_scope():
-      loader = loader_cls(object_graph_proto,
-                          saved_model_proto,
-                          export_dir)
+      try:
+        loader = loader_cls(object_graph_proto, saved_model_proto, export_dir,
+                            ckpt_options)
+      except errors.NotFoundError as err:
+        raise FileNotFoundError(
+            str(err) + "\n If trying to load on a different device from the "
+            "computational device, consider using setting the "
+            "`experimental_io_device` option on tf.saved_model.LoadOptions "
+            "to the io_device such as '/job:localhost'."
+        )
       root = loader.get(0)
       if isinstance(loader, Loader):
         root.graph_debug_info = loader.adjust_debug_info_func_names(debug_info)

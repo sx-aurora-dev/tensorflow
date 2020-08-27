@@ -159,6 +159,18 @@ class FileIoTest(test.TestCase):
     file_io.delete_recursively(dir_path)
     self.assertFalse(file_io.file_exists(os.path.join(dir_path, "file3.txt")))
 
+  def testGetMatchingFilesWhenParentDirContainsParantheses(self):
+    dir_path = os.path.join(self._base_dir, "dir_(special)")
+    file_io.create_dir(dir_path)
+    files = ["file1.txt", "file(2).txt"]
+    for name in files:
+      file_path = os.path.join(dir_path, name)
+      file_io.FileIO(file_path, mode="w").write("testing")
+    expected_match = [os.path.join(dir_path, name) for name in files]
+    glob_pattern = os.path.join(dir_path, "*")
+    self.assertItemsEqual(
+        file_io.get_matching_files(glob_pattern), expected_match)
+
   def testCreateRecursiveDir(self):
     dir_path = os.path.join(self._base_dir, "temp_dir/temp_dir1/temp_dir2")
     file_io.recursive_create_dir(dir_path)
@@ -376,6 +388,18 @@ class FileIoTest(test.TestCase):
     self.assertEqual("testing2\n", f.read(9))
     self.assertEqual("t", f.read(1))
     self.assertEqual("esting3\n\ntesting5", f.read())
+
+  def testReadErrorReacquiresGil(self):
+    file_path = os.path.join(self._base_dir, "temp_file")
+    with file_io.FileIO(file_path, mode="r+") as f:
+      f.write("testing1\ntesting2\ntesting3\n\ntesting5")
+    with self.assertRaises(errors.InvalidArgumentError):
+      # At present, this is sufficient to convince ourselves that the change
+      # fixes the problem. That is, this test will seg fault without the change,
+      # and pass with it. Unfortunately, this is brittle, as it relies on the
+      # Python layer to pass the argument along to the wrapped C++ without
+      # checking the argument itself.
+      f.read(-2)
 
   def testTell(self):
     file_path = os.path.join(self._base_dir, "temp_file")
@@ -616,6 +640,9 @@ class FileIoTest(test.TestCase):
     with gfile.GFile(filename, "rb") as f:
       info = np.load(f, allow_pickle=True)
     _ = [i for i in info.items()]
+
+  def testHasAtomicMove(self):
+    self.assertTrue(file_io.has_atomic_move("/a/b/c"))
 
 
 if __name__ == "__main__":

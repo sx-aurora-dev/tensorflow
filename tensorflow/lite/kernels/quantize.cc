@@ -21,6 +21,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
 #include "tensorflow/lite/kernels/internal/quantization_util.h"
 #include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
+#include "tensorflow/lite/kernels/internal/reference/requantize.h"
 #include "tensorflow/lite/kernels/internal/tensor.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/internal/types.h"
@@ -117,7 +118,8 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   } else {
     // Requantize use case.
     if (input->type == kTfLiteInt16) {
-      TF_LITE_ENSURE(context, output->type == kTfLiteInt8);
+      TF_LITE_ENSURE(
+          context, output->type == kTfLiteInt8 || output->type == kTfLiteInt16);
     } else {
       TF_LITE_ENSURE(context,
                      input->type == kTfLiteInt8 || input->type == kTfLiteUInt8);
@@ -174,7 +176,7 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
       }
     }
     case kTfLiteInt16: {
-      // int16 to int8.
+      // int16 to int8 or int16.
       switch (output->type) {
         case kTfLiteInt8:
           Requantize<kernel_type>(GetTensorData<int16_t>(input),
@@ -183,6 +185,14 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
                                   input->params.zero_point,
                                   output->params.zero_point,
                                   GetTensorData<int8_t>(output));
+          return kTfLiteOk;
+        case kTfLiteInt16:
+          Requantize<kernel_type>(GetTensorData<int16_t>(input),
+                                  MatchingFlatSize(input_shape, output_shape),
+                                  data->output_multiplier, data->output_shift,
+                                  input->params.zero_point,
+                                  output->params.zero_point,
+                                  GetTensorData<int16_t>(output));
           return kTfLiteOk;
         default:
           ReportError(context, input->type, output->type);

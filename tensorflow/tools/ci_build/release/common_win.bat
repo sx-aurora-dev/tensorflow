@@ -28,9 +28,9 @@ SET PATH=%PATH%;C:\%PYTHON_DIRECTORY%
 
 %PIP_EXE% install setuptools --upgrade
 %PIP_EXE% install future>=0.17.1 --no-deps
-%PIP_EXE% install tf-estimator-nightly --no-deps
+%PIP_EXE% install --ignore-installed --force-reinstall --upgrade tf-estimator-nightly --no-deps
 %PIP_EXE% install tb-nightly --no-deps
-%PIP_EXE% install numpy --upgrade --no-deps
+%PIP_EXE% install numpy==1.16.0 --upgrade --no-deps
 %PIP_EXE% install opt_einsum --upgrade
 %PIP_EXE% install pandas --upgrade --no-deps
 %PIP_EXE% install protobuf --upgrade --no-deps
@@ -38,11 +38,9 @@ SET PATH=%PATH%;C:\%PYTHON_DIRECTORY%
 %PIP_EXE% install wrapt --upgrade --no-deps
 
 IF "%PYTHON_DIRECTORY%"=="Python37" (
-    %PIP_EXE% install astor==0.7.1
     %PIP_EXE% install absl-py==0.5.0
     %PIP_EXE% install colorama==0.3.9
     %PIP_EXE% install cycler==0.10.0
-    %PIP_EXE% install gast==0.3.2
     %PIP_EXE% install jedi==0.11.1
     %PIP_EXE% install oauth2client==4.1.2
     %PIP_EXE% install portpicker==1.2.0
@@ -54,16 +52,17 @@ IF "%PYTHON_DIRECTORY%"=="Python37" (
 )
 
 @REM TODO(amitpatankar): this is just a quick fix so that windows build doesn't
-@REM break with gast upgrade to 0.3.2. Need to figure out the right way to
+@REM break with gast upgrade to 0.3.3. Need to figure out the right way to
 @REM handle this case.
-%PIP_EXE% install gast==0.3.2
+%PIP_EXE% install gast==0.3.3
+%PIP_EXE% install astunparse==1.6.3
 
 :: Set cuda related environment variables. If we are not using CUDA, these are not used.
 IF NOT DEFINED TF_CUDA_VERSION (
   SET TF_CUDA_VERSION=10.1
 )
 SET TF_CUDNN_VERSION=7
-SET TF_CUDA_COMPUTE_CAPABILITIES=3.5,3.7,5.2,6.0,6.1,7.0
+SET TF_CUDA_COMPUTE_CAPABILITIES=sm_35,sm_37,sm_52,sm_60,sm_61,compute_70
 SET CUDA_TOOLKIT_PATH=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v%TF_CUDA_VERSION%
 SET CUDNN_INSTALL_PATH=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v%TF_CUDA_VERSION%
 SET PATH=%CUDA_TOOLKIT_PATH%\extras\CUPTI\libx64;%PATH%
@@ -74,7 +73,7 @@ SET PATH=%CUDNN_INSTALL_PATH%\bin;%PATH%
 @REM Setup Bazel
 @REM
 :: Download Bazel from github and make sure its found in PATH.
-SET BAZEL_VERSION=1.2.1
+SET BAZEL_VERSION=3.1.0
 md C:\tools\bazel\
 wget -q https://github.com/bazelbuild/bazel/releases/download/%BAZEL_VERSION%/bazel-%BAZEL_VERSION%-windows-x86_64.exe -O C:/tools/bazel/bazel.exe
 SET PATH=C:\tools\bazel;%PATH%

@@ -27,7 +27,7 @@ from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import test_combinations
-from tensorflow.python.keras.mixed_precision.experimental import autocast_variable
+from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
@@ -53,7 +53,7 @@ class LossScaleGradientTapeTest(test.TestCase, parameterized.TestCase):
   def _run_with_strategy(self, run_fn, strategy, use_tf_function=False):
     """Runs `run_fn` under the DistributionStrategy `strategy`.
 
-    Runs `run_fn` with `strategy.experimental_run_v2`. Returns a list of the
+    Runs `run_fn` with `strategy.run`. Returns a list of the
     return values of `run_fn`, one per replica.
 
     Args:
@@ -66,7 +66,7 @@ class LossScaleGradientTapeTest(test.TestCase, parameterized.TestCase):
       replica. If a nested structure is returned from `run_fn`, returns a
       nested structure, where each element is a list of tensors.
     """
-    strategy_fn = lambda: strategy.experimental_run_v2(run_fn)
+    strategy_fn = lambda: strategy.run(run_fn)
     if use_tf_function:
       strategy_fn = def_function.function(strategy_fn)
 
@@ -74,7 +74,7 @@ class LossScaleGradientTapeTest(test.TestCase, parameterized.TestCase):
 
     def convert_tensor_to_list(tensor):
       if isinstance(tensor, values.DistributedValues):
-        return tensor.values
+        return strategy.experimental_local_results(tensor)
       else:
         return [tensor]
     return nest.map_structure(convert_tensor_to_list, results)
@@ -132,28 +132,24 @@ class LossScaleGradientTapeTest(test.TestCase, parameterized.TestCase):
     with strategy.scope():
       x1 = variables.Variable(1.0)  # Distributed variable
       x2 = variables.Variable([1.0, 2.0])  # Distributed non-scalar variable
-      # Distributed AutoCastVariable
-      x3 = autocast_variable.create_autocast_variable(variables.Variable(2.0))
-    x4 = variables.Variable(2.0)  # Non-distributed variable
-    x5 = constant_op.constant(2.0)  # Tensor
+    x3 = variables.Variable(2.0)  # Non-distributed variable
+    x4 = constant_op.constant(2.0)  # Tensor
     def run_fn():
       with lsgt.LossScaleGradientTape(loss_scale) as g:
-        g.watch(x5)
-        y = x1 * x2 * x3 * x4 * x5
-      return g.gradient(y, [x1, x2, x3, x4, x5])
-    x1g, x2g, x3g, x4g, x5g = self._run_with_strategy(run_fn, strategy,
-                                                      use_tf_function)
+        g.watch(x4)
+        y = x1 * x2 * x3 * x4
+      return g.gradient(y, [x1, x2, x3, x4])
+    x1g, x2g, x3g, x4g = self._run_with_strategy(run_fn, strategy,
+                                                 use_tf_function)
     self.assertEqual(loss_scale(), 32)
     for dy_dx1 in x1g:
-      self.assertEqual(dy_dx1, 24.0)
+      self.assertEqual(dy_dx1, 12.0)
     for dy_dx2 in x2g:
-      self.assertAllEqual(dy_dx2, [8.0, 8.0])
+      self.assertAllEqual(dy_dx2, [4.0, 4.0])
     for dy_dx3 in x3g:
-      self.assertEqual(dy_dx3, 12.0)
+      self.assertEqual(dy_dx3, 6.0)
     for dy_dx4 in x4g:
-      self.assertEqual(dy_dx4, 12.0)
-    for dy_dx5 in x5g:
-      self.assertEqual(dy_dx5, 12.0)
+      self.assertEqual(dy_dx4, 6.0)
 
   @test_combinations.generate(test_combinations.combine(
       loss_scale=[loss_scale_module.FixedLossScale,
@@ -487,6 +483,33 @@ class LossScaleGradientTapeTest(test.TestCase, parameterized.TestCase):
     self.assertEqual(self.evaluate(loss_scale()), 32.0)
     for dy_dx in dy_dx_list:
       self.assertAllClose(self.evaluate(dy_dx), 3.0)
+
+  @test_combinations.generate(
+      test_combinations.combine(
+          loss_scale=[
+              loss_scale_module.FixedLossScale,
+              loss_scale_module.DynamicLossScale
+          ],
+          strategy_fn=[default_strategy_fn, create_mirrored_strategy],
+          use_tf_function=[True, False]))
+  def test_transpose(self, loss_scale, strategy_fn, use_tf_function):
+    # Calling tf.transpose insde a tf.function can cause static shape
+    # information to be lost. This tests that LossScaleGradientTape can handle
+    # this.
+    loss_scale = loss_scale(32)
+    strategy = strategy_fn()
+    with strategy.scope():
+      x = variables.Variable(array_ops.ones((2, 3)))
+
+    def run_fn():
+      with lsgt.LossScaleGradientTape(loss_scale) as g:
+        y = array_ops.transpose(x) * 2.
+      return g.gradient(y, x)
+
+    dy_dx_list = self._run_with_strategy(run_fn, strategy, use_tf_function)
+    self.assertEqual(loss_scale(), 32)
+    for dy_dx in dy_dx_list:
+      self.assertAllEqual(dy_dx, np.full((2, 3), 2.))
 
   def test_passing_non_loss_scale_raises_error(self):
     with self.assertRaisesRegexp(

@@ -34,8 +34,10 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import bitwise_ops
 from tensorflow.python.ops import gen_math_ops
+from tensorflow.python.ops import gen_random_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import random_ops
+from tensorflow.python.ops import special_math_ops
 
 # TODO(phawkins): provide wrappers for all XLA operators. Currently the missing
 # ops include:
@@ -102,8 +104,8 @@ sign = _unary_op(math_ops.sign)
 tanh = _unary_op(math_ops.tanh)
 
 # Bessel
-bessel_i0e = _unary_op(math_ops.bessel_i0e)
-bessel_i1e = _unary_op(math_ops.bessel_i1e)
+bessel_i0e = _unary_op(special_math_ops.bessel_i0e)
+bessel_i1e = _unary_op(special_math_ops.bessel_i1e)
 
 # Binary operators
 
@@ -198,6 +200,11 @@ pow = _broadcasting_binary_op(math_ops.pow)
 shift_left = _broadcasting_binary_op(bitwise_ops.left_shift)
 shift_right_logical = _broadcasting_binary_op(_shift_right_logical_helper)
 shift_right_arithmetic = _broadcasting_binary_op(_shift_right_arithmetic_helper)
+
+igamma = _broadcasting_binary_op(math_ops.igamma)
+igamma_grad_a = _broadcasting_binary_op(gen_math_ops.igamma_grad_a)
+random_gamma_grad = _broadcasting_binary_op(gen_random_ops.random_gamma_grad)
+igammac = _broadcasting_binary_op(math_ops.igammac)
 
 
 def _binary_op(fn):
@@ -412,6 +419,26 @@ def _sharding_grad(op, grad):
   return [grad]
 
 
+spmd_full_to_shard_shape = gen_xla_ops.xla_spmd_full_to_shard_shape
+spmd_shard_to_full_shape = gen_xla_ops.xla_spmd_shard_to_full_shape
+
+
+@ops.RegisterGradient("XlaSpmdFullToShardShape")
+def _spmd_full_to_shard_shape_grad(op, grad):
+  s2f = gen_xla_ops.xla_spmd_shard_to_full_shape(
+      grad,
+      manual_sharding=op.get_attr("manual_sharding"),
+      full_shape=op.inputs[0].shape.as_list())
+  return [s2f]
+
+
+@ops.RegisterGradient("XlaSpmdShardToFullShape")
+def _spmd_shard_to_full_shape_grad(op, grad):
+  f2s = gen_xla_ops.xla_spmd_full_to_shard_shape(
+      grad, manual_sharding=op.get_attr("manual_sharding"))
+  return [f2s]
+
+
 sort = gen_xla_ops.xla_sort
 key_value_sort = gen_xla_ops.xla_key_value_sort
 while_loop = gen_xla_ops.xla_while
@@ -439,4 +466,3 @@ def scatter(operand, scatter_indices, updates, update_computation,
       dimension_numbers=dimension_numbers.SerializeToString(),
       indices_are_sorted=indices_are_sorted,
       name=name)
-

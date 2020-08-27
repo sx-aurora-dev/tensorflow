@@ -2,6 +2,8 @@
 # TensorFlow SavedModel.
 
 load("//tensorflow:tensorflow.bzl", "cuda_py_test")
+
+# buildifier: disable=same-origin-load
 load("//tensorflow:tensorflow.bzl", "tf_py_test")
 
 package(
@@ -24,6 +26,7 @@ py_library(
         ":load",
         ":loader",
         ":main_op",
+        ":method_name_updater",
         ":save",
         ":signature_constants",
         ":signature_def_utils",
@@ -309,6 +312,7 @@ py_library(
         "//tensorflow/python/eager:context",
         "//tensorflow/python/eager:def_function",
         "//tensorflow/python/eager:function",
+        "//tensorflow/python/training/saving:checkpoint_options",
         "//tensorflow/python/training/saving:functional_saver",
         "//tensorflow/python/training/tracking",
         "//tensorflow/python/training/tracking:base",
@@ -344,6 +348,7 @@ py_library(
     deps = [
         ":constants",
         ":function_deserialization",
+        ":load_options",
         ":load_v1_in_v2",
         ":loader",
         ":nested_structure_coder",
@@ -359,6 +364,7 @@ py_library(
         "//tensorflow/python:util",
         "//tensorflow/python:variables",
         "//tensorflow/python/distribute:distribute_lib",
+        "//tensorflow/python/distribute:distribute_utils",
         "//tensorflow/python/distribute:values",
         "//tensorflow/python/training/tracking",
         "//tensorflow/python/training/tracking:base",
@@ -514,5 +520,36 @@ py_library(
     srcs = ["save_options.py"],
     deps = [
         "@six_archive//:six",
+    ],
+)
+
+py_library(
+    name = "load_options",
+    srcs = ["load_options.py"],
+    deps = [
+    ],
+)
+
+py_library(
+    name = "method_name_updater",
+    srcs = ["method_name_updater.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":constants",
+        ":loader",
+        "//tensorflow/python:lib",
+        "//tensorflow/python:platform",
+        "//tensorflow/python:util",
+    ],
+)
+
+tf_py_test(
+    name = "method_name_updater_test",
+    srcs = ["method_name_updater_test.py"],
+    deps = [
+        ":method_name_updater",
+        "//tensorflow/core:protos_all_py",
+        "//tensorflow/python:framework",
+        "//tensorflow/python/eager:test",
     ],
 )

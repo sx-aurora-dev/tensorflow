@@ -61,7 +61,7 @@ class StatusLogSink : public TFLogSink {
     });
   }
 
-  void GetMessages(std::vector<std::string>* logs) LOCKS_EXCLUDED(mu_) {
+  void GetMessages(std::vector<std::string>* logs) TF_LOCKS_EXCLUDED(mu_) {
     mutex_lock lock(mu_);
 
     for (auto& msg : messages_) {
@@ -69,12 +69,14 @@ class StatusLogSink : public TFLogSink {
     }
   }
 
-  void Send(const TFLogEntry& entry) override LOCKS_EXCLUDED(mu_) {
+  void Send(const TFLogEntry& entry) override TF_LOCKS_EXCLUDED(mu_) {
     if (entry.log_severity() < absl::LogSeverity::kWarning) return;
 
     mutex_lock lock(mu_);
     messages_.emplace_back(entry.ToString());
-    if (messages_.size() > num_messages_) messages_.pop_front();
+    if (messages_.size() > static_cast<size_t>(num_messages_)) {
+      messages_.pop_front();
+    }
   }
 
  private:
@@ -82,7 +84,7 @@ class StatusLogSink : public TFLogSink {
   // for allowing repeated/concurrent calls to enable()
   absl::once_flag flag_;
   int num_messages_ = 0;
-  std::deque<std::string> messages_ GUARDED_BY(mu_);
+  std::deque<std::string> messages_ TF_GUARDED_BY(mu_);
 };
 
 }  // namespace
