@@ -217,6 +217,8 @@ public:
         OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape));
         OP_REQUIRES_OK(ctx, ctx->input("b", &b));
 
+//	printf("VESparseTensorDenseMatMulOp\n");
+
 #if 0
         // Check that the dimensions of the two matrices are valid.
         OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(b->shape()),
@@ -346,6 +348,7 @@ public:
 
         }
 
+//	printf("VESparseTensorDenseMatMulOp\n");
 
 
 

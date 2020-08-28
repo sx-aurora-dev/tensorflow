@@ -106,7 +106,7 @@ public:
         const Tensor* shape;
 
 
-                printf("ConvertVESparseTensorOp compute ve: flag %d\n",convert_flag);
+        //        printf("ConvertVESparseTensorOp compute ve: flag %d\n",convert_flag);
         //        fflush(stdin);
 
 
@@ -186,6 +186,7 @@ public:
         }
         //convert_flag = false;
 
+        //printf("ConvertVESparseTensorOp compute ve: end\n");
     }
 private:
     bool convert_flag;

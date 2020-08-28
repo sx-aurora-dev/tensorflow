@@ -6945,10 +6945,6 @@ def set_int_list_attr(op, attr_name, ints):
 
 
 
-"""
-from tensorflow.python.ops import sparse_ops
-
-"""
 @tf_export(v1=["convert_to_ve_sparse_tensor"])
 
 def convert_to_ve_sparse_tensor(indices,values,dense_shape):
@@ -6957,6 +6953,7 @@ def convert_to_ve_sparse_tensor(indices,values,dense_shape):
 
 
 def internal_convert_to_ve_sparse_tensor(indices,values,dense_shape):
+  from tensorflow.python.ops import sparse_ops
   return sparse_ops.convert_ve_sparse_tensor_imp(indices,values,dense_shape)
 
 

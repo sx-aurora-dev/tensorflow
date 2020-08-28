@@ -125,7 +125,6 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
       ValueError: When building an eager SparseTensor if `dense_shape` is
         unknown or contains unknown elements (None or -1).
     """
-#<<<<<<< HEAD
     
     if isinstance(indices, tensor_spec.TensorSpec):
       if not isinstance(values, tensor_spec.TensorSpec):
@@ -143,21 +142,8 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
          values = ops.internal_convert_to_tensor(values, name="values")
          dense_shape = ops.convert_to_tensor(
              dense_shape, name="dense_shape", dtype=dtypes.int64)
+         dense_shape_default = tensor_util.constant_value_as_shape(dense_shape)
     
-#=======
-    """
-    with ops.name_scope(None, "SparseTensor", [indices, values, dense_shape]):
-      indices = ops.convert_to_tensor(
-          indices, name="indices", dtype=dtypes.int64)
-      # TODO(touts): Consider adding mutable_values() when 'values'
-      # is a VariableOp and updating users of SparseTensor.
-      values = ops.convert_to_tensor(values, name="values")
-
-      dense_shape = ops.convert_to_tensor(
-          dense_shape, name="dense_shape", dtype=dtypes.int64)
-      dense_shape_default = tensor_util.constant_value_as_shape(dense_shape)
-   """ 
-#>>>>>>> develop
 
     self._indices = indices
     self._values = values
