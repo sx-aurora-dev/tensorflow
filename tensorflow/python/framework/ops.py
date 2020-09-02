@@ -79,7 +79,6 @@ from tensorflow.python.util.lazy_loader import LazyLoader
 from tensorflow.python.util.tf_export import kwarg_only
 from tensorflow.python.util.tf_export import tf_export
 
-
 ag_ctx = LazyLoader(
     "ag_ctx", globals(),
     "tensorflow.python.autograph.core.ag_ctx")
@@ -6913,6 +6912,7 @@ def _reconstruct_sequence_inputs(op_def, inputs, attrs):
   assert i == len(inputs)
   return grouped_inputs
 
+
 class _TensorIterator(object):
   """Iterates over the leading dim of a Tensor. Performs no error checks."""
 
@@ -6939,29 +6939,12 @@ def set_int_list_attr(op, attr_name, ints):
   ints_list = attr_value_pb2.AttrValue.ListValue(i=ints)
   op._set_attr(attr_name, attr_value_pb2.AttrValue(list=ints_list))  # pylint:disable=protected-access
 
-
-
-
-
-
-
 @tf_export(v1=["convert_to_ve_sparse_tensor"])
 
 def convert_to_ve_sparse_tensor(indices,values,dense_shape):
   return internal_convert_to_ve_sparse_tensor(indices,values,dense_shape)
 
-
-
 def internal_convert_to_ve_sparse_tensor(indices,values,dense_shape):
   from tensorflow.python.ops import sparse_ops
   return sparse_ops.convert_ve_sparse_tensor_imp(indices,values,dense_shape)
-
-
-
-
-
-
-
-
-
 

@@ -2530,11 +2530,10 @@ def sparse_tensor_dense_matmul(sp_a,
       `return A*B`
   """
   # pylint: enable=line-too-long
-#<<<<<<< HEAD
   
-  sp_a = _convert_to_sparse_tensor(sp_a)
 
   if(sp_a.use_ve_sparse):
+      sp_a = _convert_to_sparse_tensor(sp_a)
       with ops.name_scope(name, "SparseTensorDenseMatMul",
                           [sp_a.ve_indices, sp_a.ve_values, b]) as name:
         b = ops.convert_to_tensor(b, name="b")
@@ -2547,19 +2546,6 @@ def sparse_tensor_dense_matmul(sp_a,
             adjoint_b=adjoint_b,
             use_ve_sparse=sp_a.use_ve_sparse)
 
-  with ops.name_scope(name, "SparseTensorDenseMatMul",
-                      [sp_a.indices, sp_a.values, b]) as name:
-    b = ops.convert_to_tensor(b, name="b")
-    return gen_sparse_ops.sparse_tensor_dense_mat_mul(
-        a_indices=sp_a.indices,
-        a_values=sp_a.values,
-        a_shape=sp_a.dense_shape,
-        b=b,
-        adjoint_a=adjoint_a,
-        adjoint_b=adjoint_b)
-  
-#=======
-  """
   if isinstance(b, sparse_tensor.SparseTensor) \
           or isinstance(b, sparse_tensor.SparseTensorValue):
     # We can do C * D where C is sparse but if we want to do A * B when
@@ -2585,9 +2571,6 @@ def sparse_tensor_dense_matmul(sp_a,
           b=b,
           adjoint_a=adjoint_a,
           adjoint_b=adjoint_b)
-
- """ 
-#>>>>>>> develop
 
 
 @tf_export("sparse.softmax", v1=["sparse.softmax", "sparse_softmax"])

@@ -124,19 +124,20 @@ REGISTER_OP("SparseTensorDenseMatMul")
       ShapeHandle unused;
       ShapeHandle b;
       ShapeHandle a_shape;
-      //TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &unused));  // a_indices
-      //TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &unused));  // a_values
+      bool use_ve_sparse;
+      TF_RETURN_IF_ERROR(c->GetAttr("use_ve_sparse", &use_ve_sparse));
+      if(use_ve_sparse){
+        TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &unused));  // a_indices
+        TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &unused));  // a_values
+      }
       TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(2, &a_shape));
       TF_RETURN_IF_ERROR(c->WithRank(a_shape, 2, &a_shape));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 2, &b));
 
       bool adjoint_a;
       bool adjoint_b;
-      bool use_ve_sparse;
       TF_RETURN_IF_ERROR(c->GetAttr("adjoint_a", &adjoint_a));
       TF_RETURN_IF_ERROR(c->GetAttr("adjoint_b", &adjoint_b));
-      TF_RETURN_IF_ERROR(c->GetAttr("use_ve_sparse", &use_ve_sparse));
-
 
       DimensionHandle output_right = c->Dim(b, adjoint_b ? 0 : 1);
       DimensionHandle output_left = c->Dim(a_shape, adjoint_a ? 1 : 0);
@@ -144,7 +145,6 @@ REGISTER_OP("SparseTensorDenseMatMul")
       DimensionHandle inner_right = c->Dim(b, adjoint_b ? 1 : 0);
       TF_RETURN_IF_ERROR(c->Merge(inner_left, inner_right, &unused_dim));
       c->set_output(0, c->Matrix(output_left, output_right));
-
       return Status::OK();
     });
 

@@ -125,25 +125,15 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
       ValueError: When building an eager SparseTensor if `dense_shape` is
         unknown or contains unknown elements (None or -1).
     """
-    
-    if isinstance(indices, tensor_spec.TensorSpec):
-      if not isinstance(values, tensor_spec.TensorSpec):
-        raise TypeError("Expected values to be a TensorSpec")
-      if not isinstance(dense_shape, tensor_spec.TensorSpec):
-        raise TypeError("Expected dense_shape to be a TensorSpec")
-      if indices.dtype != dtypes.int64 or dense_shape.dtype != dtypes.int64:
-        raise TypeError("indices and dense_shape must have dtype=int64")
-    else:
-       with ops.name_scope(None, "SparseTensor", [indices, values, dense_shape]):
-         indices = ops.convert_to_tensor(
-             indices, name="indices", dtype=dtypes.int64)
-         # TODO(touts): Consider adding mutable_values() when 'values'
-         # is a VariableOp and updating users of SparseTensor.
-         values = ops.internal_convert_to_tensor(values, name="values")
-         dense_shape = ops.convert_to_tensor(
-             dense_shape, name="dense_shape", dtype=dtypes.int64)
-         dense_shape_default = tensor_util.constant_value_as_shape(dense_shape)
-    
+    with ops.name_scope(None, "SparseTensor", [indices, values, dense_shape]):
+      indices = ops.convert_to_tensor(
+          indices, name="indices", dtype=dtypes.int64)
+      # TODO(touts): Consider adding mutable_values() when 'values'
+      # is a VariableOp and updating users of SparseTensor.
+      values = ops.internal_convert_to_tensor(values, name="values")
+      dense_shape = ops.convert_to_tensor(
+          dense_shape, name="dense_shape", dtype=dtypes.int64)
+      dense_shape_default = tensor_util.constant_value_as_shape(dense_shape)
 
     self._indices = indices
     self._values = values
@@ -160,7 +150,6 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
     # dense_shape.
     indices_shape.dims[1].merge_with(dense_shape_shape.dims[0])
 
-
     self._ve_indices = ve_indices
     self._ve_values = ve_values
 
@@ -170,9 +159,6 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
             ve_sparse = ops.convert_to_ve_sparse_tensor(indices,values,dense_shape)
             self._ve_indices = ve_sparse[0]
             self._ve_values = ve_sparse[1]
-
-
-
 
 
   def get_shape(self):
@@ -205,7 +191,7 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
   @property
   def op(self):
     """The `Operation` that produces `values` as an output."""
-    return self._ve_values.op
+    return self._values.op
 
   @property
   def dtype(self):
@@ -241,7 +227,7 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
   @property
   def graph(self):
     """The `Graph` that contains the index, value, and dense_shape tensors."""
-    return self._ve_indices.graph
+    return self._indices.graph
 
   def __str__(self):
     if(self._use_ve_sparse):

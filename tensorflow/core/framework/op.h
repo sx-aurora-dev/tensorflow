@@ -211,11 +211,6 @@ class OpListOpRegistry : public OpRegistryInterface {
 // Note: .Doc() should be last.
 // For details, see the OpDefBuilder class in op_def_builder.h.
 
-
-
-
-
-
 namespace register_op {
 
 // OpDefBuilderWrapper is a templated class that is used in the REGISTER_OP
@@ -334,34 +329,6 @@ struct OpDefBuilderReceiver {
       TF_ATTRIBUTE_UNUSED =                                               \
           ::tensorflow::register_op::OpDefBuilderWrapper<true>(name)
 
-
-
-
-
-
-
-//REGISTER_OP("VeSparseTensor")
-//.Input("indices: int64")
-//.Input("values: float")
-//.Input("dense_shape: int32")
-//.Output("ve_indices:int64")
-//.Doc(R"doc(
-//     VESparseTensor
-//     )doc");
-
-//REGISTER_OP("VeSparseTensor")
-//.Input("indices: int64")
-//.Input("values: float")
-//.Input("dense_shape: int32")
-//.Output("ve_indices:int64")
-//.Output("ve_values:float")
-//.Doc(R"doc(
-//     VESparseTensor
-//     )doc");
-
-
-
 }  // namespace tensorflow
-
 
 #endif  // TENSORFLOW_CORE_FRAMEWORK_OP_H_
