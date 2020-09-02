@@ -2623,8 +2623,13 @@ class VERNNForwardOp : public VERNNKernelCommon {
                                             &output_h, &output_c));
 
     Tensor* reserve_space = nullptr;
-
     OP_REQUIRES_OK(context, AllocateReserveSpace(context, model_shapes, &reserve_space));
+
+    Tensor work_space;
+    OP_REQUIRES_OK(context, context->allocate_temp(
+                      reinterpret_cast<DataType>(input->dtype()),
+                      TensorShape({model_shapes.batch_size * model_shapes.num_units * 8}),
+                      &work_space));
 
 #if 0     // current VERNN impl does not use working memory
     // Creates a memory callback for the reserve_space. The memory lives in the
@@ -2680,10 +2685,11 @@ class VERNNForwardOp : public VERNNKernelCommon {
     args.addArg<Tensor>(*output_c) ;
 
     args.addArg<Tensor>(*reserve_space) ;
+    args.addArg<Tensor>(work_space) ;
 
-    args.addArg<int32>( time_major ? 1 : 0 ) ;	// 10
+    args.addArg<int32>( time_major ? 1 : 0 ) ;
     args.addArg<float>(dropout()) ;
-    args.addArg<int32>( is_training_ ? 1 : 0 );	// 12
+    args.addArg<int32>( is_training_ ? 1 : 0 );
 
 //    args.addArg<int32>( num_proj ) ;
 
@@ -2817,7 +2823,6 @@ class VERNNForwardOp : public VERNNKernelCommon {
     return Status::OK();
   }
 
- private:
   Status AllocateReserveSpace(OpKernelContext* context,
                          const VERnnModelShapes& model_shapes,
                          Tensor **reserve_space) {
@@ -2829,8 +2834,7 @@ class VERNNForwardOp : public VERNNKernelCommon {
     }
     return Status::OK();
   }
-
-
+  
   mutex mu_;
   bool is_training_;
 //  RnnStateCache rnn_state_cache_ TF_GUARDED_BY(mu_);
@@ -2911,10 +2915,16 @@ class VERNNBackwardOp : public VERNNKernelCommon {
     Tensor* bias_backprop = nullptr;
     OP_REQUIRES_OK(context,
                    AllocateOutputs(context, model_shapes, kernel->shape(),
-				   recurrent_kernel->shape(), bias->shape(),
-                                   &input_backprop, &input_h_backprop,
-                                   &input_c_backprop, &kernel_backprop,
-				   &recurrent_kernel_backprop, &bias_backprop));
+				                          recurrent_kernel->shape(), bias->shape(),
+                                  &input_backprop, &input_h_backprop,
+                                  &input_c_backprop, &kernel_backprop,
+				                          &recurrent_kernel_backprop, &bias_backprop));
+
+    Tensor work_space;
+    OP_REQUIRES_OK(context, context->allocate_temp(
+                    reinterpret_cast<DataType>(input->dtype()),
+                    TensorShape({model_shapes.batch_size * model_shapes.num_units * 8}),
+                    &work_space));
 
 #if 0
     // Creates a memory callback for the workspace. The memory lives to the end
@@ -2941,7 +2951,11 @@ class VERNNBackwardOp : public VERNNKernelCommon {
     OP_REQUIRES_OK(context, launch_status);
 #endif
 
-    VEOpKernelHelper::ArgsImpl<> args;
+    VEOpKernelHelper::ArgsImpl<2048> args;
+
+    //int i=0;
+    //OP_REQUIRES_OK(context, args.addArg<Tensor>(*input));
+    //fprintf(stderr,"args add %d. size=%d\n", ++i, args.size());
 
     args.addArg<Tensor>(*input);		// 0
     args.addArg<Tensor>(*input_h);
@@ -2967,6 +2981,8 @@ class VERNNBackwardOp : public VERNNKernelCommon {
     args.addArg<Tensor>(*bias_backprop);
 
     args.addArg<int32>(time_major ? 1 : 0);	// 19
+
+    args.addArg<Tensor>(work_space);
 
     VEOpKernelHelper::Call(context, "RnnBackward", args);
 
