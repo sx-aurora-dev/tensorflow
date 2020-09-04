@@ -691,17 +691,17 @@ def _GradientsHelper(ys,
         # line up with in_grads.
         for i, (t_in, in_grad) in enumerate(zip(_Inputs(op, xs_set), in_grads)):
           if in_grad is not None:
-            #if (isinstance(in_grad, ops.Tensor) and
-            #    t_in.dtype != dtypes.resource):
-            #  try:
-            #    in_grad.set_shape(t_in.get_shape())
-              #except ValueError:
-              #  raise ValueError(
-              #      "Incompatible shapes between op input and calculated "
-              #      "input gradient.  Forward operation: %s.  Input index: %d. "
-              #      "Original input shape: %s.  "
-              #      "Calculated input gradient shape: %s" %
-              #      (op.name, i, t_in.shape, in_grad.shape))
+            if (isinstance(in_grad, ops.Tensor) and
+                t_in.dtype != dtypes.resource):
+              try:
+                in_grad.set_shape(t_in.get_shape())
+              except ValueError:
+                raise ValueError(
+                    "Incompatible shapes between op input and calculated "
+                    "input gradient.  Forward operation: %s.  Input index: %d. "
+                    "Original input shape: %s.  "
+                    "Calculated input gradient shape: %s" %
+                    (op.name, i, t_in.shape, in_grad.shape))
             if not isinstance(t_in, ops.EagerTensor):
               _SetGrad(grads, t_in, in_grad)
         if loop_state:

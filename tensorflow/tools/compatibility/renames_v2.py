@@ -1218,8 +1218,6 @@ renames = {
         'tf.sparse.slice',
     'tf.sparse_softmax':
         'tf.sparse.softmax',
-    'tf.convert_ve_sparse_tensor_imp':
-        'tf.spars.convert_ve_sparse_tensor_imp',
     'tf.sparse_tensor_dense_matmul':
         'tf.sparse.sparse_dense_matmul',
     'tf.sparse_tensor_to_dense':
