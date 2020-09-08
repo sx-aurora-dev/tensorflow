@@ -2381,7 +2381,7 @@ Status VEExtractForwardInput(OpKernelContext* context,
   }
   model_shapes->reserve_space_shape = 
       TensorShape({model_shapes->max_seq_length *
-                    model_shapes->batch_size * model_shapes->num_units * 6});
+                    model_shapes->batch_size * model_shapes->num_units * 6});	/* suppose LSTM  ( current VERNN supports LSTM only ) */
   return Status::OK();
 }
 
@@ -2923,7 +2923,7 @@ class VERNNBackwardOp : public VERNNKernelCommon {
     Tensor work_space;
     OP_REQUIRES_OK(context, context->allocate_temp(
                     reinterpret_cast<DataType>(input->dtype()),
-                    TensorShape({model_shapes.batch_size * model_shapes.num_units * 8}),
+                    TensorShape({model_shapes.batch_size * model_shapes.num_units * 8}), /* suppose LSTM  ( current VERNN supports LSTM only ) */
                     &work_space));
 
 #if 0

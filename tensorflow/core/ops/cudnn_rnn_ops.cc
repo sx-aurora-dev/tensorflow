@@ -97,12 +97,10 @@ REGISTER_OP("CudnnRNN")
       auto output_h_shape = input_h_shape;
       auto output_c_shape TF_ATTRIBUTE_UNUSED =
           (rnn_mode == "lstm") ? output_h_shape : c->MakeShape({});
-      auto reserve_space_shape = c->MakeShape({seq_length, batch_size, 5, num_units});
       c->set_output(0, output_shape);
       c->set_output(1, output_h_shape);
       c->set_output(2, output_c_shape);
-      c->set_output(3, reserve_space_shape);
-      //c->set_output(3, c->UnknownShape());
+      c->set_output(3, c->UnknownShape());
       return Status::OK();
     });
 
@@ -461,12 +459,10 @@ REGISTER_OP("VERNN")
       auto output_h_shape = input_h_shape;
       auto output_c_shape TF_ATTRIBUTE_UNUSED =
           (rnn_mode == "lstm") ? output_h_shape : c->MakeShape({});
-      auto reserve_space_shape = c->MakeShape({seq_length, batch_size, 5, num_units});
       c->set_output(0, output_shape);
       c->set_output(1, output_h_shape);
       c->set_output(2, output_c_shape);
-      c->set_output(3, reserve_space_shape);
-      //c->set_output(3, c->UnknownShape());
+      c->set_output(3, c->UnknownShape());
       return Status::OK();
     });
 
