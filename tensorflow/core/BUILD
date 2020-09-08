@@ -1063,6 +1063,8 @@ cc_library(
         "//tensorflow/core/kernels:training_ops",
         "//tensorflow/core/kernels:word2vec_kernels",
         "//tensorflow/core/kernels/sparse:kernels",
+        # for ve
+        "//tensorflow/core/kernels:cudnn_rnn_kernels",
     ] + if_not_windows([
         "//tensorflow/core/kernels/neon:neon_depthwise_conv_op",
     ]) + if_mkl([
@@ -1088,8 +1090,8 @@ cc_library(
         "//tensorflow/core/kernels:mkl_matmul_op",
         "//tensorflow/core/kernels:mkl_tfconv_op",
         "//tensorflow/core/kernels:mkl_tmp_bf16_ops",
-    ]) + if_cuda_or_rocm([
-        "//tensorflow/core/kernels:cudnn_rnn_kernels",
+#    ]) + if_cuda_or_rocm([
+#        "//tensorflow/core/kernels:cudnn_rnn_kernels",
     ]) + if_cuda([
         "//tensorflow/core/grappler/optimizers:gpu_swapping_kernels",
         "//tensorflow/core/grappler/optimizers:gpu_swapping_ops",

@@ -1049,6 +1049,7 @@ class LSTM(recurrent.DropoutRNNCellMixin, recurrent.LSTM):
                stateful=False,
                time_major=False,
                unroll=False,
+               use_veop=False,
                **kwargs):
     # return_runtime is a flag for testing, which shows the real backend
     # implementation chosen by grappler in graph mode.
@@ -1084,6 +1085,12 @@ class LSTM(recurrent.DropoutRNNCellMixin, recurrent.LSTM):
     self.state_spec = [
         InputSpec(shape=(None, dim)) for dim in (self.units, self.units)
     ]
+    self.use_veop = (
+        use_veop and
+        self.activation in (activations.tanh, nn.tanh) and
+        self.recurrent_activation in (activations.sigmoid, nn.sigmoid) and
+        recurrent_dropout == 0 and use_bias and
+        ops.executing_eagerly_outside_functions())
     self._could_use_gpu_kernel = (
         self.activation in (activations.tanh, nn.tanh) and
         self.recurrent_activation in (activations.sigmoid, nn.sigmoid) and
@@ -1113,9 +1120,37 @@ class LSTM(recurrent.DropoutRNNCellMixin, recurrent.LSTM):
     input_shape = K.int_shape(inputs)
     timesteps = input_shape[0] if self.time_major else input_shape[1]
 
+    if self.use_veop : 
+      self.reset_dropout_mask()
+      dropout_mask = self.get_dropout_mask_for_cell(inputs, training, count=4)
+      if dropout_mask is not None:
+        inputs = inputs * dropout_mask[0]
+      ve_lstm_kwargs = {
+          'inputs': inputs,
+          'init_h': _read_variable_value(initial_state[0]),
+          'init_c': _read_variable_value(initial_state[1]),
+          'kernel': _read_variable_value(self.cell.kernel),
+          'recurrent_kernel': _read_variable_value(self.cell.recurrent_kernel),
+          'bias': _read_variable_value(self.cell.bias),
+          'mask': mask,
+          'time_major': self.time_major,
+          'go_backwards': self.go_backwards,
+          'sequence_lengths': row_lengths
+      }
+      normal_lstm_kwargs = ve_lstm_kwargs.copy()
+      normal_lstm_kwargs.update({
+          'zero_output_for_mask': self.zero_output_for_mask,
+      })
+
+      (last_output, outputs, new_h, new_c,
+       runtime) = ve_lstm_with_backend_selection(**normal_lstm_kwargs)
+
+      states = [new_h, new_c]
+
+
     # TODO(b/156447398) Investigate why the cuDNN kernel kernel fails with
     # ragged inputs.
-    if is_ragged_input or not self._could_use_gpu_kernel:
+    elif is_ragged_input or not self._could_use_gpu_kernel:
       # Fall back to use the normal LSTM.
       kwargs = {'training': training}
       self._maybe_reset_cell_dropout_mask(self.cell)
@@ -1557,6 +1592,184 @@ def lstm_with_backend_selection(inputs, init_h, init_c, kernel,
   last_output, outputs, new_h, new_c, runtime = defun_standard_lstm(
       **params)
   function.register(defun_gpu_lstm, **params)
+
+  return last_output, outputs, new_h, new_c, runtime
+
+
+def ve_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias,
+            time_major, go_backwards):
+  """LSTM with either CuDNN or ROCm implementation which is only available for GPU.
+
+  Note that currently only right padded data is supported, or the result will be
+  polluted by the unmasked data which should be filtered.
+
+  Args:
+    inputs: Input tensor of LSTM layer.
+    init_h: Initial state tensor for the cell output.
+    init_c: Initial state tensor for the cell hidden state.
+    kernel: Weights for cell kernel.
+    recurrent_kernel: Weights for cell recurrent kernel.
+    bias: Weights for cell kernel bias and recurrent bias. Only recurrent bias
+      is used in this case.
+    time_major: Boolean, whether the inputs are in the format of [time, batch,
+      feature] or [batch, time, feature].
+    go_backwards: Boolean (default False). If True, process the input sequence
+      backwards and return the reversed sequence.
+    
+  Returns:
+    last_output: Output tensor for the last timestep, which has shape
+      [batch, units].
+    outputs: Output tensor for all timesteps, which has shape
+      [batch, time, units].
+    state_0: The cell output, which has same shape as init_h.
+    state_1: The cell hidden state, which has same shape as init_c.
+    runtime: Constant string tensor which indicate real runtime hardware. This
+      value is for testing purpose and should not be used by user.
+  """
+  if not time_major:
+    inputs = array_ops.transpose(inputs, perm=(1, 0, 2))
+    seq_axis, batch_axis = (0, 1)
+  else:
+    seq_axis, batch_axis = (0, 1) if time_major else (1, 0)
+  # For init_h and init_c, cuDNN expects one more dim of num_layers before or
+  # after batch dim for time major or batch major inputs respectively
+  init_h = array_ops.expand_dims(init_h, axis=seq_axis)
+  init_c = array_ops.expand_dims(init_c, axis=seq_axis)
+
+#   if build_info.is_rocm_build:
+#     # ROCm MIOpen's weight sequence for LSTM is different from both canonical
+#     # and Cudnn format
+#     # MIOpen: [i, f, o, c] Cudnn/Canonical: [i, f, c, o]
+#     # i is input gate weights.
+#     # f is forget gate weights.
+#     # o is output gate weights.
+#     # c is cell gate weights.
+#     weights = [weights[x] for x in (0, 1, 3, 2, 4, 5, 7, 6)]
+#     # full_bias is a tensor of shape (8*n,)
+#     full_bias = array_ops.split(full_bias, 8, axis=0)
+#     full_bias = [full_bias[x] for x in (0, 1, 3, 2, 4, 5, 7, 6)]
+
+  
+  # # Fill the array with shape [batch] with value of max timesteps.
+  # sequence_length = array_ops.fill([array_ops.shape(inputs)[1]],
+  #                                  array_ops.shape(inputs)[0])
+  if go_backwards:
+    # Reverse axis 0 since the input is already convert to time major.
+    inputs = array_ops.reverse(inputs, axis=[0])
+  outputs, h, c, _ = gen_cudnn_rnn_ops.vernn(
+      inputs, input_h=init_h, input_c=init_c, 
+      kernel=kernel, recurrent_kernel=recurrent_kernel,
+      bias=bias, is_training=True, rnn_mode='lstm')
+
+  last_output = outputs[-1]
+  if not time_major :
+    outputs = array_ops.transpose(outputs, perm=[1, 0, 2])
+  h = array_ops.squeeze(h, axis=seq_axis)
+  c = array_ops.squeeze(c, axis=seq_axis)
+
+  # In the case of variable length input, the cudnn kernel will fill zeros for
+  # the output, whereas the default keras behavior is to bring over the previous
+  # output for t-1, so that in the return_sequence=False case, user can quickly
+  # get the final effect output instead just 0s at the last timestep.
+  # In order to mimic the default keras behavior, we copy the final h state as
+  # the last_output, since it is numerically same as the output.
+  return last_output, outputs, h, c, _runtime(_RUNTIME_CPU)
+
+def ve_lstm_with_backend_selection(inputs, init_h, init_c, kernel,
+                                   recurrent_kernel, bias, mask, time_major,
+                                   go_backwards, sequence_lengths,
+                                   zero_output_for_mask):
+  """Call the LSTM with optimized backend kernel selection.
+
+  Under the hood, this function will create two TF function, one with the most
+  generic kernel and can run on all device condition, and the second one with
+  CuDNN specific kernel, which can only run on GPU.
+
+  The first function will be called with normal_lstm_params, while the second
+  function is not called, but only registered in the graph. The Grappler will
+  do the proper graph rewrite and swap the optimized TF function based on the
+  device placement.
+
+  Args:
+    inputs: Input tensor of LSTM layer.
+    init_h: Initial state tensor for the cell output.
+    init_c: Initial state tensor for the cell hidden state.
+    kernel: Weights for cell kernel.
+    recurrent_kernel: Weights for cell recurrent kernel.
+    bias: Weights for cell kernel bias and recurrent bias. Only recurrent bias
+      is used in this case.
+    mask: Boolean tensor for mask out the steps within sequence.
+    time_major: Boolean, whether the inputs are in the format of
+      [time, batch, feature] or [batch, time, feature].
+    go_backwards: Boolean (default False). If True, process the input sequence
+      backwards and return the reversed sequence.
+    sequence_lengths: The lengths of all sequences coming from a variable length
+      input, such as ragged tensors. If the input has a fixed timestep size,
+      this should be None.
+    zero_output_for_mask: Boolean, whether to output zero for masked timestep.
+
+  Returns:
+    List of output tensors, same as standard_lstm.
+  """
+  params = {
+      'inputs': inputs,
+      'init_h': init_h,
+      'init_c': init_c,
+      'kernel': kernel,
+      'recurrent_kernel': recurrent_kernel,
+      'bias': bias,
+      'mask': mask,
+      'time_major': time_major,
+      'go_backwards': go_backwards,
+      'sequence_lengths': sequence_lengths,
+      'zero_output_for_mask': zero_output_for_mask,
+  }
+
+  def ve_lstm_with_fallback(inputs, init_h, init_c, kernel, recurrent_kernel,
+                             bias, mask, time_major, go_backwards,
+                             sequence_lengths, zero_output_for_mask):
+    """Use VE kernel when mask is none and sequence_lengths is none."""
+    if mask is None and sequence_lengths is None:
+      return ve_lstm(
+          inputs=inputs,
+          init_h=init_h,
+          init_c=init_c,
+          kernel=kernel,
+          recurrent_kernel=recurrent_kernel,
+          bias=bias,
+          time_major=time_major,
+          go_backwards=go_backwards)
+
+    else :
+      return standard_lstm(
+          inputs=inputs,
+          init_h=init_h,
+          init_c=init_c,
+          kernel=kernel,
+          recurrent_kernel=recurrent_kernel,
+          bias=bias,
+          mask=mask,
+          time_major=time_major,
+          go_backwards=go_backwards,
+          sequence_lengths=sequence_lengths,
+          zero_output_for_mask=zero_output_for_mask)
+
+  # Each time a `tf.function` is called, we will give it a unique
+  # identifiable API name, so that Grappler won't get confused when it
+  # sees multiple LSTM layers added into same graph, and it will be able
+  # to pair up the different implementations across them.
+  api_name = 'lstm_' + str(uuid.uuid4())
+  supportive_attribute = {
+      'time_major': time_major,
+      'go_backwards': go_backwards,
+  }
+  defun_standard_lstm = _generate_defun_backend(
+      api_name, _CPU_DEVICE_NAME, ve_lstm_with_fallback, supportive_attribute)
+
+  # Call the normal LSTM impl and register the CuDNN impl function. The
+  # grappler will kick in during session execution to optimize the graph.
+  last_output, outputs, new_h, new_c, runtime = defun_standard_lstm(
+      **params)
 
   return last_output, outputs, new_h, new_c, runtime
 
