@@ -26,15 +26,13 @@ public:
     explicit ConvertVESparseTensorOp(OpKernelConstruction* ctx)
         : VEOpKernel(ctx) {
 
-        convert_flag = true;
-
     }
 
     void Compute(OpKernelContext* ctx) override {
         const Tensor* indices;
         const Tensor* values;
         const Tensor* shape;
-
+printf("conv\n");
         OP_REQUIRES_OK(ctx, ctx->input("indices", &indices));
         OP_REQUIRES_OK(ctx, ctx->input("values", &values));
         OP_REQUIRES_OK(ctx, ctx->input("shape", &shape));
@@ -73,22 +71,18 @@ public:
         Tensor* out_val = nullptr;
         OP_REQUIRES_OK(ctx, ctx->allocate_output(1, out_val_shape, &out_val));
 
-        if(convert_flag){
-            if (shape->dim_size(0) > 0) {
-                ArgsImpl<> Args = ArgsImpl<>() ;
-                Args.addArg<Tensor>(*values) ;
-                Args.addArg<Tensor>(*indices) ;
-                Args.addArg<int64>(shape_t(1)) ;
-                Args.addArg<int64>(shape_t(0)) ;
-                Args.addArg<Tensor>(*out_val) ;
-                Args.addArg<Tensor>(*out_idx) ;
+        if (shape->dim_size(0) > 0) {
+            ArgsImpl<> Args = ArgsImpl<>() ;
+            Args.addArg<Tensor>(*values) ;
+            Args.addArg<Tensor>(*indices) ;
+            Args.addArg<int64>(shape_t(1)) ;
+            Args.addArg<int64>(shape_t(0)) ;
+            Args.addArg<Tensor>(*out_val) ;
+            Args.addArg<Tensor>(*out_idx) ;
 
-                Call(ctx, "ConvertVESparseTensor", Args);
-            }
+            Call(ctx, "ConvertVESparseTensor", Args);
         }
     }
-private:
-    bool convert_flag;
 };
 
 
