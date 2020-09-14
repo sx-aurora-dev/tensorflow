@@ -101,6 +101,17 @@ class VEO {
       return s;
     }
 
+    // VEO will provide posix_memaligned in future release, but now we use a
+    // user kernel.
+    virtual Status posix_memalign(void **memptr, size_t alignment, size_t size) {
+      Args a;
+      veo_args_set_stack(a.args, VEO_INTENT_OUT, 0, (char*)memptr, sizeof(void*));
+      veo_args_set_u64(a.args, 1, alignment);
+      veo_args_set_u64(a.args, 2, size);
+
+      return call_and_wait(sym_posix_memalign_, a);
+    }
+
     virtual uint64_t alloc_mem(size_t size) {
 #if 0
       VLOG(2) << "VEO::alloc_mem: tid=" << syscall(SYS_gettid);
@@ -234,7 +245,7 @@ class VEO {
 
     virtual uint64_t call(uint64_t sym, const Args& a) {
       uint64_t req_id = veo_call_async(ctx_, sym, a.args);
-      VLOG(2) << "VEO::call: return from veo_call_async. req_id=" << req_id;
+      VLOG(1) << "VEO::call: return from veo_call_async. req_id=" << req_id;
       return req_id;
     }
 
@@ -242,7 +253,7 @@ class VEO {
       VLOG(2) << "VEO::wait: call veo_wait_result for req_id=" << req_id;
       uint64_t retval;
       int ret = veo_call_wait_result(ctx_, req_id, &retval);
-      VLOG(2) << "VEO::wait: return from veo_wait_result."
+      VLOG(1) << "VEO::wait: return from veo_wait_result."
         << " req_id=" << req_id << " ret=" << ret << " retval=" << retval;
       if (pRetval)
         *pRetval = retval;
@@ -300,6 +311,7 @@ class VEO {
 
     std::map<std::string, uint64_t> kernel_map_;
     uint64_t sym_get_timestamp_;
+    uint64_t sym_posix_memalign_;
     cb_t cb_;
     void* cb_data_;
 
@@ -411,6 +423,7 @@ class VEOAsync : public VEO
 #endif
 
     Status init(int nodeid) override {
+      VLOG(1) << "VEOAsync: init begin";
       Status s = VEO::init(nodeid);
       if (!s.ok())
         return s;
@@ -433,6 +446,7 @@ class VEOAsync : public VEO
             std::bind(&VEOAsync::Run, this)));
       }
 #endif
+      VLOG(1) << "VEOAsync: init end";
       return Status::OK();
     }
 
@@ -513,7 +527,7 @@ class VEOAsync : public VEO
 
       // Set n again because new kernel might be pushed to the stack.
       int32_t n = stack->num_kernels();
-      VLOG(2) << "VEOAsync::sync: num_kernels=" << n;
+      VLOG(1) << "VEOAsync::sync: num_kernels=" << n;
 
       size_t len = stack->size();
       void* buf = stack->buf();
@@ -574,7 +588,7 @@ class VEOAsync : public VEO
     mutex executor_mutex_;
 
     Status Run() {
-      VLOG(2) << "VEExecturo: begin";
+      VLOG(2) << "VEExecutor: begin";
       while (!thread_done_) {
         if (currStack_->num_kernels() >= ve_executor_threshold_) {
           VLOG(2) << "VEExecutor: sync";
@@ -628,6 +642,8 @@ Status load_kernel_syms(struct veo_proc_handle* proc,
 {
   Status s;
 
+  VLOG(2) << "load_kernel_syms: begin";
+
   uint64_t num_kernels;
   s = veo_sym_call(proc, ctx, lib_id, "get_num_kernels", &num_kernels);
   if (!s.ok())
@@ -644,9 +660,13 @@ Status load_kernel_syms(struct veo_proc_handle* proc,
     char func[256];
   } table[num_kernels];
 
+  //VLOG(1) << "load_kernel_syms: call veo_read_mem";
+
   int ret = veo_read_mem(proc, table, addr, num_kernels * sizeof(kernel));
   if (ret != 0)
     return errors::Internal("Failed to read mem");
+
+  //VLOG(1) << "load_kernel_syms: return from veo_read_mem";
 
   for (uint64_t i = 0; i < num_kernels; ++i) {
     uint64_t sym = veo_get_sym(proc, lib_id, table[i].func);
@@ -659,6 +679,7 @@ Status load_kernel_syms(struct veo_proc_handle* proc,
     map[table[i].name] = sym;
   }
 
+  //VLOG(1) << "load_kernel_syms: end";
   return Status::OK();
 }
 
@@ -726,6 +747,7 @@ Status VEO::init_dma(veo_proc_handle* proc, uint64_t lib_id)
   tmp.size = size;
 
   Args a(&tmp, sizeof(tmp));
+  VLOG(1) << "VEO::init_dma: call dma_init on VE";
   return call_and_wait(sym_dma_init, a);
 }
 #endif // USE_DMA
@@ -740,10 +762,10 @@ Status VEO::init(int nodeid) {
     filename = tmp;
   }
   VLOG(2) << "VEO::init: filename=" << filename;
-  VLOG(2) << "VEO::init: nodeid=" << nodeid;
+  VLOG(1) << "VEO::init: nodeid=" << nodeid;
 
   proc_ = veo_proc_create(nodeid);
-  VLOG(2) << "VEO::init: proc_=" << proc_;
+  VLOG(1) << "VEO::init: proc_=" << proc_;
   if (!proc_)
     return errors::Internal("Failed to create VEO proc");
 
@@ -761,13 +783,17 @@ Status VEO::init(int nodeid) {
   }
 
   ctx_ = veo_context_open(proc_);
-  VLOG(2) << "VEO::init: ctx_=" << ctx_;
+  VLOG(1) << "VEO::init: ctx_=" << ctx_;
   if (!ctx_)
     return errors::Internal("Failed to open VEO context");
 
   sym_get_timestamp_ = veo_get_sym(proc_, lib_id, "vetfkl_get_timestamp");
   if (sym_get_timestamp_ == 0)
     return errors::Internal("Failed to veo_get_sym for vetfkl_get_timestamp");
+
+  sym_posix_memalign_ = veo_get_sym(proc_, lib_id, "vetfkl_posix_memalign");
+  if (sym_posix_memalign_ == 0)
+    return errors::Internal("Failed to veo_get_sym for vetfkl_posix_memalign");
 
 #ifdef USE_DMA
   {
@@ -803,36 +829,19 @@ class VEMemAllocator : public SubAllocator {
 VEMemAllocator::~VEMemAllocator() {}
 
 void* VEMemAllocator::Alloc(size_t alignments, size_t num_bytes) {
-  VLOG(2) << "VEMemAllocator::Alloc: alignments=" << alignments << " num_bytes=" << num_bytes;
-#if 0
-  return veo_->alloc_mem(num_bytes);
-#else
-#if 0
-  void* p = veo_->alloc_mem(num_bytes);
-  if (reinterpret_cast<uintptr_t>(p) % alignments != 0) {
-    VLOG(2) << "VEMemAllocator::Alloc: alignment error. addr=" << p;
-    return NULL;
-  }
-#endif
+  VLOG(1) << "VEMemAllocator::Alloc: alignments=" << alignments << " num_bytes=" << num_bytes;
 
-  size_t n = num_bytes + alignments + sizeof(uintptr_t);
-  uint64_t addr = veo_->alloc_mem(n);
-  uint64_t addr0 = (addr + sizeof(uint64_t) + alignments) & ~(alignments - 1);
-  VLOG(2) << "VEMemAllocator::Alloc addr=" << std::hex << addr
-    << " addr0=" << std::hex << addr0;
-  *reinterpret_cast<uint64_t*>(addr0 - sizeof(uint64_t)) = addr;
-  return reinterpret_cast<void*>(addr0);
-#endif
+  void* addr;
+  Status s = veo_->posix_memalign(&addr, alignments, num_bytes);
+  if (!s.ok())
+      addr = nullptr;
+  VLOG(1) << "VEMemAllocator::Alloc: return " << addr;
+  return addr;
 }
 
 void VEMemAllocator::Free(void* ptr, size_t num_bytes) {
   VLOG(2) << "VEMemAllocator::Free: ptr=" << ptr;
-
-  uint64_t addr = reinterpret_cast<uintptr_t>(ptr) - sizeof(uint64_t);
-
-  VLOG(2) << "VEMemAllocator::Free: addr=" << std::hex << addr;
-
-  veo_->free_mem(addr);
+  veo_->free_mem(reinterpret_cast<uint64_t>(ptr));
 }
 
 
@@ -919,6 +928,7 @@ class VEDevice : public LocalDevice {
 };
 
 VEDevice::~VEDevice() {
+  VLOG(2) << "VEDevice::~VEDevice";
   delete gpu_device_info_;
   for (auto ctx : device_contexts_) ctx->Unref();
 }
@@ -1160,34 +1170,28 @@ void VEDeviceContextImpl::CopyCPUTensorToDevice(const Tensor* cpu_tensor, Device
                                                 Tensor* device_tensor,
                                                 StatusCallback done,
                                                 bool sync_dst_compute) const {
-  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice";
-
   const void* in = DMAHelper::base(cpu_tensor);
   void* out = DMAHelper::base(device_tensor);
 
-  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: in=" << in
+  VLOG(1) << "VEDeviceContextImpl::CopyCPUTensorToDevice: in=" << in
     << " out=" << out << " size=" << cpu_tensor->TotalBytes();
-#if 0
-  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: proc_pid_=" << getpid() << " tid=" << syscall(SYS_gettid);
-#endif
 
   Status s = veo_->write_mem((uint64_t)out, in, cpu_tensor->TotalBytes());
+  VLOG(1) << "VEDeviceContextImpl::CopyCPUTensorToDevice: return from write_mem";
   done(s);
-  VLOG(2) << "VEDeviceContextImpl::CopyCPUTensorToDevice: done";
 }
 
 void VEDeviceContextImpl::CopyDeviceTensorToCPU(const Tensor* device_tensor, StringPiece edge_name,
                                                 Device* device, Tensor* cpu_tensor,
                                                 StatusCallback done) {
-  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU";
-
   const void* in = DMAHelper::base(device_tensor);
   void* out = DMAHelper::base(cpu_tensor);
 
-  VLOG(2) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: in=" << in
+  VLOG(1) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: in=" << in
     << " out=" << out << " size=" << device_tensor->TotalBytes();
 
   Status s = veo_->read_mem(out, (uint64_t)in, device_tensor->TotalBytes());
+  VLOG(1) << "VEDeviceContextImpl::CopyDeviceTensorToCPU: return from read_mem";
   done(s);
 }
 
