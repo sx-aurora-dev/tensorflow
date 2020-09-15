@@ -237,7 +237,7 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
     return self._indices.graph
 
   def __str__(self):
-    return "SparseTensor(indices=%s, values=%s, dense_shape=%s, use_ve_sparse=%s,ve_indices=%s, ve_values=%s)" % (
+    return "SparseTensor(indices=%s, values=%s, dense_shape=%s, use_ve_sparse=%s, ve_indices=%s, ve_values=%s)" % (
         self._indices, self._values, self._dense_shape, self._use_ve_sparse, self._ve_indices, self._ve_values)
 
   def eval(self, feed_dict=None, session=None):
