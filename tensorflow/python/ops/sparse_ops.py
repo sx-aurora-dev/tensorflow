@@ -2301,6 +2301,25 @@ def deserialize_many_sparse(serialized_sparse, dtype, rank=None, name=None):
   return sparse_tensor.SparseTensor(output_indices, output_values, output_shape)
 
 
+
+@tf_export("convert_ve_sparse_tensor_imp",
+           v1=["sparse.convert_ve_sparse_tensor_imp", "sparse.convert_ve_tensor_imp",
+               "convert_ve_sparse_tensor_imp"])
+@deprecation.deprecated_endpoints("convert_ve_sparse_tensor_imp")
+def convert_ve_sparse_tensor_imp(
+                                indices,
+                                values,
+                                shape,
+                                name=None
+                                ):
+    with ops.name_scope(name, "ConvertVESparseTensor",
+                        [indices,values,shape]) as name:
+      return gen_sparse_ops.convert_ve_sparse_tensor(
+                                indices=indices,
+                                values=values,
+                                shape=shape)
+
+
 @tf_export("sparse.sparse_dense_matmul",
            v1=["sparse.sparse_dense_matmul", "sparse.matmul",
                "sparse_tensor_dense_matmul"])
@@ -2511,6 +2530,21 @@ def sparse_tensor_dense_matmul(sp_a,
       `return A*B`
   """
   # pylint: enable=line-too-long
+  
+
+  if(sp_a.use_ve_sparse):
+      sp_a = _convert_to_sparse_tensor(sp_a)
+      with ops.name_scope(name, "SparseTensorDenseMatMul",
+                          [sp_a.ve_indices, sp_a.ve_values, b]) as name:
+        b = ops.convert_to_tensor(b, name="b")
+        return gen_sparse_ops.sparse_tensor_dense_mat_mul(
+            a_indices=sp_a.ve_indices,
+            a_values=sp_a.ve_values,
+            a_shape=sp_a.dense_shape,
+            b=b,
+            adjoint_a=adjoint_a,
+            adjoint_b=adjoint_b,
+            use_ve_sparse=sp_a.use_ve_sparse)
 
   if isinstance(b, sparse_tensor.SparseTensor) \
           or isinstance(b, sparse_tensor.SparseTensorValue):

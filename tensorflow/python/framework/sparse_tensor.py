@@ -111,15 +111,19 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
     return SparseTensor(
         indices=sparse_tensor_value.indices,
         values=sparse_tensor_value.values,
-        dense_shape=sparse_tensor_value.dense_shape)
+        dense_shape=sparse_tensor_value.dense_shape,
+	use_ve_sparse=sparse_tensor_value.use_ve_sparse)
 
-  def __init__(self, indices, values, dense_shape):
+  def __init__(self, indices, values, dense_shape, use_ve_sparse=False, ve_indices=None, ve_values=None):
     """Creates a `SparseTensor`.
 
     Args:
       indices: A 2-D int64 tensor of shape `[N, ndims]`.
       values: A 1-D tensor of any type and shape `[N]`.
       dense_shape: A 1-D int64 tensor of shape `[ndims]`.
+      use_ve_sparse: A flag whether you use a format of VE.
+      ve_indices: A 1-D int64 tensor.
+      ve_values: A 1-D float tensor.
 
     Raises:
       ValueError: When building an eager SparseTensor if `dense_shape` is
@@ -150,6 +154,19 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
     # Assert number of columns in indices matches the number of elements in
     # dense_shape.
     indices_shape.dims[1].merge_with(dense_shape_shape.dims[0])
+
+    self._ve_indices = ve_indices
+    self._ve_values = ve_values
+
+    self._use_ve_sparse = use_ve_sparse
+    if(self._use_ve_sparse):
+        if indices.shape[1] != 2:
+          raise ValueError("Expected a shape[1] of indices with 2. A shape[1] of indices is {}".format(indices.shape[1]))
+        if((ve_indices is None) or (ve_values is None)):
+            ve_sparse = ops.convert_to_ve_sparse_tensor(indices,values,dense_shape)
+            self._ve_indices = ve_sparse[0]
+            self._ve_values = ve_sparse[1]
+
 
   def get_shape(self):
     """Get the `TensorShape` representing the shape of the dense tensor.
@@ -203,13 +220,25 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
     return self._dense_shape_default
 
   @property
+  def use_ve_sparse(self):
+    return self._use_ve_sparse
+
+  @property
+  def ve_indices(self):
+    return self._ve_indices
+
+  @property
+  def ve_values(self):
+    return self._ve_values
+
+  @property
   def graph(self):
     """The `Graph` that contains the index, value, and dense_shape tensors."""
     return self._indices.graph
 
   def __str__(self):
-    return "SparseTensor(indices=%s, values=%s, dense_shape=%s)" % (
-        self._indices, self._values, self._dense_shape)
+    return "SparseTensor(indices=%s, values=%s, dense_shape=%s, use_ve_sparse=%s, ve_indices=%s, ve_values=%s)" % (
+        self._indices, self._values, self._dense_shape, self._use_ve_sparse, self._ve_indices, self._ve_values)
 
   def eval(self, feed_dict=None, session=None):
     """Evaluates this sparse tensor in a `Session`.
@@ -231,10 +260,15 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
     Returns:
       A `SparseTensorValue` object.
     """
-    indices, values, dense_shape = _eval_using_default_session(
+    if(self._use_ve_sparse):
+        indices, values, dense_shape = _eval_using_default_session(
+        [self.ve_indices, self.ve_values, self.dense_shape], feed_dict, self.graph,
+        session)
+    else:
+        indices, values, dense_shape = _eval_using_default_session(
         [self.indices, self.values, self.dense_shape], feed_dict, self.graph,
         session)
-    return SparseTensorValue(indices, values, dense_shape)
+    return SparseTensorValue(indices, values, dense_shape, use_ve_sparse, ve_indices, ve_values)
 
   @staticmethod
   def _override_operator(operator, func):

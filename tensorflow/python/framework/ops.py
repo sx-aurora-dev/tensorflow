@@ -6938,3 +6938,10 @@ def set_int_list_attr(op, attr_name, ints):
   """TF internal method used to set a list(int) attribute in the node_def."""
   ints_list = attr_value_pb2.AttrValue.ListValue(i=ints)
   op._set_attr(attr_name, attr_value_pb2.AttrValue(list=ints_list))  # pylint:disable=protected-access
+
+@tf_export(v1=["convert_to_ve_sparse_tensor"])
+
+def convert_to_ve_sparse_tensor(indices,values,dense_shape):
+  from tensorflow.python.ops import sparse_ops
+  return sparse_ops.convert_ve_sparse_tensor_imp(indices,values,dense_shape)
+

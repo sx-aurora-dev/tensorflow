@@ -82,6 +82,28 @@ REGISTER_OP("SparseAdd")
       return Status::OK();
     });
 
+REGISTER_OP("ConvertVESparseTensor")
+    .Input("indices: Tindices")
+    .Input("values: T")
+    .Input("shape: int64")
+    .Output("ve_indices: Tindices")
+    .Output("ve_values: T")
+    .Attr("T: type")
+    .Attr("Tindices: {int32,int64} = DT_INT64")
+    .SetShapeFn([](InferenceContext* c) {
+      DimensionHandle unused_dim;
+      ShapeHandle unused;
+      ShapeHandle shape;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &unused));  // a_indices
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &unused));  // a_values
+      TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(2, &shape));
+      TF_RETURN_IF_ERROR(c->WithRank(shape, 2, &shape));
+      c->set_output(0, c->Vector(InferenceContext::kUnknownDim));
+      c->set_output(1, c->Vector(InferenceContext::kUnknownDim));
+      return Status::OK();
+    });
+
+
 REGISTER_OP("SparseTensorDenseMatMul")
     .Input("a_indices: Tindices")
     .Input("a_values: T")
@@ -92,6 +114,7 @@ REGISTER_OP("SparseTensorDenseMatMul")
     .Attr("Tindices: {int32,int64} = DT_INT64")
     .Attr("adjoint_a: bool = false")
     .Attr("adjoint_b: bool = false")
+    .Attr("use_ve_sparse: bool = false")
     .SetShapeFn([](InferenceContext* c) {
       DimensionHandle unused_dim;
       ShapeHandle unused;

@@ -25,6 +25,13 @@ limitations under the License.
 #include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/lib/bfloat16/bfloat16.h"
 
+
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
+
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -175,6 +182,104 @@ REGISTER_KERNELS_CPU(int32);
 REGISTER_KERNELS_CPU(complex64);
 REGISTER_KERNELS_CPU(complex128);
 REGISTER_KERNELS_CPU(bfloat16);
+
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T, typename Tindices>
+class VESparseTensorDenseMatMulOp : public VEOpKernel {
+public:
+    explicit VESparseTensorDenseMatMulOp(OpKernelConstruction* ctx)
+        : VEOpKernel(ctx) {
+        OP_REQUIRES_OK(ctx, ctx->GetAttr("adjoint_a", &adjoint_a_));
+        OP_REQUIRES_OK(ctx, ctx->GetAttr("adjoint_b", &adjoint_b_));
+        OP_REQUIRES_OK(ctx, ctx->GetAttr("use_ve_sparse", &use_ve_sparse_));
+    }
+
+    void Compute(OpKernelContext* ctx) override {
+        const Tensor* a_indices;
+        const Tensor* a_values;
+        const Tensor* a_shape;
+        const Tensor* b;
+
+        OP_REQUIRES(
+            ctx, use_ve_sparse_,
+            errors::InvalidArgument("This format is not supported. use_ve_sparse = 0"));
+        OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices));
+        OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values));
+        OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape));
+        OP_REQUIRES_OK(ctx, ctx->input("b", &b));
+
+        auto a_shape_t = a_shape->vec<int64>();
+        const int64 nnz = a_indices->shape().dim_size(0);
+        const int64 outer_left = (adjoint_a_) ? a_shape_t(1) : a_shape_t(0);
+        const int64 outer_right =
+                (adjoint_b_) ? b->shape().dim_size(0) : b->shape().dim_size(1);
+        const int64 inner_left = (adjoint_a_) ? a_shape_t(0) : a_shape_t(1);
+        const int64 inner_right =
+                (adjoint_b_) ? b->shape().dim_size(1) : b->shape().dim_size(0);
+	
+        OP_REQUIRES(
+                    ctx, 1 == ((adjoint_b_) ? b->shape().dim_size(0) : b->shape().dim_size(1)) ,
+                    errors::InvalidArgument(
+                        "VESparseTensorDenseMatMulOp only supports spmv. b is not a vecotor."));
+
+        OP_REQUIRES(
+                    ctx, inner_right == inner_left,
+                    errors::InvalidArgument(
+                        "Cannot multiply A and B because inner dimension does not match: ",
+                        inner_left, " vs. ", inner_right,
+                        ".  Did you forget a transpose?  "
+                        "Dimensions of A: [",
+                        a_shape_t(0), ", ", a_shape_t(1),
+                        ").  Dimensions of B: ", b->shape().DebugString()));
+
+        TensorShape out_shape({outer_left, outer_right});
+        Tensor* out = nullptr;
+        OP_REQUIRES_OK(ctx, ctx->allocate_output(0, out_shape, &out));
+
+        Tensor buf;
+        OP_REQUIRES_OK(
+                    ctx, ctx->allocate_temp(DataTypeToEnum<T>::value,
+                                            TensorShape({outer_left*2, 1}),
+                                            &buf));
+
+        if (out->NumElements() == 0) {
+            // If a has shape [0, x] or b has shape [x, 0], the output shape
+            // is a 0-element matrix, so there is nothing to do.
+            return;
+        }
+
+        ArgsImpl<> Args = ArgsImpl<>() ;
+        Args.addArg<Tensor>(*a_values) ;
+        Args.addArg<Tensor>(*a_indices) ;
+        Args.addArg<int64>(a_shape_t(1)) ;
+        Args.addArg<int64>(a_shape_t(0)) ;
+        Args.addArg<Tensor>(*b) ;
+        Args.addArg<Tensor>(*out) ;
+        Args.addArg<Tensor>(buf) ;
+        Args.addArg<int64>(adjoint_a_);
+
+        Call(ctx, "SparseTensorDenseMatMul", Args); 
+    }
+
+private:
+    bool adjoint_a_;
+    bool adjoint_b_;
+    bool use_ve_sparse_;
+};
+
+REGISTER_KERNEL_BUILDER(                       \
+    Name("SparseTensorDenseMatMul")            \
+        .Device(DEVICE_VE)                     \
+        .TypeConstraint<float>("T")            \
+        .TypeConstraint<int64>("Tindices")     \
+        .HostMemory("a_shape"),                \
+        VESparseTensorDenseMatMulOp<float, int64>);
+
+#endif // TENSORFLOW_USE_VE
+
+
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 

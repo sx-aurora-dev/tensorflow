@@ -167,6 +167,7 @@ def _SparseTensorDenseMatMulGrad(op, grad):
   b = op.inputs[3]
   adj_a = op.get_attr("adjoint_a")
   adj_b = op.get_attr("adjoint_b")
+  use_ve_sparse = op.get_attr("use_ve_sparse")
 
   a_type = a_values.dtype.base_dtype
   b_type = b.dtype.base_dtype
@@ -179,23 +180,28 @@ def _SparseTensorDenseMatMulGrad(op, grad):
 
   # gradient w.r.t. dense
   b_grad = gen_sparse_ops.sparse_tensor_dense_mat_mul(
-      a_indices, a_values, a_shape, grad, adjoint_a=not adj_a)
+      a_indices, a_values, a_shape, grad, adjoint_a=not adj_a, use_ve_sparse=use_ve_sparse)
   if adj_b:
     b_grad = array_ops.transpose(b_grad)
 
-  # gradient w.r.t. sparse values
-  rows = a_indices[:, 0]
-  cols = a_indices[:, 1]
 
-  # TODO(zongheng, ebrevdo): add conjugates in the right places when complex
-  # values are allowed.
-  # TODO(zongheng): these gather calls could potentially duplicate rows/cols in
-  # memory.  If there is a need, we should look into implementing this more
-  # intelligently to avoid duplicating data.
-  parts_a = array_ops.gather(grad, rows if not adj_a else cols)
-  parts_b = array_ops.gather(b if not adj_b else array_ops.transpose(b),
+  if(use_ve_sparse):
+      #b_grad is vector
+      a_values_grad = math_ops.reduce_sum(b_grad, axis=1)
+  else:
+    # gradient w.r.t. sparse values
+    rows = a_indices[:, 0]
+    cols = a_indices[:, 1]
+
+    # TODO(zongheng, ebrevdo): add conjugates in the right places when complex
+    # values are allowed.
+    # TODO(zongheng): these gather calls could potentially duplicate rows/cols in
+    # memory.  If there is a need, we should look into implementing this more
+    # intelligently to avoid duplicating data.
+    parts_a = array_ops.gather(grad, rows if not adj_a else cols)
+    parts_b = array_ops.gather(b if not adj_b else array_ops.transpose(b),
                              cols if not adj_a else rows)
-  a_values_grad = math_ops.reduce_sum(parts_a * parts_b, axis=1)
+    a_values_grad = math_ops.reduce_sum(parts_a * parts_b, axis=1)
 
   # gradients w.r.t. (a_indices, a_values, a_shape, b)
   return (None, a_values_grad, None, b_grad)

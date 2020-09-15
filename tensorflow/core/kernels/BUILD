@@ -5399,6 +5399,7 @@ cc_library(
         ":sparse_sparse_binary_op_shared",
         ":sparse_split_op",
         ":sparse_tensor_dense_add_op",
+	":convert_ve_sparse_tensor_op",
         ":sparse_tensor_dense_matmul_op",
         ":sparse_tensors_map_ops",
         ":sparse_to_dense_op",
@@ -5515,6 +5516,17 @@ tf_kernel_library(
         "//third_party/eigen3",
     ],
 )
+
+tf_kernel_library(
+    name = "convert_ve_sparse_tensor_op",
+    prefix = "convert_ve_sparse_tensor_op",
+    deps = SPARSE_DEPS + [
+        ":bounds_check",
+        ":fill_functor",
+        "//third_party/eigen3",
+    ],
+)
+
 
 tf_kernel_library(
     name = "sparse_tensor_dense_matmul_op",

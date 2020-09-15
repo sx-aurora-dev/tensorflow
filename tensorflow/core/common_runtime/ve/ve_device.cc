@@ -1139,7 +1139,7 @@ class VEDeviceFactory : public DeviceFactory {
     }
     if( n <= 0 ) return Status::OK();
 
-    size_t total_memory = 20UL*1024*1024*1024;
+    size_t total_memory = 44UL*1024*1024*1024;
     Allocator* ve_allocator = new VEBFCAllocator(total_memory, true, "VE_0_bfc", veo);
 
     int numa_node = 0;
