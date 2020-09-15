@@ -180,7 +180,7 @@ def _SparseTensorDenseMatMulGrad(op, grad):
 
   # gradient w.r.t. dense
   b_grad = gen_sparse_ops.sparse_tensor_dense_mat_mul(
-      a_indices, a_values, a_shape, grad, adjoint_a=not adj_a,use_ve_sparse=use_ve_sparse)
+      a_indices, a_values, a_shape, grad, adjoint_a=not adj_a, use_ve_sparse=use_ve_sparse)
   if adj_b:
     b_grad = array_ops.transpose(b_grad)
 

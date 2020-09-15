@@ -98,10 +98,6 @@ REGISTER_OP("ConvertVESparseTensor")
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &unused));  // a_values
       TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(2, &shape));
       TF_RETURN_IF_ERROR(c->WithRank(shape, 2, &shape));
-
-
-
-//      TF_RETURN_IF_ERROR(c->Merge(inner_left, inner_right, &unused_dim));
       c->set_output(0, c->Vector(InferenceContext::kUnknownDim));
       c->set_output(1, c->Vector(InferenceContext::kUnknownDim));
       return Status::OK();
