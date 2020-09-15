@@ -1,5 +1,4 @@
 
-#define EIGEN_USE_THREADS
 
 #include <vector>
 #include "tensorflow/core/framework/op_kernel.h"
@@ -32,7 +31,7 @@ public:
         const Tensor* indices;
         const Tensor* values;
         const Tensor* shape;
-printf("conv\n");
+
         OP_REQUIRES_OK(ctx, ctx->input("indices", &indices));
         OP_REQUIRES_OK(ctx, ctx->input("values", &values));
         OP_REQUIRES_OK(ctx, ctx->input("shape", &shape));

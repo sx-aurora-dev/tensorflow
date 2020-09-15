@@ -124,12 +124,8 @@ REGISTER_OP("SparseTensorDenseMatMul")
       ShapeHandle unused;
       ShapeHandle b;
       ShapeHandle a_shape;
-      bool use_ve_sparse;
-      TF_RETURN_IF_ERROR(c->GetAttr("use_ve_sparse", &use_ve_sparse));
-      if(use_ve_sparse){
-        TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &unused));  // a_indices
-        TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &unused));  // a_values
-      }
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &unused));  // a_indices
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &unused));  // a_values
       TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(2, &a_shape));
       TF_RETURN_IF_ERROR(c->WithRank(a_shape, 2, &a_shape));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 2, &b));

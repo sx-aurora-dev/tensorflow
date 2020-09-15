@@ -193,6 +193,7 @@ public:
         : VEOpKernel(ctx) {
         OP_REQUIRES_OK(ctx, ctx->GetAttr("adjoint_a", &adjoint_a_));
         OP_REQUIRES_OK(ctx, ctx->GetAttr("adjoint_b", &adjoint_b_));
+        OP_REQUIRES_OK(ctx, ctx->GetAttr("use_ve_sparse", &use_ve_sparse_));
     }
 
     void Compute(OpKernelContext* ctx) override {
@@ -201,20 +202,27 @@ public:
         const Tensor* a_shape;
         const Tensor* b;
 
+        OP_REQUIRES(
+            ctx, use_ve_sparse_,
+            errors::InvalidArgument("This format is not supported"));
         OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices));
         OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values));
         OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape));
         OP_REQUIRES_OK(ctx, ctx->input("b", &b));
 
-        const int64 nnz = a_indices->shape().dim_size(0);
-
         auto a_shape_t = a_shape->vec<int64>();
+        const int64 nnz = a_indices->shape().dim_size(0);
         const int64 outer_left = (adjoint_a_) ? a_shape_t(1) : a_shape_t(0);
         const int64 outer_right =
                 (adjoint_b_) ? b->shape().dim_size(0) : b->shape().dim_size(1);
         const int64 inner_left = (adjoint_a_) ? a_shape_t(0) : a_shape_t(1);
         const int64 inner_right =
                 (adjoint_b_) ? b->shape().dim_size(1) : b->shape().dim_size(0);
+	
+        OP_REQUIRES(
+                    ctx, 1 == ((adjoint_b_) ? b->shape().dim_size(0) : b->shape().dim_size(1)) ,
+                    errors::InvalidArgument(
+                        "VESparseTensorDenseMatMulOp only support spmv. b is not a vecotor."));
 
         OP_REQUIRES(
                     ctx, inner_right == inner_left,
@@ -225,27 +233,6 @@ public:
                         "Dimensions of A: [",
                         a_shape_t(0), ", ", a_shape_t(1),
                         ").  Dimensions of B: ", b->shape().DebugString()));
-
-        if (std::is_same<Device, GPUDevice>::value) {
-            // The GPU implementation is optimized to use 32 bit indexing, so
-            // give a friendly error to the programmer early on if they
-            // exceed.
-
-            const int int32max = std::numeric_limits<int>::max();
-            OP_REQUIRES(
-                        ctx,
-                        (FastBoundsCheck(inner_left, int32max) &&
-                         FastBoundsCheck(inner_right, int32max) &&
-                         FastBoundsCheck(outer_left, int32max) &&
-                         FastBoundsCheck(outer_right, int32max) &&
-                         FastBoundsCheck(b->NumElements(), int32max) &&
-                         FastBoundsCheck(outer_left * outer_right, int32max) &&
-                         FastBoundsCheck(a_values->NumElements(), int32max)),
-                        errors::InvalidArgument("Cannot use GPU for > 2^31 entry inputs"));
-            OP_REQUIRES(ctx, FastBoundsCheck(nnz * outer_right, int32max),
-                        errors::InvalidArgument(
-                            "Cannot use GPU when output.shape[1] * nnz(a) > 2^31"));
-        }
 
         TensorShape out_shape({outer_left, outer_right});
         Tensor* out = nullptr;
@@ -263,24 +250,23 @@ public:
             return;
         }
 
-        if (a_shape->dim_size(0) > 0) {
-            ArgsImpl<> Args = ArgsImpl<>() ;
-            Args.addArg<Tensor>(*a_values) ;
-            Args.addArg<Tensor>(*a_indices) ;
-            Args.addArg<int64>(a_shape_t(1)) ;
-            Args.addArg<int64>(a_shape_t(0)) ;
-            Args.addArg<Tensor>(*b) ;
-            Args.addArg<Tensor>(*out) ;
-            Args.addArg<Tensor>(buf) ;
-            Args.addArg<int64>(adjoint_a_);
+        ArgsImpl<> Args = ArgsImpl<>() ;
+        Args.addArg<Tensor>(*a_values) ;
+        Args.addArg<Tensor>(*a_indices) ;
+        Args.addArg<int64>(a_shape_t(1)) ;
+        Args.addArg<int64>(a_shape_t(0)) ;
+        Args.addArg<Tensor>(*b) ;
+        Args.addArg<Tensor>(*out) ;
+        Args.addArg<Tensor>(buf) ;
+        Args.addArg<int64>(adjoint_a_);
 
-            Call(ctx, "SparseTensorDenseMatMul", Args);
-        }
+        Call(ctx, "SparseTensorDenseMatMul", Args); 
     }
 
 private:
     bool adjoint_a_;
     bool adjoint_b_;
+    bool use_ve_sparse_;
 };
 
 REGISTER_KERNEL_BUILDER(                       \

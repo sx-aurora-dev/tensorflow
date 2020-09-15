@@ -111,7 +111,8 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
     return SparseTensor(
         indices=sparse_tensor_value.indices,
         values=sparse_tensor_value.values,
-        dense_shape=sparse_tensor_value.dense_shape)
+        dense_shape=sparse_tensor_value.dense_shape,
+	use_ve_sparse=sparse_tensor_value.use_ve_sparse)
 
   def __init__(self, indices, values, dense_shape, use_ve_sparse=False,ve_indices=None, ve_values=None):
     """Creates a `SparseTensor`.
@@ -120,6 +121,9 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
       indices: A 2-D int64 tensor of shape `[N, ndims]`.
       values: A 1-D tensor of any type and shape `[N]`.
       dense_shape: A 1-D int64 tensor of shape `[ndims]`.
+      use_ve_sparse: A flag whether you use a format of VE.
+      ve_indices: A 1-D int64 tensor.
+      ve_values: A 1-D float tensor.
 
     Raises:
       ValueError: When building an eager SparseTensor if `dense_shape` is
@@ -130,7 +134,7 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
           indices, name="indices", dtype=dtypes.int64)
       # TODO(touts): Consider adding mutable_values() when 'values'
       # is a VariableOp and updating users of SparseTensor.
-      values = ops.internal_convert_to_tensor(values, name="values")
+      values = ops.convert_to_tensor(values, name="values")
       dense_shape = ops.convert_to_tensor(
           dense_shape, name="dense_shape", dtype=dtypes.int64)
       dense_shape_default = tensor_util.constant_value_as_shape(dense_shape)
@@ -230,11 +234,8 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
     return self._indices.graph
 
   def __str__(self):
-    if(self._use_ve_sparse):
-        return "VESparseTensor(indices=%s, values=%s, dense_shape=%s)" % (
-            self._ve_indices, self._ve_values, self._dense_shape)
-    return "SparseTensor(indices=%s, values=%s, dense_shape=%s)" % (
-        self._indices, self._values, self._dense_shape)
+    return "SparseTensor(indices=%s, values=%s, dense_shape=%s, use_ve_sparse=%s,ve_indices=%s, ve_values=%s)" % (
+        self._indices, self._values, self._dense_shape, self._use_ve_sparse,self._ve_indices, self._ve_values)
 
   def eval(self, feed_dict=None, session=None):
     """Evaluates this sparse tensor in a `Session`.
