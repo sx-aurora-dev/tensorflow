@@ -114,7 +114,7 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
         dense_shape=sparse_tensor_value.dense_shape,
 	use_ve_sparse=sparse_tensor_value.use_ve_sparse)
 
-  def __init__(self, indices, values, dense_shape, use_ve_sparse=False,ve_indices=None, ve_values=None):
+  def __init__(self, indices, values, dense_shape, use_ve_sparse=False, ve_indices=None, ve_values=None):
     """Creates a `SparseTensor`.
 
     Args:
@@ -135,6 +135,7 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
       # TODO(touts): Consider adding mutable_values() when 'values'
       # is a VariableOp and updating users of SparseTensor.
       values = ops.convert_to_tensor(values, name="values")
+
       dense_shape = ops.convert_to_tensor(
           dense_shape, name="dense_shape", dtype=dtypes.int64)
       dense_shape_default = tensor_util.constant_value_as_shape(dense_shape)
@@ -159,6 +160,8 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
 
     self._use_ve_sparse = use_ve_sparse
     if(self._use_ve_sparse):
+        if indices.shape[1] != 2:
+          raise ValueError("Expected a shape[1] of indices with 2. A shape[1] of indices is {}".format(indices.shape[1]))
         if((ve_indices is None) or (ve_values is None)):
             ve_sparse = ops.convert_to_ve_sparse_tensor(indices,values,dense_shape)
             self._ve_indices = ve_sparse[0]
@@ -235,7 +238,7 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
 
   def __str__(self):
     return "SparseTensor(indices=%s, values=%s, dense_shape=%s, use_ve_sparse=%s,ve_indices=%s, ve_values=%s)" % (
-        self._indices, self._values, self._dense_shape, self._use_ve_sparse,self._ve_indices, self._ve_values)
+        self._indices, self._values, self._dense_shape, self._use_ve_sparse, self._ve_indices, self._ve_values)
 
   def eval(self, feed_dict=None, session=None):
     """Evaluates this sparse tensor in a `Session`.
@@ -265,7 +268,7 @@ class SparseTensor(internal.NativeObject, composite_tensor.CompositeTensor):
         indices, values, dense_shape = _eval_using_default_session(
         [self.indices, self.values, self.dense_shape], feed_dict, self.graph,
         session)
-    return SparseTensorValue(indices, values, dense_shape,use_ve_sparse,ve_indices, ve_values)
+    return SparseTensorValue(indices, values, dense_shape, use_ve_sparse, ve_indices, ve_values)
 
   @staticmethod
   def _override_operator(operator, func):

@@ -204,7 +204,7 @@ public:
 
         OP_REQUIRES(
             ctx, use_ve_sparse_,
-            errors::InvalidArgument("This format is not supported"));
+            errors::InvalidArgument("This format is not supported. use_ve_sparse = 0"));
         OP_REQUIRES_OK(ctx, ctx->input("a_indices", &a_indices));
         OP_REQUIRES_OK(ctx, ctx->input("a_values", &a_values));
         OP_REQUIRES_OK(ctx, ctx->input("a_shape", &a_shape));
@@ -222,7 +222,7 @@ public:
         OP_REQUIRES(
                     ctx, 1 == ((adjoint_b_) ? b->shape().dim_size(0) : b->shape().dim_size(1)) ,
                     errors::InvalidArgument(
-                        "VESparseTensorDenseMatMulOp only support spmv. b is not a vecotor."));
+                        "VESparseTensorDenseMatMulOp only supports spmv. b is not a vecotor."));
 
         OP_REQUIRES(
                     ctx, inner_right == inner_left,

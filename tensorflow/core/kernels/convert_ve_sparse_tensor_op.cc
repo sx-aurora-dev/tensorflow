@@ -1,17 +1,12 @@
 
-
 #include <vector>
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/util/sparse/sparse_tensor.h"
 
-//#define TENSORFLOW_USE_VE
-
 #ifdef TENSORFLOW_USE_VE
 #include "tensorflow/core/framework/ve_ops_common.h"
 #endif
-
-
 
 
 namespace tensorflow {
