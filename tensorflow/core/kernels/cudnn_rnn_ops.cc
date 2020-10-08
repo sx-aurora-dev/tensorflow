@@ -2628,7 +2628,7 @@ class VERNNForwardOp : public VERNNKernelCommon {
     Tensor work_space;
     OP_REQUIRES_OK(context, context->allocate_temp(
                       reinterpret_cast<DataType>(input->dtype()),
-                      TensorShape({model_shapes.batch_size * model_shapes.num_units * 8}),
+                      TensorShape({(model_shapes.max_seq_length + 1 ) * model_shapes.batch_size * model_shapes.num_units * 4}),
                       &work_space));
 
 #if 0     // current VERNN impl does not use working memory
