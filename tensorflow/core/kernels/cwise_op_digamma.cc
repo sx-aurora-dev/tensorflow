@@ -22,4 +22,7 @@ REGISTER3(UnaryOp, CPU, "Digamma", functor::digamma, float, Eigen::half,
 REGISTER3(UnaryOp, GPU, "Digamma", functor::digamma, float, Eigen::half,
           double);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Digamma, float);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

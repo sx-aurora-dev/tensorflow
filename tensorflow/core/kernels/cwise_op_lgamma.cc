@@ -20,5 +20,7 @@ REGISTER3(UnaryOp, CPU, "Lgamma", functor::lgamma, float, Eigen::half, double);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER3(UnaryOp, GPU, "Lgamma", functor::lgamma, float, Eigen::half, double);
 #endif
-
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Lgamma, float);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow
