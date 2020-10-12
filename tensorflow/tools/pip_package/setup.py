@@ -49,7 +49,7 @@ from setuptools.dist import Distribution
 # result for pip.
 # Also update tensorflow/tensorflow.bzl and
 # tensorflow/core/public/version.h
-_VERSION = '2.3.0'
+_VERSION = '2.3.1'
 
 REQUIRED_PACKAGES = [
     'absl-py >= 0.7.0',
@@ -69,8 +69,6 @@ REQUIRED_PACKAGES = [
     'wrapt >= 1.11.1',
     'wheel >= 0.26',
     'six >= 1.12.0',
-    # scipy < 1.4.1 causes segfaults due to pybind11
-    'scipy == 1.4.1',
 ]
 
 if sys.byteorder == 'little':
