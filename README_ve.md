@@ -10,8 +10,8 @@ We have tested on CentOS7.7 and CentOS8.1:
 
 CentOS7.7
 
-- veos: 2.5.0
-- veoffload: 2.5.0
+- veos: 2.6.0
+- veoffload-aveo: 2.6.0
 - python: 3.6
 
 CentOS8.1
