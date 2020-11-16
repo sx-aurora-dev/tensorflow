@@ -9,14 +9,16 @@ We are providing a whl package on github. See [releases](https://github.com/sx-a
 We have tested on CentOS7.7 and CentOS8.1:
 
 CentOS7.7
-    - veos: 2.5.0
-    - veoffload: 2.5.0
-    - python: 3.6
+
+- veos: 2.5.0
+- veoffload: 2.5.0
+- python: 3.6
 
 CentOS8.1
-    - veos: 2.7.2
-    - veoffload-aveo: 2.7.1
-    - python: 3.6
+
+- veos: 2.7.2
+- veoffload-aveo: 2.7.1
+- python: 3.6
 
 ### Enable Huge Page for DMA
 
