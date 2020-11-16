@@ -6,11 +6,17 @@ You can use prebuilt packages if you do not need to modify tensorflow.
 
 We are providing a whl package on github. See [releases](https://github.com/sx-aurora-dev/tensorflow/releases) page.
 
-We have tested on CentOS 7.7 and:
+We have tested on CentOS7.7 and CentOS8.1:
 
-- veos: 2.5.0
-- veoffload: 2.5.0
-- python: 3.6
+CentOS7.7
+    - veos: 2.5.0
+    - veoffload: 2.5.0
+    - python: 3.6
+
+CentOS8.1
+    - veos: 2.7.2
+    - veoffload-aveo: 2.7.1
+    - python: 3.6
 
 ### Enable Huge Page for DMA
 
@@ -23,23 +29,32 @@ example to enable huge pages.
 
 ### Install required packages
 
+CentOS7
+
 ```
 % yum install centos-release-scl
 % yum install rh-python36 veoffload veoffload-veorun
 ```
 
-### Create virtualenv with python 3.6
-
-Create virtualenv and update packages after enabling scl, then install prebuilt
-packages.
+CentOS8
 
 ```
-$ scl enable rh-python36 bash
-$ virtualenv ~/.virtualenvs/tmp
+% yum install python36 python36-devel
+```
+
+
+### Create virtualenv with python 3.6
+
+Create virtualenv and update package, then install prebuilt packages.  If you
+are using CentOS7, enable scl first.
+
+```
+$ scl enable rh-python36 bash # CentOS7
+$ python3.6 -mvenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
-(tmp)$ pip install -U six numpy wheel setuptools
-(tmp)% pip install -U tensorflow_ve-2.1.0-cp36-cp36m-linux_x86_64.whl
+(tms)$ pip install -U six numpy==1.18.0 wheel setuptools
+(tmp)% pip install -U tensorflow_ve-2.3.1-cp36-cp36m-linux_x86_64.whl
 ```
 
 Now you can run your scripts.
@@ -55,34 +70,25 @@ We have tested on above envirionment with:
 
 - bazel 3.1.0
 - gcc 8.3.1 (devtoolset-8)
-- git 2.9.3 (rh-git29)
+- git 2.9.3 (rh-git29 on CentOS7) or 2.18.1 (CentOS8)
 
 
 ### Setup
 
-Install required packages and create virtualenv as described above. In
-addition, you have to install some packages.
+If you are using CentOS7, install devtoolset and git then enable scl.
 
 ```
 $ yum install devtoolset-8 rh-git29 veoffload-devel veoffload-veorun-devel
+$ scl enable rh-python36 devtoolset-8 rh-git29 bash
 ```
 
-Install bazel.
-
-```
-% cd /etc/yum.repos.d
-% wget https://copr.fedorainfracloud.org/coprs/vbatts/bazel/repo/epel-7/vbatts-bazel-epel-7.repo
-% yum install bazel
-```
-
-If you can not find the specific version of bazel, see https://github.com/vbatts/copr-build-bazel.
+Download bazel 3.1.0 from <https://github.com/bazelbuild/bazel/releases/tag/3.1.0> and install.
 
 ### Build tensorflow
 
-Build tensorflow with scl and virtualenv.
+Build tensorflow with virtualenv.
 
 ```
-$ scl enable rh-python36 devtoolset-8 rh-git29 bash
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)% pip install keras-preprocessing
 (tmp)% ./configure # answer N for all questions. You can probably ignore an error on getsitepackages.
@@ -91,6 +97,10 @@ $ source ~/.virtualenvs/tmp/bin/activate
 ```
 
 You can see a tensorflow package in current direcotry.
+
+If you have problem on http proxy, try bazel option:
+`--host_jvm_args=-Djavax.net.ssl.trustStore='/etc/pki/ca-trust/extracted/java/cacerts'
+--host_jvm_args=-Djavax.net.ssl.trustStorePassword='changeit'`.
 
 We need BAZEL_LINKLIBS and BAZEL_LINKOPTS. See https://github.com/bazelbuild/bazel/issues/10327.
 
@@ -120,8 +130,8 @@ You can specify version of ncc/nc++.
 
 ```
 (tmp)% (cd build && cmake3 \
-        -DNCC=/opt/nec/ve/bin/ncc-3.0.1 \
-        -DNCXX=/opt/nec/ve/bin/nc++-3.0.1 .. && make)
+        -DNCC=/opt/nec/ve/bin/ncc-3.0.6 \
+        -DNCXX=/opt/nec/ve/bin/nc++-3.0.6 .. && make)
 ```
 
 Your veorun_tf can be used by setting VEORUN_BIN.
@@ -132,6 +142,6 @@ Your veorun_tf can be used by setting VEORUN_BIN.
 
 We have tested on above envirionment with:
 
-- llvm-ve 1.11.0
-- ncc/nc++ 3.0.1
+- llvm-ve 1.16.0
+- ncc/nc++ 3.0.6
 
