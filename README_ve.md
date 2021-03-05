@@ -2,6 +2,8 @@
 
 You can use prebuilt packages if you do not need to modify tensorflow.
 
+[tf-samples](https://github.com/sx-aurora-dev/tf-samples) repository includes sample programs we have tested with tensorflow-ve.
+
 ## Using prebuilt packages
 
 We are providing a whl package on github. See [releases](https://github.com/sx-aurora-dev/tensorflow/releases) page.
