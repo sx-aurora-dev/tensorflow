@@ -20,12 +20,10 @@ REGISTER6(UnaryOp, CPU, "Log", functor::log, float, Eigen::half, double,
           bfloat16, complex64, complex128);
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if !defined(MLIR_GENERATED_GPU_KERNELS_ENABLED)
 REGISTER3(UnaryOp, GPU, "Log", functor::log, float, Eigen::half, double);
 #endif
-
-#ifdef TENSORFLOW_USE_SYCL
-REGISTER2(UnaryOp, SYCL, "Log", functor::log, float, double);
-#endif  // TENSORFLOW_USE_SYCL
+#endif
 
 #ifdef TENSORFLOW_USE_VE
 REGISTER_VE_UNARY_OP(Log, float);

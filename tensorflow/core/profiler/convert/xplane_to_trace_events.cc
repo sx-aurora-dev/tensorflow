@@ -71,10 +71,7 @@ void ConvertXPlaneToTraceEvents(uint32 device_id, const XPlaneVisitor& xplane,
         [device_id, resource_id, trace](const XEventVisitor& xevent) {
           int64 event_type =
               xevent.Type().value_or(HostEventType::kUnknownHostEventType);
-          if (event_type == HostEventType::kMemoryAllocation ||
-              event_type == HostEventType::kMemoryDeallocation) {
-            return;
-          }
+          if (IsInternalEvent(event_type)) return;
           auto* event = trace->add_trace_events();
           auto& args = *event->mutable_args();
           event->set_device_id(device_id);
@@ -91,6 +88,9 @@ void ConvertXPlaneToTraceEvents(uint32 device_id, const XPlaneVisitor& xplane,
           xevent.ForEachStat([&](const XStatVisitor& stat) {
             if (stat.ValueCase() == XStat::VALUE_NOT_SET) return;
             if (IsInternalStat(stat.Type())) return;
+            if (stat.Type() == StatType::kStepName) {
+              event->set_name(stat.ToString());
+            }
             args[std::string(stat.Name())] = stat.ToString();
           });
         });
@@ -126,16 +126,16 @@ void ConvertXSpaceToTraceEvents(const XSpace& xspace, Trace* trace) {
     XPlaneVisitor xplane = CreateTfXPlaneVisitor(host_plane);
     ConvertXPlaneToTraceEvents(kHostThreadsDeviceId, xplane, trace);
   }
-
-#ifdef TENSORFLOW_USE_VE
-  std::vector<const XPlane*> device_planes;
+  std::vector<const XPlane*> device_planes =
       FindPlanesWithPrefix(xspace, kGpuPlanePrefix);
+  // We don't expect GPU and TPU planes to be present in the same XSpace.
+  if (device_planes.empty()) {
+    device_planes = FindPlanesWithPrefix(xspace, kTpuPlanePrefix);
+  }
+#ifdef TENSORFLOW_USE_VE
   const std::vector<const XPlane*> tmp =
       FindPlanesWithPrefix(xspace, kVePlanePrefix);
   std::move(tmp.begin(), tmp.end(), std::back_inserter(device_planes));
-#else
-  const std::vector<const XPlane*> device_planes =
-      FindPlanesWithPrefix(xspace, kGpuPlanePrefix);
 #endif
   for (const XPlane* device_plane : device_planes) {
     XPlaneVisitor xplane = CreateTfXPlaneVisitor(device_plane);

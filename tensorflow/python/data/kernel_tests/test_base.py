@@ -24,6 +24,7 @@ from tensorflow.python.data.util import nest
 from tensorflow.python.data.util import structure
 from tensorflow.python.eager import context
 from tensorflow.python.framework import combinations
+from tensorflow.python.framework import config
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
@@ -49,6 +50,21 @@ def eager_only_combinations():
 def graph_only_combinations():
   """Returns the default test combinations for graph mode only tf.data tests."""
   return combinations.combine(tf_api_version=[1, 2], mode="graph")
+
+
+def v1_only_combinations():
+  """Returns the default test combinations for v1 only tf.data tests."""
+  return combinations.combine(tf_api_version=1, mode=["eager", "graph"])
+
+
+def v2_only_combinations():
+  """Returns the default test combinations for v2 only tf.data tests."""
+  return combinations.combine(tf_api_version=2, mode=["eager", "graph"])
+
+
+def v2_eager_only_combinations():
+  """Returns the default test combinations for v2 eager only tf.data tests."""
+  return combinations.combine(tf_api_version=2, mode="eager")
 
 
 class DatasetTestBase(test.TestCase):
@@ -133,6 +149,10 @@ class DatasetTestBase(test.TestCase):
   def getDatasetOutput(self, dataset, requires_initialization=False):
     get_next = self.getNext(
         dataset, requires_initialization=requires_initialization)
+    return self.getIteratorOutput(get_next)
+
+  def getIteratorOutput(self, get_next):
+    """Evaluates `get_next` until end of input, returning the results."""
     results = []
     while True:
       try:
@@ -325,6 +345,32 @@ class DatasetTestBase(test.TestCase):
       dataset = dataset_fn(delay_ms)
       actual = self.getDatasetOutput(dataset)
       self.assertCountEqual(expected_elements, actual)
-      if actual[0] != expected_elements[0]:
-        return
+      for i in range(len(actual)):
+        if actual[i] != expected_elements[i]:
+          return
     self.fail("Failed to observe nondeterministic ordering")
+
+  def configureDevicesForMultiDeviceTest(self, num_devices):
+    """Configures number of logical devices for multi-device tests.
+
+    It returns a list of device names. If invoked in GPU-enabled runtime, the
+    last device name will be for a GPU device. Otherwise, all device names will
+    be for a CPU device.
+
+    Args:
+      num_devices: The number of devices to configure.
+
+    Returns:
+      A list of device names to use for a multi-device test.
+    """
+    cpus = config.list_physical_devices("CPU")
+    gpus = config.list_physical_devices("GPU")
+    config.set_logical_device_configuration(cpus[0], [
+        context.LogicalDeviceConfiguration() for _ in range(num_devices)
+    ])
+    devices = ["/device:CPU:" + str(i) for i in range(num_devices - 1)]
+    if gpus:
+      devices.append("/device:GPU:0")
+    else:
+      devices.append("/device:CPU:" + str(num_devices - 1))
+    return devices

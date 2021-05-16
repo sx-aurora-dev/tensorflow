@@ -1,8 +1,8 @@
 #include <stdlib.h>
 #include <memory>
 
-#include "tensorflow/core/profiler/internal/profiler_interface.h"
-#include "tensorflow/core/profiler/internal/profiler_factory.h"
+#include "tensorflow/core/profiler/lib/profiler_interface.h"
+#include "tensorflow/core/profiler/lib/profiler_factory.h"
 #include "tensorflow/core/profiler/utils/xplane_builder.h"
 #include "tensorflow/core/profiler/utils/xplane_schema.h"
 #include "tensorflow/core/profiler/utils/xplane_utils.h"

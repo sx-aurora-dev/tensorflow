@@ -18,6 +18,7 @@ limitations under the License.
 #define EIGEN_USE_THREADS
 
 #include "tensorflow/core/kernels/relu_op.h"
+
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/numeric_op.h"
 #include "tensorflow/core/framework/op_kernel.h"
@@ -35,9 +36,6 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
-#ifdef TENSORFLOW_USE_SYCL
-typedef Eigen::SyclDevice SYCLDevice;
-#endif  // TENSORFLOW_USE_SYCL
 #ifdef TENSORFLOW_USE_VE
 typedef Eigen::VeDevice VEDevice;
 #endif  // TENSORFLOW_USE_VE
@@ -80,7 +78,7 @@ TF_CALL_REAL_NUMBER_TYPES(REGISTER_RELU_KERNELS);
       SeluGradOp<CPUDevice, type>)
 
 // Elu and Selu only make sense with float or double.
-TF_CALL_GPU_NUMBER_TYPES(REGISTER_ELU_KERNELS);
+TF_CALL_FLOAT_TYPES(REGISTER_ELU_KERNELS);
 #undef REGISTER_ELU_KERNELS
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -219,44 +217,6 @@ REGISTER_KERNEL_BUILDER(
     ReluOp<GPUDevice, qint8>);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-
-#ifdef TENSORFLOW_USE_SYCL
-// Registration of the GPU implementations.
-#define REGISTER_SYCL_KERNELS(type)                                        \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("Relu").Device(DEVICE_SYCL).TypeConstraint<type>("T"),          \
-      ReluOp<SYCLDevice, type>);                                           \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("ReluGrad").Device(DEVICE_SYCL).TypeConstraint<type>("T"),      \
-      ReluGradOp<SYCLDevice, type>);                                       \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("Relu6").Device(DEVICE_SYCL).TypeConstraint<type>("T"),         \
-      Relu6Op<SYCLDevice, type>);                                          \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("Relu6Grad").Device(DEVICE_SYCL).TypeConstraint<type>("T"),     \
-      Relu6GradOp<SYCLDevice, type>);                                      \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("LeakyRelu").Device(DEVICE_SYCL).TypeConstraint<type>("T"),     \
-      LeakyReluOp<SYCLDevice, type>);                                      \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("LeakyReluGrad").Device(DEVICE_SYCL).TypeConstraint<type>("T"), \
-      LeakyReluGradOp<SYCLDevice, type>);                                  \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("Elu").Device(DEVICE_SYCL).TypeConstraint<type>("T"),           \
-      EluOp<SYCLDevice, type>);                                            \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("EluGrad").Device(DEVICE_SYCL).TypeConstraint<type>("T"),       \
-      EluGradOp<SYCLDevice, type>);                                        \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("Selu").Device(DEVICE_SYCL).TypeConstraint<type>("T"),          \
-      SeluOp<SYCLDevice, type>);                                           \
-  REGISTER_KERNEL_BUILDER(                                                 \
-      Name("SeluGrad").Device(DEVICE_SYCL).TypeConstraint<type>("T"),      \
-      SeluGradOp<SYCLDevice, type>)
-
-TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL_KERNELS);
-#undef REGISTER_SYCL_KERNELS
-#endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
 
@@ -557,6 +517,6 @@ TF_CALL_float(REGISTER_VE_KERNELS)
 #endif
 #undef REGISTER_VE_KERNELS
 
-#endif
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

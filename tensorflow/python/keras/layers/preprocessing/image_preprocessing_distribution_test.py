@@ -12,37 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Tests for keras.layers.preprocessing.normalization."""
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+"""Distribution tests for keras.layers.preprocessing.image_preprocessing."""
 
 import numpy as np
 
 from tensorflow.python import keras
 from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.distribute import combinations
-from tensorflow.python.distribute import strategy_combinations
+from tensorflow.python.distribute import combinations as ds_combinations
 from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import test_combinations as combinations
 from tensorflow.python.keras import keras_parameterized
+from tensorflow.python.keras.distribute.strategy_combinations import all_strategies
 from tensorflow.python.keras.layers.preprocessing import image_preprocessing
 from tensorflow.python.keras.layers.preprocessing import preprocessing_test_utils
 from tensorflow.python.platform import test
 
 
-@combinations.generate(
+@ds_combinations.generate(
     combinations.combine(
-        distribution=strategy_combinations.all_strategies,
+        distribution=all_strategies,
         mode=["eager", "graph"]))
 class ImagePreprocessingDistributionTest(
     keras_parameterized.TestCase,
     preprocessing_test_utils.PreprocessingLayerTest):
 
   def test_distribution(self, distribution):
-    np_images = np.random.random((1000, 32, 32, 3)).astype(np.float32)
+    if "CentralStorage" in type(distribution).__name__:
+      self.skipTest("Does not work with CentralStorageStrategy yet.")
+    # TODO(b/159738418): large image input causes OOM in ubuntu multi gpu.
+    np_images = np.random.random((32, 32, 32, 3)).astype(np.float32)
     image_dataset = dataset_ops.Dataset.from_tensor_slices(np_images).batch(
-        32, drop_remainder=True)
+        16, drop_remainder=True)
 
     with distribution.scope():
       input_data = keras.Input(shape=(32, 32, 3), dtype=dtypes.float32)
@@ -58,7 +58,7 @@ class ImagePreprocessingDistributionTest(
       output = flatten_layer(preprocessed_image)
       cls_layer = keras.layers.Dense(units=1, activation="sigmoid")
       output = cls_layer(output)
-      model = keras.Model(inputs=input_data, outputs=preprocessed_image)
+      model = keras.Model(inputs=input_data, outputs=output)
     model.compile(loss="binary_crossentropy")
     _ = model.predict(image_dataset)
 

@@ -23,15 +23,6 @@ limitations under the License.
 namespace tensorflow {
 REGISTER4(UnaryOp, CPU, "Neg", functor::neg, int8, int16, int32, int64);
 
-#ifdef TENSORFLOW_USE_SYCL
-REGISTER3(UnaryOp, SYCL, "Neg", functor::neg, float, double, int64);
-REGISTER_KERNEL_BUILDER(Name("Neg")
-                            .Device(DEVICE_SYCL)
-                            .HostMemory("x")
-                            .HostMemory("y")
-                            .TypeConstraint<int32>("T"),
-                        UnaryOp<CPUDevice, functor::neg<int32>>);
-#endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
 REGISTER_VE_UNARY_OP(Neg, float);
@@ -44,7 +35,9 @@ REGISTER_KERNEL_BUILDER(Name("Neg")
 #endif  // TENSORFLOW_USE_VE
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if !defined(MLIR_GENERATED_GPU_KERNELS_ENABLED)
 REGISTER3(UnaryOp, GPU, "Neg", functor::neg, int8, int16, int64);
+#endif
 
 // A special GPU kernel for int32.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel

@@ -339,7 +339,7 @@ class DebugNumericSummaryV2Test(test_util.TensorFlowTestCase):
         debug_event_pb2.TensorDebugMode.SHAPE,
     ]
     # Maximum allowed tensor_id
-    tensor_id = np.power(2, 53)
+    tensor_id = np.power(2, 53, dtype=np.int64)
     for mode in modes:
       self.evaluate(
           gen_debug_ops.debug_numeric_summary_v2(
@@ -749,7 +749,7 @@ class DebugNumericSummaryV2Test(test_util.TensorFlowTestCase):
     with self.session(graph=ops.Graph()):
       t1 = constant_op.constant([-1.0, 1.0])
       t2 = constant_op.constant([0.0, 0.0])
-      with self.assertRaisesRegexp(
+      with self.assertRaisesRegex(
           errors.InvalidArgumentError,
           r"pass through test.*had -Inf and \+Inf values"):
         self.evaluate(
@@ -760,7 +760,7 @@ class DebugNumericSummaryV2Test(test_util.TensorFlowTestCase):
     with self.session(graph=ops.Graph()):
       t1 = constant_op.constant([-1.0, 1.0, 0.0])
       t2 = constant_op.constant([0.0, 0.0, 0.0])
-      with self.assertRaisesRegexp(
+      with self.assertRaisesRegex(
           errors.InvalidArgumentError,
           r"pass through test.*had -Inf, \+Inf, and NaN values"):
         self.evaluate(
@@ -771,7 +771,7 @@ class DebugNumericSummaryV2Test(test_util.TensorFlowTestCase):
     with self.session(graph=ops.Graph()):
       t1 = constant_op.constant([0.0, 1.0])
       t2 = constant_op.constant([0.0, 0.0])
-      with self.assertRaisesRegexp(
+      with self.assertRaisesRegex(
           errors.InvalidArgumentError,
           r"pass through test.*had \+Inf and NaN values"):
         self.evaluate(
