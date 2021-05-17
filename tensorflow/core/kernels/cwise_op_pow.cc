@@ -26,4 +26,8 @@ REGISTER3(BinaryOp, GPU, "Pow", functor::pow, float, Eigen::half, double);
 REGISTER(BinaryOp, GPU, "Pow", functor::safe_pow_ignore_error, int64);
 #endif
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(Pow, float, float, float);
+#endif
 }  // namespace tensorflow

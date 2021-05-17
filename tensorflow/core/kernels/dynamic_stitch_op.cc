@@ -366,4 +366,26 @@ TF_CALL_COMPLEX_TYPES(REGISTER_DYNAMIC_STITCH_GPU);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#if 1
+#define REGISTER_DYNAMIC_STITCH_VE(type)               \
+  REGISTER_KERNEL_BUILDER(Name("DynamicStitch")          \
+                              .Device(DEVICE_VE)       \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("indices")     \
+                              .HostMemory("data")        \
+                              .HostMemory("merged"),     \
+                          DynamicStitchOpCPU<type>)      \
+  REGISTER_KERNEL_BUILDER(Name("ParallelDynamicStitch")  \
+                              .Device(DEVICE_VE)       \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("indices")     \
+                              .HostMemory("data")        \
+                              .HostMemory("merged"),     \
+                          ParallelDynamicStitchOpCPU<type>)
+
+TF_CALL_POD_STRING_TYPES(REGISTER_DYNAMIC_STITCH_VE);
+#undef REGISTER_DYNAMIC_STITCH_VE
+#endif
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

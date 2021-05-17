@@ -24,11 +24,19 @@ REGISTER3(UnaryOp, GPU, "Sigmoid", functor::sigmoid, float, Eigen::half,
           double);
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Sigmoid, float);
+#endif
+
 REGISTER6(SimpleBinaryOp, CPU, "SigmoidGrad", functor::sigmoid_grad, bfloat16,
           float, Eigen::half, double, complex64, complex128);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 REGISTER3(SimpleBinaryOp, GPU, "SigmoidGrad", functor::sigmoid_grad, float,
           Eigen::half, double);
+#endif
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(SigmoidGrad, float, float, float);
 #endif
 
 }  // namespace tensorflow

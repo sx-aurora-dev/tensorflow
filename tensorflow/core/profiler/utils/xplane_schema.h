@@ -46,6 +46,11 @@ TF_CONST_INIT extern const absl::string_view kTFStreamzPlaneName;
 // Name of XPlane that contains events from python tracer.
 TF_CONST_INIT extern const absl::string_view kPythonTracerPlaneName;
 
+#ifdef TENSORFLOW_USE_VE
+// Name prefix of XPlane that contains VE events.
+ABSL_CONST_INIT extern const absl::string_view kVePlanePrefix;
+#endif
+
 // Names of XLines that contain ML-level events.
 TF_CONST_INIT extern const absl::string_view kStepLineName;
 TF_CONST_INIT extern const absl::string_view kTensorFlowNameScopeLineName;

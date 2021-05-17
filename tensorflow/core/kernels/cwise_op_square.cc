@@ -41,4 +41,13 @@ REGISTER_KERNEL_BUILDER(Name("Square")
                         UnaryOp<CPUDevice, functor::square<int32>>);
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Square, float);
+REGISTER_KERNEL_BUILDER(Name("Square")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .TypeConstraint<int32>("T"),
+                        UnaryOp<CPUDevice, functor::square<int32>>);
+#endif  // TENSORFLOW_USE_SYC
 }  // namespace tensorflow

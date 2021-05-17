@@ -26,6 +26,9 @@ REGISTER3(UnaryOp, GPU, "Tanh", functor::tanh, float, Eigen::half, double);
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Tanh, float);
+#endif
 
 REGISTER6(SimpleBinaryOp, CPU, "TanhGrad", functor::tanh_grad, float,
           Eigen::half, bfloat16, double, complex64, complex128);
@@ -33,4 +36,9 @@ REGISTER6(SimpleBinaryOp, CPU, "TanhGrad", functor::tanh_grad, float,
 REGISTER3(SimpleBinaryOp, GPU, "TanhGrad", functor::tanh_grad, float,
           Eigen::half, double);
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(TanhGrad, float, float, float);
+#endif
+
 }  // namespace tensorflow

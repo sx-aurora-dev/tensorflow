@@ -28,11 +28,19 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/work_sharder.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 class OpKernelContext;
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 namespace scatter_op {
 
@@ -405,6 +413,49 @@ template <typename T, typename Index, scatter_op::UpdateOp op>
 struct ScatterScalarFunctor<CPUDevice, T, Index, op>
     : ScatterScalarFunctorBase<CPUDevice, T, Index, op> {};
 
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T, typename Index, scatter_op::UpdateOp op>
+struct VEScatterFunctor {
+  Index operator()(OpKernelContext* c,
+	           Tensor *params,
+		   const Tensor &updates,
+		   const Tensor &indices ) {
+
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(*params);
+    args.addArg<Tensor>(updates);
+    args.addArg<Tensor>(indices);
+    args.addArg<int64>(static_cast<int64>(op)) ;
+
+    VEOpKernelHelper::Call(c, "Scatter", args);
+
+    return 0;
+  }
+};
+
+
+template <typename T, typename Index, scatter_op::UpdateOp op>
+struct VEScatterScalarFunctor {
+  Index operator()(OpKernelContext* c,
+	           Tensor *params,
+		   const Tensor &update,
+		   const Tensor &indices )
+  {
+
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(*params);
+    args.addArg<Tensor>(update);
+    args.addArg<Tensor>(indices);
+    args.addArg<int64>(static_cast<int64>(op)) ;
+
+    VEOpKernelHelper::Call(c, "ScatterScalar", args);
+
+    return 0 ;
+  }
+};
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace functor
 }  // namespace tensorflow

@@ -290,4 +290,11 @@ REGISTER_INPUT_COLOCATION_EXEMPTION("PartitionedCall");
 REGISTER_INPUT_COLOCATION_EXEMPTION("StatefulPartitionedCall");
 
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("PartitionedCall").Device(DEVICE_VE),
+                        PartitionedCallOp);
+REGISTER_KERNEL_BUILDER(Name("StatefulPartitionedCall").Device(DEVICE_VE),
+                        PartitionedCallOp);
+#endif
+
 }  // namespace tensorflow

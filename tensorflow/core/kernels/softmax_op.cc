@@ -25,10 +25,17 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/kernels/softmax_op_functor.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 // Partial specialization for a CPUDevice, that uses the Eigen implementation
 // from SoftmaxEigenImpl.
@@ -85,5 +92,47 @@ TF_CALL_FLOAT_TYPES(REGISTER_CPU);
 TF_CALL_FLOAT_TYPES(REGISTER_CPU);
 
 #undef REGISTER_CPU
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class SoftmaxOp<VEDevice, T> : public VEOpKernel {
+ public:
+  explicit SoftmaxOp(OpKernelConstruction* context) : VEOpKernel(context) {
+    log_ = str_util::StartsWith(type_string(), "Log");
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& logits_in = context->input(0);
+    OP_REQUIRES(context, TensorShapeUtils::IsVectorOrHigher(logits_in.shape()),
+                errors::InvalidArgument("logits must have >= 1 dimension, got ",
+                                        logits_in.shape().DebugString()));
+    Tensor* softmax_out = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 0, logits_in.shape(), &softmax_out));
+
+    ArgsImpl<> Args = ArgsImpl<>() ;
+    Args.addArg<Tensor>(logits_in) ;
+    Args.addArg<Tensor>(*softmax_out) ;
+    Args.addArg<int64_t>(log_?1:0) ;
+
+    Call(context, "Softmax", Args) ;
+
+  }
+
+ private:
+  bool log_;
+
+};
+
+
+REGISTER_KERNEL_BUILDER(
+    Name("Softmax").Device(DEVICE_VE).TypeConstraint<float>("T"),
+    SoftmaxOp<VEDevice, float>);
+REGISTER_KERNEL_BUILDER(
+    Name("LogSoftmax").Device(DEVICE_VE).TypeConstraint<float>("T"),
+    SoftmaxOp<VEDevice, float>);
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

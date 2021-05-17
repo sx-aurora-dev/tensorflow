@@ -21,10 +21,18 @@ limitations under the License.
 #include "tensorflow/core/protobuf/autotuning.pb.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/kernels/transpose_functor.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif
 
 // To be used inside depthwise_conv_grad_op.cc.
 template struct LaunchConv2DBackpropInputOp<CPUDevice, Eigen::half>;
@@ -709,5 +717,220 @@ template struct LaunchConv2DBackpropInputOp<GPUDevice, Eigen::half>;
 template struct LaunchConv2DBackpropInputOp<GPUDevice, double>;
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+struct LaunchConv2DBackpropInputOp<VEDevice, T> {
+  void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+                  const Tensor& out_backprop, const Tensor& filter,
+                  int row_dilation, int col_dilation, int row_stride,
+                  int col_stride, const Padding& padding,
+                  const std::vector<int64>& explicit_paddings,
+                  Tensor* in_backprop, TensorFormat data_format) {
+    VLOG(2) << "LaunchConv2DBackpropInputOp<VEDevice, T>";
+    VLOG(2) << "LaunchConv2DBackpropInputOp<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
+
+    if (padding == EXPLICIT) {
+      ctx->SetStatus(errors::Unimplemented(
+          "VE conv implementation only supports SAME/VALID padding."
+	  "Explicit padding is specified."));
+      return;
+    }
+
+    const int64 batch = GetTensorDim(*in_backprop, data_format, 'N');
+
+    const int64 out_rows = GetTensorDim(out_backprop, data_format, 'H');
+    const int64 out_cols = GetTensorDim(out_backprop, data_format, 'W');
+    const int64 out_depths = GetTensorDim(out_backprop, data_format, 'C');
+
+    const int64 f_rows = GetTensorDim(filter, FORMAT_HWCN, 'H');
+    const int64 f_cols = GetTensorDim(filter, FORMAT_HWCN, 'W');
+    const int64 f_ic  = GetTensorDim(filter, FORMAT_HWCN, 'C');
+    const int64 f_oc  = GetTensorDim(filter, FORMAT_HWCN, 'N');
+
+    const int64 in_rows = GetTensorDim(*in_backprop, data_format, 'H');
+    const int64 in_cols = GetTensorDim(*in_backprop, data_format, 'W');
+    const int64 in_depths = GetTensorDim(*in_backprop, data_format, 'C');
+
+    int row_padding = 0;
+    int col_padding = 0;
+    int data_type = in_backprop->dtype();
+
+    if (padding == SAME) {
+      const int row_pad_all = std::max<int>(0,
+					    (out_rows - 1) * row_stride +
+					    (f_rows - 1) * row_dilation + 1 - in_rows );
+      const int col_pad_all = std::max<int>(0,
+					    (out_cols - 1) * col_stride +
+					    (f_cols - 1) * col_dilation + 1 - in_cols );
+
+      row_padding = row_pad_all - row_pad_all/2 ;
+      col_padding = col_pad_all - col_pad_all/2 ;
+    }
+
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    /* Filter */
+    Tensor filter_transposed ;
+    if( f_ic * f_oc == 1 ) {
+      OP_REQUIRES(ctx, filter_transposed.CopyFrom(filter, ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic)),
+                  errors::Internal("Error during reshape and copy."));
+    }
+    else {
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(filter.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic),
+			 &filter_transposed));
+
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, filter, {3,2,0,1}, &filter_transposed));
+    }
+
+    /* Output_backprop, In_backprop */
+    Tensor in_bp_transposed, out_bp_transposed;
+    if ( data_format == FORMAT_NHWC ) {
+      // if data_format is NHWC, then allocate in/out tensor and transpose out tensor
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(in_backprop->dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+                         &out_bp_transposed));
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(in_backprop->dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+                         &in_bp_transposed)
+		     );
+
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, out_backprop, {0,3,1,2}, &out_bp_transposed));
+
+      args.addArg<Tensor>(out_bp_transposed) ;	// 0
+      args.addArg(filter_transposed) ;		// 1
+      args.addArg<Tensor>(in_bp_transposed) ;	// 2
+    }
+    else {
+      args.addArg<Tensor>(out_backprop) ;	// 0
+      args.addArg(filter_transposed) ;		// 1
+      args.addArg<Tensor>(*in_backprop) ;	// 2
+    }
+
+    /* conv params */
+    args.addArg<int>(row_stride);               // 3
+    args.addArg<int>(col_stride);               // 4
+    args.addArg<int>(row_dilation);             // 5
+    args.addArg<int>(col_dilation);             // 6
+    args.addArg<int>(row_padding);              // 7
+    args.addArg<int>(col_padding);              // 8
+
+    VEOpKernelHelper::Call(ctx, "Conv2DBackpropInput", args);
+
+    if ( data_format == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in tensor
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, in_bp_transposed, {0,2,3,1}, in_backprop));
+    }
+
+  }
+};
+
+template <typename Device, class T>
+class Conv2DVEBackpropInputOp : public OpKernel {
+ public:
+  explicit Conv2DVEBackpropInputOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    string data_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                errors::InvalidArgument("Invalid data format"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &strides_));
+    OP_REQUIRES(context, strides_.size() == 4,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 4 dimensions"));
+    int stride_n = GetTensorDim(strides_, data_format_, 'N');
+    int stride_c = GetTensorDim(strides_, data_format_, 'C');
+    int stride_h = GetTensorDim(strides_, data_format_, 'H');
+    int stride_w = GetTensorDim(strides_, data_format_, 'W');
+    OP_REQUIRES(
+        context, (stride_n == 1 && stride_c == 1),
+        errors::InvalidArgument("Current implementation does not yet support "
+                                "strides in the batch and depth dimensions."));
+    OP_REQUIRES(context, stride_h > 0 && stride_w > 0,
+                errors::InvalidArgument(
+                    "Row and column strides should be larger than 0."));
+
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+
+
+    OP_REQUIRES_OK(context, context->GetAttr("dilations", &dilations_));
+    OP_REQUIRES(context, dilations_.size() == 4,
+                errors::InvalidArgument("Sliding window dilations field must "
+                                        "specify 4 dimensions"));
+    int dilation_n = GetTensorDim(dilations_, data_format_, 'N');
+    int dilation_c = GetTensorDim(dilations_, data_format_, 'C');
+    int dilation_h = GetTensorDim(dilations_, data_format_, 'H');
+    int dilation_w = GetTensorDim(dilations_, data_format_, 'W');
+    OP_REQUIRES(context, (dilation_n == 1 && dilation_c == 1),
+                errors::InvalidArgument(
+                    "Current implementation does not yet support "
+                    "dilations in the batch and depth dimensions."));
+    OP_REQUIRES(
+        context, dilation_h > 0 && dilation_w > 0,
+        errors::InvalidArgument("Dilated rates should be larger than 0."));
+
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("explicit_paddings", &explicit_paddings_));
+    OP_REQUIRES_OK(context, CheckValidPadding(padding_, explicit_paddings_,
+                                              /*num_dims=*/4, data_format_));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input_sizes = context->input(0);
+    const Tensor& filter = context->input(1);
+    const Tensor& out_backprop = context->input(2);
+    OP_REQUIRES(
+        context, TensorShapeUtils::IsVector(input_sizes.shape()),
+        errors::InvalidArgument(
+            "Conv2DBackpropInput: input_sizes input must be 1-dim, not ",
+            input_sizes.dims()));
+    TensorShape input_shape;
+    OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+                                input_sizes.vec<int32>(), &input_shape));
+
+    ConvBackpropDimensions dims;
+    OP_REQUIRES_OK(context,
+                   ConvBackpropComputeDimensions(
+                       "Conv2DFastBackpropInput", /*num_spatial_dims=*/2,
+                       input_shape, filter.shape(), out_backprop.shape(),
+                       strides_, padding_, data_format_, &dims));
+
+    Tensor* in_backprop = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, input_shape, &in_backprop));
+
+
+    LaunchConv2DBackpropInputOp<Device, T>()(
+        context, false, false, out_backprop, filter,
+        /*row_dilation=*/1, /*col_dilation=*/1, dims.spatial_dims[0].stride,
+        dims.spatial_dims[1].stride, padding_, 
+        explicit_paddings_, in_backprop, data_format_);
+  }
+
+ private:
+  std::vector<int32> dilations_;
+  std::vector<int32> strides_;
+  Padding padding_;
+  std::vector<int64> explicit_paddings_;
+  TensorFormat data_format_;
+};
+
+REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropInput")
+                        .Device(DEVICE_VE)
+                        .TypeConstraint<float>("T")
+                        .HostMemory("input_sizes"),
+                        Conv2DVEBackpropInputOp<VEDevice, float>);
+
+template struct LaunchConv2DBackpropInputOp<VEDevice, float>;
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

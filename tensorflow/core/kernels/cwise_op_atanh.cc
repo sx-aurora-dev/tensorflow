@@ -26,4 +26,8 @@ REGISTER2(UnaryOp, GPU, "Atanh", functor::atanh, float, double);
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Atanh, float);
+#endif
+
 }  // namespace tensorflow

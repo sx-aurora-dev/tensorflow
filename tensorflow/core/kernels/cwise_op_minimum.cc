@@ -40,4 +40,18 @@ REGISTER_KERNEL_BUILDER(Name("Minimum")
 #endif
 
 
+#ifdef TENSORFLOW_USE_VE
+
+REGISTER_VE_BINARY_OP(Minimum, float, float, float);
+
+
+REGISTER_KERNEL_BUILDER(Name("Minimum")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::minimum<int32>>);
+#endif  // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

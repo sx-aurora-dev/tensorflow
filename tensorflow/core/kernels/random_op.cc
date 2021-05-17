@@ -34,6 +34,10 @@ limitations under the License.
 #include "tensorflow/core/util/guarded_philox_random.h"
 #include "tensorflow/core/util/work_sharder.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 #if EIGEN_COMP_GNUC && __cplusplus > 199711L
 #define DISABLE_FLOAT_EQUALITY_WARNING \
   _Pragma("GCC diagnostic push")       \
@@ -454,5 +458,26 @@ TF_CALL_uint64(REGISTER_FULL_INT);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+
+#ifdef TENSORFLOW_USE_VE
+class VERandomUniformOp : public VEOpKernel {
+  public:
+    explicit VERandomUniformOp(OpKernelConstruction* context) 
+      : VEOpKernel(context) {}
+
+    void Compute(OpKernelContext* ctx) override {
+      const Tensor& shape = ctx->input(0);
+      Tensor* output;
+      OP_REQUIRES_OK(ctx, AllocateOutputWithShape(ctx, shape, 0, &output));
+      Call(ctx, "RandomUniform", *output);
+    }
+};
+
+REGISTER_KERNEL_BUILDER(Name("RandomUniform")
+                        .Device(DEVICE_VE)
+                        .HostMemory("shape")
+                        .TypeConstraint<float>("dtype"),
+                        VERandomUniformOp);
+#endif // TENSORFLOW_USE_VE
 
 }  // end namespace tensorflow

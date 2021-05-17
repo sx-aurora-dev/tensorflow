@@ -70,10 +70,18 @@ limitations under the License.
 #include "tensorflow/stream_executor/tf_allocator_adapter.h"
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/kernels/transpose_functor.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif
 
 namespace {
 template <typename Device, typename T>
@@ -335,6 +343,134 @@ struct LaunchConv2DOp<GPUDevice, int32> {
   }
 };
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+struct LaunchConv2DOp<VEDevice, T> {
+  void operator()(OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+                  const Tensor& input, const Tensor& filter, int row_dilation,
+                  int col_dilation, int row_stride, int col_stride,
+                  const Padding& padding,
+                  const std::vector<int64>& explicit_paddings, Tensor* output,
+                  TensorFormat data_format) {
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>";
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: DeviceContext=" << ctx->op_device_context();
+#if 0
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: input.dtype=" << input.dtype();
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: DT_FLOAT=" << DT_FLOAT
+      << " DT_DOUBLE=" << DT_DOUBLE;
+    VLOG(2) << "LaunchConv2DOp<VEDevice, T>: sizeof(T)=" << sizeof(T);
+#endif
+
+    if (padding == EXPLICIT) {
+      ctx->SetStatus(errors::Unimplemented(
+          "VE conv implementation only supports SAME/VALID padding."
+	  "Explicit padding is specified."));
+      return;
+    }
+    
+    const int64 batch = GetTensorDim(input, data_format, 'N');
+
+    const int64 in_rows = GetTensorDim(input, data_format, 'H');
+    const int64 in_cols = GetTensorDim(input, data_format, 'W');
+    const int64 in_depths = GetTensorDim(input, data_format, 'C');
+
+    const int64 out_rows = GetTensorDim(*output, data_format, 'H');
+    const int64 out_cols = GetTensorDim(*output, data_format, 'W');
+    const int64 out_depths = GetTensorDim(*output, data_format, 'C');
+
+    const int64 f_rows = GetTensorDim(filter, FORMAT_HWCN, 'H');
+    const int64 f_cols = GetTensorDim(filter, FORMAT_HWCN, 'W');
+    const int64 f_ic  = GetTensorDim(filter, FORMAT_HWCN, 'C');
+    const int64 f_oc  = GetTensorDim(filter, FORMAT_HWCN, 'N');
+
+    int row_padding = 0;
+    int col_padding = 0;
+    int data_type = input.dtype();
+
+    if (padding == SAME ) {
+      const int row_pad_all = std::max<int>(0,
+					    (out_rows - 1) * row_stride +
+					    (f_rows - 1) * row_dilation + 1 - in_rows );
+      const int col_pad_all = std::max<int>(0,
+					    (out_cols - 1) * col_stride +
+					    (f_cols - 1) * col_dilation + 1 - in_cols );
+
+      row_padding = row_pad_all - row_pad_all/2 ;
+      col_padding = col_pad_all - col_pad_all/2 ;
+    }
+
+    VEOpKernelHelper::ArgsImpl<> args;
+
+    /* Input , Output */
+
+    Tensor in_transposed, out_transposed ;
+    if ( data_format == FORMAT_NHWC ) {
+      // if data_format is NHWC, then transpose in/out tensor
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+                         &in_transposed)
+		     );
+
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+                         &out_transposed));
+
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, input, {0,3,1,2}, &in_transposed));
+
+      args.addArg<Tensor>(in_transposed) ;	// 0
+      args.addArg<Tensor>(out_transposed) ;	// 1
+    }
+    else {
+      args.addArg<Tensor>(input) ;	// 0
+      args.addArg<Tensor>(*output) ;	// 1
+    }
+
+    /* Filter */
+    Tensor filter_transposed ;
+    if( f_ic * f_oc == 1 ) {
+      OP_REQUIRES(ctx, filter_transposed.CopyFrom(filter, ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic)),
+                  errors::Internal("Error during reshape copy."));
+    }
+    else {
+      OP_REQUIRES_OK(ctx,
+		     ctx->allocate_temp(
+			 reinterpret_cast<DataType>(input.dtype()),
+			 ShapeFromFormat(FORMAT_NCHW, f_oc, f_rows, f_cols, f_ic),
+			 &filter_transposed));
+
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, filter, {3,2,0,1}, &filter_transposed));
+    }
+    args.addArg(filter_transposed) ;	// 2
+
+    /* conv params */
+    args.addArg<int>(row_stride);       // 3
+    args.addArg<int>(col_stride);       // 4
+    args.addArg<int>(row_dilation);     // 5
+    args.addArg<int>(col_dilation);     // 6
+    args.addArg<int>(row_padding);      // 7
+    args.addArg<int>(col_padding);      // 8
+
+#if 0
+    args.addArg<int>(FORMAT_NHWC);	// data_layout   : current vetfkernel supports NCHW only.
+    args.addArg<int>(FORMAT_NHWC);	// filter_layout : current vetfkernel supports NCHW only.
+#endif
+
+    VEOpKernelHelper::Call(ctx, "Conv2D", args);
+
+
+    // if data_format is NHWC, then transpose output tensor
+    if ( data_format == FORMAT_NHWC ) {
+      OP_REQUIRES_OK( ctx, VEDoTranspose(ctx, out_transposed, {0,2,3,1}, output));
+    }
+  }
+};
+#endif // TENSORFLOW_USE_VE
 
 template <typename Device, typename T>
 class LaunchDeepConvOp {
@@ -640,6 +776,7 @@ class Conv2DOp : public BinaryOp<T> {
   }
 
   void Compute(OpKernelContext* context) override {
+    VLOG(2) << __PRETTY_FUNCTION__;
     // Input tensor is of the following dimensions:
     // [ batch, in_rows, in_cols, in_depth ]
     const Tensor& input = context->input(0);
@@ -734,10 +871,20 @@ TF_CALL_double(REGISTER_CPU);
 TF_CALL_int32(REGISTER_CPU);
 #endif  // USE_GEMM_FOR_CONV
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(
+      Name("Conv2D").Device(DEVICE_VE).TypeConstraint<float>("T"),
+      Conv2DOp<VEDevice, float>);
+#endif
+
 // To be used inside depthwise_conv_op.cc.
 template struct LaunchConv2DOp<CPUDevice, Eigen::half>;
 template struct LaunchConv2DOp<CPUDevice, float>;
 template struct LaunchConv2DOp<CPUDevice, double>;
+
+#ifdef TENSORFLOW_USE_VE
+template struct LaunchConv2DOp<VEDevice, float>;
+#endif
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 

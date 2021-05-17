@@ -20,6 +20,11 @@ limitations under the License.
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
@@ -61,5 +66,48 @@ TF_CALL_POD_TYPES(REGISTER_KERNEL);
 #undef REGISTER_KERNEL
 #endif
 
+
+#if TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VeDevice;
+
+template <typename Scalar>
+class SnapshotOp<VeDevice, Scalar> : public OpKernel {
+ public:
+  explicit SnapshotOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    Tensor* output = nullptr;
+    // Try to use buffer forwarding to avoid an explicit copy.
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 0, input.shape(), &output));
+    if (!output->SharesBufferWith(input)) {
+      struct {
+        uint64_t dst;
+        uint64_t src;
+        size_t size;
+      } args;
+
+      args.src = (uint64_t)DMAHelper::base(&input);
+      args.dst = (uint64_t)DMAHelper::base(output);
+      args.size = input.NumElements() * sizeof(Scalar);
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("Snapshot", (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+    }
+  }
+};
+
+#define REGISTER_VE_KERNEL(TYPE)                                      \
+  REGISTER_KERNEL_BUILDER(                                            \
+      Name("Snapshot").Device(DEVICE_VE).TypeConstraint<TYPE>("T"),   \
+      SnapshotOp<VeDevice, TYPE>);
+
+TF_CALL_POD_TYPES(REGISTER_VE_KERNEL);
+
+#undef REGISTER_VE_KERNEL
+#endif  // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

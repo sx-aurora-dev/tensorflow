@@ -24,7 +24,11 @@ REGISTER3(UnaryOp, CPU, "Digamma", functor::digamma, float, Eigen::half,
 #if !defined(MLIR_GENERATED_GPU_KERNELS_ENABLED)
 REGISTER3(UnaryOp, GPU, "Digamma", functor::digamma, float, Eigen::half,
           double);
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #endif
-#endif
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Digamma, float);
+#endif  // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

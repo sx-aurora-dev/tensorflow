@@ -127,6 +127,7 @@ load(
     "//third_party/mkl:build_defs.bzl",
     "if_mkl",
 )
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
 
 package(
     default_visibility = [
@@ -477,6 +478,8 @@ tf_cuda_library(
         "//tensorflow/core/public:version.h",
     ] + if_mkl([
         "//tensorflow/core/util:mkl_util_hdrs",
+    ]) + if_ve([
+        "//tensorflow/core/framework:ve_ops_common.h",
     ]),
     visibility = ["//visibility:public"],
     deps = [
@@ -655,6 +658,8 @@ cc_library(
         "//tensorflow/core/kernels/linalg:linalg",
         "//tensorflow/core/kernels/image:image",
         "//tensorflow/core/kernels/sparse:kernels",
+        # for ve
+        "//tensorflow/core/kernels:cudnn_rnn_kernels",
     ] + if_mkl([
         "//tensorflow/core/kernels/mkl:mkl_aggregate_ops",
         "//tensorflow/core/kernels/mkl:mkl_concat_op",
@@ -678,8 +683,8 @@ cc_library(
         "//tensorflow/core/kernels/mkl:mkl_matmul_op",
         "//tensorflow/core/kernels/mkl:mkl_tfconv_op",
         "//tensorflow/core/kernels/mkl:mkl_tmp_bf16_ops",
-    ]) + if_cuda_or_rocm([
-        "//tensorflow/core/kernels:cudnn_rnn_kernels",
+#    ]) + if_cuda_or_rocm([
+#        "//tensorflow/core/kernels:cudnn_rnn_kernels",
     ]) + if_cuda([
         "//tensorflow/core/grappler/optimizers:gpu_swapping_kernels",
         "//tensorflow/core/grappler/optimizers:gpu_swapping_ops",
@@ -1658,6 +1663,7 @@ tf_cuda_library(
     ]) + if_static(
         extra_deps = ["@com_google_protobuf//:protobuf"],
         otherwise = ["@com_google_protobuf//:protobuf_headers"],
+    ) + if_ve(["//tensorflow/core/common_runtime:core_cpu_impl", ":ve_runtime"]
     ),
     alwayslink = 1,
 )
@@ -1758,6 +1764,18 @@ alias(
     name = "core_cpu_internal",
     actual =
         "//tensorflow/core/common_runtime:core_cpu_internal",
+)
+
+alias(
+  name = "ve_runtime",
+  actual = 
+        "//tensorflow/core/common_runtime/ve:ve_runtime",
+)
+
+alias(
+  name = "ve_runtime_impl",
+  actual = 
+        "//tensorflow/core/common_runtime/ve:ve_runtime_impl",
 )
 
 alias(

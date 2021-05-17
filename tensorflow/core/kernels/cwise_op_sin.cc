@@ -30,4 +30,7 @@ REGISTER3(UnaryOp, GPU, "Sin", functor::sin, float, Eigen::half, double);
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Sin, float);
+#endif
 }  // namespace tensorflow

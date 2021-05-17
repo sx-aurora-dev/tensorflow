@@ -34,10 +34,20 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+//#include "tensorflow/core/common_runtime/ve/ve_device.h"
+//#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 template <typename Device, typename T>
 class SplitOpBase : public OpKernel {
@@ -351,5 +361,192 @@ TF_CALL_COMPLEX_TYPES(REGISTER_GPU);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VESplitOp : public VEOpKernel {
+ public:
+  explicit VESplitOp(OpKernelConstruction* c) : VEOpKernel(c) {}
+
+  void ComputeEasyCases(OpKernelContext* context, bool* done) {
+    const Tensor& input = context->input(1);
+    const TensorShape& input_shape = input.shape();
+    const Tensor& split_dim_tensor = context->input(0);
+    OP_REQUIRES(
+        context, split_dim_tensor.shape().dims() == 0,
+        errors::InvalidArgument("split_dim must be a scalar but has rank ",
+                                split_dim_tensor.shape().dims()));
+    const int32 split_dim_orig = split_dim_tensor.flat<int32>()(0);
+    const int32 split_dim =
+        split_dim_orig < 0 ? split_dim_orig + input.dims() : split_dim_orig;
+    const int32 num_split = num_outputs();
+
+    OP_REQUIRES(
+        context, 0 <= split_dim && split_dim < input_shape.dims(),
+        errors::InvalidArgument("-input rank(-", input.dims(),
+                                ") <= split_dim < input rank (", input.dims(),
+                                "), but got ", split_dim_orig));
+
+    OP_REQUIRES(
+        context, num_split > 0,
+        errors::InvalidArgument(
+            "Number of ways to split should be > 0, but got ", num_split));
+
+    OP_REQUIRES(context, input_shape.dim_size(split_dim) % num_split == 0,
+                errors::InvalidArgument(
+                    "Number of ways to split should evenly divide the split "
+                    "dimension, but got split_dim ",
+                    split_dim, " (size = ", input_shape.dim_size(split_dim),
+                    ") ", "and num_split ", num_split));
+    // Special case 1: num_split == 1. Nothing to do.
+    if (num_split == 1) {
+      VLOG(1) << "Split identity";
+      context->set_output(0, context->input(1));
+      *done = true;
+      return;
+    }
+
+    // Special case 2: split along the 1st dimension. We can share the
+    // underlying buffer.
+    //
+    // Apply this optimization conservatively: if input is aligned,
+    // the resulting tensors must be aligned. It's conservative
+    // because if the immediate consumer of the resulting tensors are
+    // not using eigen for computation, its perfectly fine to avoid
+    // the copying.
+    if ((split_dim == 0) && IsInnerDimsSizeAligned<T>(input_shape)) {
+      VLOG(1) << "Slice dim 0: " << input_shape.DebugString();
+      const int64 delta = input_shape.dim_size(0) / num_split;
+      for (int i = 0; i < num_split; ++i) {
+        context->set_output(i, input.Slice(i * delta, (i + 1) * delta));
+      }
+      *done = true;
+      return;
+    }
+  }
+
+  template <typename IndexType>
+  std::tuple<IndexType, IndexType, IndexType> SetDims(
+      const TensorShape& input_shape, int32 split_dim) const {
+    static_assert(std::is_integral<IndexType>::value,
+                  "IndexType must be an integer type");
+    int32 prefix_dim_size = 1;
+    for (int i = 0; i < split_dim; ++i) {
+      prefix_dim_size *= input_shape.dim_size(i);
+    }
+
+    // Caller must ensure that dim_size and suffix_dim_size are <
+    // std::numeric_limits<IndexType>::max()
+    IndexType split_dim_size =
+        static_cast<IndexType>(input_shape.dim_size(split_dim));
+
+    IndexType suffix_dim_size = 1;
+    for (int i = split_dim + 1; i < input_shape.dims(); ++i) {
+      suffix_dim_size *= static_cast<IndexType>(input_shape.dim_size(i));
+    }
+    return std::make_tuple(prefix_dim_size, split_dim_size, suffix_dim_size);
+  }
+
+  void Compute(OpKernelContext* context) override {
+    bool done = false;
+    ComputeEasyCases(context, &done);
+    if (!context->status().ok() || done) {
+      return;
+    }
+    const Tensor& input = context->input(1);
+    const TensorShape& input_shape = input.shape();
+    const int32 split_dim_orig = context->input(0).flat<int32>()(0);
+    const int32 split_dim =
+        split_dim_orig < 0 ? split_dim_orig + input.dims() : split_dim_orig;
+    const int32 num_split = num_outputs();
+
+    OP_REQUIRES(
+        context,
+        FastBoundsCheck(input.NumElements(),
+                        std::numeric_limits<int64>::max()),
+        errors::InvalidArgument("Split requires input size < ",
+                                std::numeric_limits<int64>::max()));
+
+    int64 prefix_dim_size;
+    int64 split_dim_size;
+    int64 suffix_dim_size;
+
+    std::tie(prefix_dim_size, split_dim_size, suffix_dim_size) =
+        SetDims<int64>(input_shape, split_dim);
+
+#if 0	// copy from SYCL
+    auto input_reshaped =
+        input.shaped<T, 3>({prefix_dim_size, split_dim_size, suffix_dim_size});
+
+    const int64 split_dim_output_size = split_dim_size / num_split;
+    TensorShape output_shape(input_shape);
+    output_shape.set_dim(split_dim, split_dim_output_size);
+
+    Eigen::DSizes<Eigen::DenseIndex, 3> indices{0, 0, 0};
+    Eigen::DSizes<Eigen::DenseIndex, 3> sizes{
+        prefix_dim_size, split_dim_output_size, suffix_dim_size};
+
+    for (int i = 0; i < num_split; ++i) {
+      Tensor* result = nullptr;
+      OP_REQUIRES_OK(context,
+                     context->allocate_output(i, output_shape, &result));
+      if (prefix_dim_size * split_dim_output_size * suffix_dim_size > 0) {
+        Eigen::DSizes<Eigen::DenseIndex, 3> slice_indices;
+        Eigen::DSizes<Eigen::DenseIndex, 3> slice_sizes;
+        for (int j = 0; j < 3; ++j) {
+          slice_indices[j] = indices[j];
+          slice_sizes[j] = sizes[j];
+        }
+
+        auto result_shaped = result->shaped<T, 3>(
+            {prefix_dim_size, split_dim_output_size, suffix_dim_size});
+
+        functor::Split<SYCLDevice, T>()(context->eigen_device<SYCLDevice>(),
+                                        result_shaped, input_reshaped,
+                                        slice_indices, slice_sizes);
+      }
+      indices[1] += split_dim_output_size;
+    }
+#else
+
+    const int64 split_dim_output_size = split_dim_size / num_split;
+    TensorShape output_shape(input_shape);
+    output_shape.set_dim(split_dim, split_dim_output_size);
+
+    // FIXME : check num_split
+    ArgsImpl<102400> Args ;
+    Args.addArg<int64>(num_split) ;
+    Args.addArg<int64>(prefix_dim_size) ;
+    Args.addArg<int64>(split_dim_size) ;
+    Args.addArg<int64>(suffix_dim_size) ;
+
+    Args.addArg<Tensor>(input) ;
+
+    for (int i = 0; i < num_split; ++i) {
+      Tensor* result = nullptr;
+      OP_REQUIRES_OK(context,
+                     context->allocate_output(i, output_shape, &result));
+
+      Args.addArg<Tensor>(*result) ;
+      Args.addArg<int64>(split_dim_size / num_split) ;
+    }
+
+    Call(context, "Split", Args);
+
+#endif
+  }
+};
+
+#define REGISTER_VE(type)                                \
+  REGISTER_KERNEL_BUILDER(Name("Split")                  \
+                              .Device(DEVICE_VE)         \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("split_dim"),  \
+                          VESplitOp<type>)
+
+TF_CALL_float(REGISTER_VE) ;
+TF_CALL_double(REGISTER_VE) ;
+#undef REGISTER_VE
+#endif // TENSORFLOW_USE_VE
 
 }  // end namespace tensorflow

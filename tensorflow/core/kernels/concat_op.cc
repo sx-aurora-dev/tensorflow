@@ -35,6 +35,9 @@ typedef Eigen::ThreadPoolDevice CPUDevice;
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 typedef Eigen::GpuDevice GPUDevice;
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 enum AxisArgumentName { NAME_IS_AXIS, NAME_IS_CONCAT_DIM };
 
@@ -165,6 +168,12 @@ class ConcatBaseOp : public OpKernel {
         return;
       }
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#ifdef TENSORFLOW_USE_VE
+      if (std::is_same<Device, VEDevice>::value) {
+        ConcatVE<T>(c, inputs_flat, &output_flat);
+        return;
+      }
+#endif  // TENSORFLOW_USE_VE
       ConcatCPU<T>(c->device(), inputs_flat, &output_flat);
     }
   }
@@ -328,4 +337,49 @@ REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
                             .HostMemory("offset"),
                         ConcatOffsetOp);
 
+#ifdef TENSORFLOW_USE_VE
+
+#define REGISTER_VE(type)                             	 \
+  REGISTER_KERNEL_BUILDER(Name("Concat")                 \
+                              .Device(DEVICE_VE)         \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("concat_dim"), \
+                          ConcatOp<VEDevice, type>)      \
+  REGISTER_KERNEL_BUILDER(Name("ConcatV2")               \
+                              .Device(DEVICE_VE)         \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("axis"),       \
+                          ConcatV2Op<VEDevice,type>)
+// TODO : add other types
+TF_CALL_float(REGISTER_VE)
+TF_CALL_double(REGISTER_VE)
+TF_CALL_bool(REGISTER_VE);
+
+REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
+                            .Device(DEVICE_VE)
+                            .HostMemory("concat_dim")
+                            .HostMemory("shape")
+                            .HostMemory("offset"),
+                        ConcatOffsetOp);
+
+#undef REGISTER_VE
+
+REGISTER_KERNEL_BUILDER(Name("Concat")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("concat_dim")
+                            .HostMemory("values")
+                            .HostMemory("output"),
+                        ConcatOp<CPUDevice, int32>);
+REGISTER_KERNEL_BUILDER(Name("ConcatV2")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("values")
+                            .HostMemory("axis")
+                            .HostMemory("output"),
+                        ConcatV2Op<CPUDevice, int32>);
+
+#undef MAX_CONCAT_SIZE
+
+#endif // TENSORFLOW_USE_VE
 }  // namespace tensorflow

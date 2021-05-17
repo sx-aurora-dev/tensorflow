@@ -35,10 +35,18 @@ limitations under the License.
 #include "tensorflow/stream_executor/cuda/cuda_stream.h"
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 namespace {
 
@@ -570,6 +578,7 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
 
     // Choose the best algorithm based on autotune results.
     if (algo_config.get_mode() == BiasAddGradGPUMode::kReduction) {
+
       ComputeWithReduceSum(context, output_backprop, batch, width, height,
                            depth, channel, output);
     } else {
@@ -593,5 +602,145 @@ TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU_KERNEL);
 #undef REGISTER_GPU_KERNEL
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class BiasOp<VEDevice, T> : public BinaryOp<T> {
+ public:
+  explicit BiasOp(OpKernelConstruction* context) : BinaryOp<T>(context) {
+    string data_format;
+    if (context->GetAttr("data_format", &data_format).ok()) {
+      OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                  errors::InvalidArgument("Invalid data format"));
+    } else {
+      data_format_ = FORMAT_NCHW;
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const Tensor& bias = context->input(1);
+
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrixOrHigher(input.shape()),
+                errors::InvalidArgument("Input tensor must be at least 2D: ",
+                                        input.shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(bias.shape()),
+                errors::InvalidArgument("Biases must be 1D: ",
+                                        bias.shape().DebugString()));
+    int32 batch, height, width, depth, channel;
+    GetBiasValueDims(input, data_format_, &batch, &height, &width, &depth, &channel);
+    OP_REQUIRES(context, bias.shape().dim_size(0) == channel,
+                errors::InvalidArgument(
+                    "Must provide as many biases as the channel dimension "
+                    "of the input tensor: ",
+                    bias.shape().DebugString(), " vs. ", channel, " in ",
+                    input.shape().DebugString()));
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 0, input.shape(), &output));
+    if (input.NumElements() > 0) {
+      struct {
+        int dtype;
+        int data_format;
+        uint64_t in;
+        uint64_t bias;
+        uint64_t out;
+        int batch;
+        int width;
+        int height;
+        int channel;
+      } args;
+
+      args.dtype = input.dtype();
+      args.data_format = data_format_;
+      args.in = (uint64_t)DMAHelper::base(&input);
+      args.bias = (uint64_t)DMAHelper::base(&bias);
+      args.out = (uint64_t)DMAHelper::base(output);
+      args.batch = batch;
+      args.width = width;
+      args.height = height;
+      args.channel = channel;
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("BiasAdd", (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+    }
+  }
+
+ private:
+  TensorFormat data_format_;
+};
+
+template <typename T>
+class BiasGradOp<VEDevice, T> : public OpKernel {
+  public:
+    explicit BiasGradOp(OpKernelConstruction* context) : OpKernel(context) {
+      string data_format;
+      if (context->GetAttr("data_format", &data_format).ok()) {
+        OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                    errors::InvalidArgument("Invalid data format"));
+      } else {
+        data_format_ = FORMAT_NCHW;
+      }
+    }
+
+    void Compute(OpKernelContext* context) override {
+      const Tensor& output_backprop = context->input(0);
+
+      OP_REQUIRES(context,
+                  TensorShapeUtils::IsMatrixOrHigher(output_backprop.shape()),
+                  errors::InvalidArgument("Input tensor must be at least 2D: ",
+                                          output_backprop.shape().DebugString()));
+      int32 batch, height, width, depth, channel;
+      GetBiasValueDims(output_backprop, data_format_, &batch, &height, &width,
+                       &depth, &channel);
+      Tensor* output = nullptr;
+      TensorShape output_shape{channel};
+      OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
+      if (channel == 0) return;
+
+      struct {
+        int dtype;
+        int data_format;
+        uint64_t output_backprop;
+        uint64_t output;
+        int batch;
+        int width;
+        int height;
+        int channel;
+      } args;
+
+      args.dtype = output_backprop.dtype();
+      args.data_format = data_format_;
+      args.output_backprop = (uint64_t)DMAHelper::base(&output_backprop);
+      args.output = (uint64_t)DMAHelper::base(output);
+      args.batch = batch;
+      args.width = width;
+      args.height = height;
+      args.channel = channel;
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("BiasAddGrad", (void*)&args, sizeof(args));
+      if (!s.ok())
+        context->SetStatus(s);
+    }
+
+ private:
+  TensorFormat data_format_;
+};
+
+
+#define REGISTER_KERNEL(type)                                          \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("BiasAdd").Device(DEVICE_VE).TypeConstraint<type>("T"),     \
+      BiasOp<VEDevice, type>);                                         \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("BiasAddGrad").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      BiasGradOp<VEDevice, type>);
+
+REGISTER_KERNEL(float);
+#undef REGISTER_KERNEL
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

@@ -25,4 +25,8 @@ REGISTER5(BinaryOp, GPU, "Xlog1py", functor::xlog1py, float, Eigen::half,
           double, complex64, complex128);
 #endif  // GOOGLE_CUDA
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(Xlog1py, float, float, float);
+#endif
+
 }  // namespace tensorflow

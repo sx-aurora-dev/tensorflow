@@ -25,4 +25,7 @@ REGISTER3(UnaryOp, GPU, "Log1p", functor::log1p, float, Eigen::half, double);
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Log1p, float);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

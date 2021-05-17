@@ -807,6 +807,115 @@ void ExecutorState<PropagatorStateType>::Process(TaggedNode tagged_node,
       if (item.kernel_is_async) {
         ProcessAsync(item, params, tagged_node, first_input, stats);
         launched_asynchronously = true;
+#if 0 // 20200415-ishizaka
+        AsyncState* state =
+            new AsyncState(params, tagged_node, &item, first_input, stats);
+
+        auto done = [this, state]() {
+          Device* device = impl_->params_.device;
+          NodeExecStatsInterface* stats = state->stats;  // Shorthand
+          Entry* first_input = state->first_input;       // Shorthand
+
+          nodestats::SetOpEnd(stats);
+          EntryVector outputs;
+          Status s = ProcessOutputs(*state->item, &state->ctx, &outputs, stats);
+          nodestats::SetMemory(stats, &state->ctx);
+          if (vlog_) {
+            VLOG(2) << "Async kernel done: " << state->item->node_id << " step "
+                    << step_id_ << " "
+                    << SummarizeNodeDef(state->item->kernel->def())
+                    << (state->tagged_node.is_dead ? " is dead" : "")
+                    << " device: " << device->name();
+          }
+
+
+          // Clears inputs.
+          const int num_inputs = state->item->num_inputs;
+          for (int i = 0; i < num_inputs; ++i) {
+            (first_input + i)->ClearVal();
+          }
+          FrameState* input_frame = state->tagged_node.input_frame;
+          const int64 input_iter = state->tagged_node.input_iter;
+          MaybeMarkCompleted(input_frame, input_iter, *state->item);
+          TaggedNodeSeq ready;
+          if (s.ok()) {
+            PropagateOutputs(state->tagged_node, state->item, &outputs, &ready);
+          }
+          outputs.clear();
+          if (s.ok() && impl_->device_record_tensor_accesses_) {
+            // Get the list of all tensors accessed during the execution
+            TensorReferenceVector accessed;
+            state->ctx.retrieve_accessed_tensors(&accessed);
+            nodestats::SetReferencedTensors(stats, accessed);
+            // callee takes ownership of the vector
+            device->ConsumeListOfAccessedTensors(state->ctx.op_device_context(),
+                                                 accessed);
+          }
+          const bool completed = NodeDone(s, ready, stats, nullptr);
+          delete state;
+          if (completed) ScheduleFinish();
+        };
+        nodestats::SetOpStart(stats);
+        {
+          profiler::TraceMe activity(
+              [&] {
+                return strings::StrCat(op_kernel->name_view(), ":",
+                                       op_kernel->type_string_view());
+              },
+              profiler::GetTFTraceMeLevel(op_kernel->IsExpensive()));
+          device->ComputeAsync(async, &state->ctx, done);
+        }
+      } else {
+        // Synchronous computes.
+        OpKernelContext ctx(&params, item.num_outputs);
+        nodestats::SetOpStart(stats);
+
+        if (TF_PREDICT_FALSE(item.is_noop)) {
+          nodestats::SetOpEnd(stats);
+        } else if (TF_PREDICT_FALSE(MightTrace(item, event_collector_))) {
+          absl::string_view op_name = op_kernel->name_view();
+          const string kernel_label =
+              strings::StrCat(op_name, ":", op_kernel->type_string_view());
+          tracing::ScopedRegion region(tracing::EventCategory::kCompute,
+                                       op_name);
+          absl::string_view kernel_label_view(kernel_label);
+          // 'TraceMe' will trace the OpKernel scheduling time.
+          profiler::TraceMe activity(
+              kernel_label_view,
+              profiler::GetTFTraceMeLevel(op_kernel->IsExpensive()));
+          // 'ScopedAnnotation' will trace the OpKernel execution time.
+          profiler::ScopedAnnotation annotation(kernel_label_view);
+          device->Compute(op_kernel, &ctx);
+          nodestats::SetOpEnd(stats);
+          s = ProcessOutputs(item, &ctx, &outputs, stats);
+        } else if (item.const_tensor != nullptr && !ctx.track_allocations()) {
+          // Special case for ConstantOp, which is very common.
+          nodestats::SetOpEnd(stats);
+          outputs.resize(1);
+          outputs[0].has_value = true;
+          outputs[0].val_field_is_set = true;
+          outputs[0].alloc_attr = ctx.output_alloc_attr(0);
+          outputs[0].val.Init(*item.const_tensor);
+        } else {
+          // In the common case, avoid creating any tracing objects.
+          if (op_kernel->IsExpensive()) {
+            KernelTimer timer;
+            device->Compute(op_kernel, &ctx);
+            op_kernel->UpdateCostEstimate(timer.ElapsedCycles());
+          } else {
+            device->Compute(op_kernel, &ctx);
+          }
+          nodestats::SetOpEnd(stats);
+          s = ProcessOutputs(item, &ctx, &outputs, stats);
+        }
+        if (s.ok() && impl_->device_record_tensor_accesses_) {
+          // Get the list of all tensors accessed during the execution
+          ctx.retrieve_accessed_tensors(&accessed_tensors);
+          device_context = ctx.op_device_context();
+        }
+
+        nodestats::SetMemory(stats, &ctx);
+#endif
       } else {
         s = ProcessSync(item, &params, &outputs, stats);
       }

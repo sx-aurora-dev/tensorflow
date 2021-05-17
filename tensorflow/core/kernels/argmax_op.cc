@@ -36,6 +36,10 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -241,5 +245,127 @@ TF_CALL_bool(REGISTER_ARGMAX_GPU);
 #undef REGISTER_ARGMAX_GPU
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+enum VEArgOpType { ARGMAX=0, ARGMIN=1 };
+
+template <typename T, typename Tout, VEArgOpType Op>
+class VEArgOp : public OpKernel {
+ public:
+  explicit VEArgOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const Tensor& dimension = context->input(1);
+
+    OP_REQUIRES(context, TensorShapeUtils::IsScalar(dimension.shape()),
+                errors::InvalidArgument(
+                    "dim must be a scalar, but received tensor of shape: ",
+                    dimension.shape().DebugString()));
+
+    const int32 dim = internal::SubtleMustCopy(dimension.scalar<int32>()());
+    const int input_dims = input.dims();
+
+    int axis = dim < 0 ? dim + input_dims : dim;
+
+    OP_REQUIRES(context, FastBoundsCheck(axis, input_dims),
+                errors::InvalidArgument("Expected dimension in the range [",
+                                        -input_dims, ", ", input_dims,
+                                        "), but got ", dim));
+    OP_REQUIRES(
+        context, input.dim_size(axis) > 0,
+        errors::InvalidArgument("Reduction axis ", dim, " is empty in shape ",
+                                input.shape().DebugString()));
+
+    TensorShape output_shape;
+    const TensorShape& input_shape = input.shape();
+    for (int d = 0; d < input_dims - 1; ++d) {
+      output_shape.AddDim(input_shape.dim_size((d < axis) ? d : d + 1));
+    }
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
+
+    if (output_shape.num_elements() == 0) {
+      return;
+    }
+
+#define VE_ARGOP_MAX_HANDLE_DIM	7
+    if( input_dims <= VE_ARGOP_MAX_HANDLE_DIM ) {
+      VEOpKernelHelper::ArgsImpl<> args;
+
+
+      args.addArg<Tensor>(input) ;
+      args.addArg<Tensor>(*output) ;
+      args.addArg<int64>(axis) ;
+      args.addArg<int64>(Op) ;
+
+      VEOpKernelHelper::Call(context, "Arg", args);
+
+    }
+    else {
+      OP_REQUIRES(context, false,
+		  errors::InvalidArgument(
+		      "ArgOp : Unhandled input dimensions: ", input_dims));
+    }
+  }
+
+ private:
+  TF_DISALLOW_COPY_AND_ASSIGN(VEArgOp);
+};
+
+
+template <typename T, typename Tout>
+class VEArgMaxOp
+    : public VEArgOp<T, Tout, ARGMAX> {
+ public:
+  explicit VEArgMaxOp(OpKernelConstruction* context)
+      : VEArgOp<T, Tout, ARGMAX >(context) {}
+};
+
+template <typename T, typename Tout>
+class VEArgMinOp
+    : public VEArgOp<T, Tout, ARGMIN> {
+ public:
+  explicit VEArgMinOp(OpKernelConstruction* context)
+      : VEArgOp<T, Tout, ARGMIN>(context) {}
+};
+
+#define REGISTER_ARGMAX_VE(type)                                    \
+  REGISTER_KERNEL_BUILDER(Name("ArgMax")                            \
+                              .Device(DEVICE_VE)                    \
+                              .TypeConstraint<type>("T")            \
+                              .TypeConstraint<int64>("output_type") \
+                              .TypeConstraint<int32>("Tidx")        \
+                              .HostMemory("dimension"),             \
+                          VEArgMaxOp<type, int64>);                 \
+  REGISTER_KERNEL_BUILDER(Name("ArgMin")                            \
+                              .Device(DEVICE_VE)                    \
+                              .TypeConstraint<type>("T")            \
+                              .TypeConstraint<int64>("output_type") \
+                              .TypeConstraint<int32>("Tidx")        \
+                              .HostMemory("dimension"),             \
+                          VEArgMinOp<type, int64>);                 \
+  REGISTER_KERNEL_BUILDER(Name("ArgMax")                            \
+                              .Device(DEVICE_VE)                    \
+                              .TypeConstraint<type>("T")            \
+                              .TypeConstraint<int32>("output_type") \
+                              .TypeConstraint<int32>("Tidx")        \
+                              .HostMemory("dimension"),             \
+                          VEArgMaxOp<type, int32>);                 \
+  REGISTER_KERNEL_BUILDER(Name("ArgMin")                            \
+                              .Device(DEVICE_VE)                    \
+                              .TypeConstraint<type>("T")            \
+                              .TypeConstraint<int32>("output_type") \
+                              .TypeConstraint<int32>("Tidx")        \
+                              .HostMemory("dimension"),             \
+                          VEArgMinOp<type, int32>);
+
+//TF_CALL_half(REGISTER_ARGMAX_VE) ;
+TF_CALL_float(REGISTER_ARGMAX_VE) ;
+//TF_CALL_double(REGISTER_ARGMAX_VE) ;
+
+#undef REGISTER_ARGMAX_VE
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

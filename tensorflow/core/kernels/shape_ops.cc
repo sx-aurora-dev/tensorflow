@@ -110,6 +110,19 @@ REGISTER_KERNEL_BUILDER(Name("Shape")
                             .TypeConstraint<int64>("out_type"),
                         ShapeOp<int64>);
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("Shape")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("out_type"),
+                        ShapeOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("Shape")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int64>("out_type"),
+                        ShapeOp<int64>);
+#endif // TENSORFLOW_USE_VE
+
 // ShapeN ---------------------------------------
 REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .Device(DEVICE_CPU)
@@ -121,6 +134,19 @@ REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .HostMemory("output")
                             .TypeConstraint<int64>("out_type"),
                         ShapeNOp<int64>);
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("ShapeN")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("out_type"),
+                        ShapeNOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("ShapeN")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int64>("out_type"),
+                        ShapeNOp<int64>);
+#endif
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU_KERNEL(type)                                \
@@ -257,6 +283,33 @@ REGISTER_KERNEL_BUILDER(Name("Rank")
                             .HostMemory("output"),
                         RankOp);
 
+#if TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                        \
+  REGISTER_KERNEL_BUILDER(Name("Rank")                   \
+                              .Device(DEVICE_VE)        \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("output"),     \
+                          RankOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_variant(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
+
+REGISTER_KERNEL_BUILDER(Name("Rank")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        RankOp);
+
+REGISTER_KERNEL_BUILDER(Name("Rank")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<bool>("T")
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        RankOp);
+
+#endif // TENSORFLOW_USE_VE
+
 // Size ------------------------------------------
 REGISTER_KERNEL_BUILDER(Name("Size")
                             .Device(DEVICE_CPU)
@@ -344,6 +397,24 @@ REGISTER_KERNEL_BUILDER(Name("Size")
                             .HostMemory("output"),
                         SizeOp<int64>);
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                               \
+  REGISTER_KERNEL_BUILDER(Name("Size")                           \
+                              .Device(DEVICE_VE)               \
+                              .TypeConstraint<type>("T")         \
+                              .TypeConstraint<int32>("out_type") \
+                              .HostMemory("output"),             \
+                          SizeOp<int32>);                        \
+  REGISTER_KERNEL_BUILDER(Name("Size")                           \
+                              .Device(DEVICE_VE)               \
+                              .TypeConstraint<type>("T")         \
+                              .TypeConstraint<int64>("out_type") \
+                              .HostMemory("output"),             \
+                          SizeOp<int64>);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_bool(REGISTER_VE_KERNEL);
+#endif
+
 // ExpandDims ------------------------------------
 REGISTER_KERNEL_BUILDER(Name("ExpandDims")
                             .Device(DEVICE_CPU)
@@ -426,6 +497,19 @@ REGISTER_KERNEL_BUILDER(Name("ExpandDims")
                             .HostMemory("output"),
                         ExpandDimsOp<int64>);
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("ExpandDims")
+                            .Device(DEVICE_VE)
+                            .HostMemory("dim")
+                            .TypeConstraint<int32>("Tdim"),
+                        ExpandDimsOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("ExpandDims")
+                            .Device(DEVICE_VE)
+                            .HostMemory("dim")
+                            .TypeConstraint<int64>("Tdim"),
+                        ExpandDimsOp<int64>);
+#endif // TENSORFLOW_USE_VE
+
 // Squeeze ---------------------------------------
 REGISTER_KERNEL_BUILDER(Name("Squeeze").Device(DEVICE_CPU), SqueezeOp);
 
@@ -466,6 +550,24 @@ REGISTER_KERNEL_BUILDER(Name("Squeeze")
                             .HostMemory("input")
                             .HostMemory("output"),
                         SqueezeOp);
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("Squeeze").Device(DEVICE_VE).TypeConstraint<type>("T"),  \
+      SqueezeOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_bool(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
+
+REGISTER_KERNEL_BUILDER(Name("Squeeze")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        SqueezeOp);
+#endif  // TENSORFLOW_USE_VE
+
 
 class EnsureShapeOp : public OpKernel {
  public:

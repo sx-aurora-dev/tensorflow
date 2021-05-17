@@ -25,4 +25,8 @@ REGISTER3(UnaryOp, GPU, "Lgamma", functor::lgamma, float, Eigen::half, double);
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Lgamma, float);
+#endif  // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

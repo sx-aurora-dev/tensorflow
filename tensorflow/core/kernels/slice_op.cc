@@ -32,6 +32,11 @@ limitations under the License.
 #include "tensorflow/core/lib/gtl/array_slice.h"
 #include "tensorflow/core/platform/prefetch.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 namespace {
@@ -57,6 +62,9 @@ void IntTensorToInt64Vec(const Tensor& tensor,
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 // Shared code that is not dependent on the type of T.  We do this to reduce
 // code size by not duplicating all this for all T (float, double, int32, etc.)
@@ -335,5 +343,101 @@ REGISTER_KERNEL_BUILDER(Name("Slice")
 #undef REGISTER_GPU
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class VESliceOp : public OpKernel {
+ public:
+  explicit VESliceOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    TensorShape output_shape;
+    gtl::InlinedVector<int64, 4> begin;
+    gtl::InlinedVector<int64, 4> size;
+    const Tensor& input = context->input(0);
+    Tensor* result = nullptr;
+    bool done = false;
+    SharedSliceCommonCases<T>(context, input, &begin, &size, &result, &done);
+    if (!context->status().ok() || done == true) return;
+
+    const int input_dims = input.dims();
+
+    if (output_shape.num_elements() > 0) {
+
+// todo : add larger dim
+#define MAX_INPUT_DIMS 4
+
+      OP_REQUIRES(
+          context, input_dims <= MAX_INPUT_DIMS ,
+          errors::Unimplemented("VESliceOp : Unhandled input dimensions"));
+
+      struct {
+        int dtype;
+        uint64_t input_dims;
+        uint64_t input_ptr;
+        uint64_t output_ptr;
+        uint64_t array[MAX_INPUT_DIMS*3] ;
+      } args;
+
+      uint64_t args_size = sizeof(args) - 3 * sizeof(uint64_t) * (MAX_INPUT_DIMS-input_dims) ;
+
+      args.dtype = input.dtype() ;
+      args.input_dims = input_dims ;
+      args.input_ptr = (uint64_t)DMAHelper::base(&input);
+      args.output_ptr = (uint64_t)DMAHelper::base(result);
+
+      uint64_t *input_size = args.array ;
+      uint64_t *output_size = args.array + input_dims ;
+      uint64_t *index = args.array + 2*input_dims ;
+
+      const TensorShape& input_shape = input.shape() ;
+      for (int i = 0; i < input_dims ; ++i) {
+	input_size[i]  = input_shape.dim_size(i) ;
+	output_size[i] = size[i] ;
+	index[i] = begin[i];
+      }
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute("Slice", (void*)&args, args_size );
+      if (!s.ok())
+        context->SetStatus(s);
+
+    }
+  }
+
+} ;
+
+#define REGISTER_VE(type)                                \
+  REGISTER_KERNEL_BUILDER(Name("Slice")                  \
+                              .Device(DEVICE_VE)         \
+                              .TypeConstraint<type>("T") \
+                              .HostMemory("begin")       \
+                              .HostMemory("size"),       \
+                          VESliceOp<type>)
+
+//TF_CALL_half(REGISTER_VE);
+TF_CALL_float(REGISTER_VE);
+TF_CALL_double(REGISTER_VE);
+//TF_CALL_complex64(REGISTER_VE);
+//TF_CALL_complex128(REGISTER_VE);
+//TF_CALL_bfloat16(REGISTER_VE);
+//TF_CALL_bool(REGISTER_VE);
+//TF_CALL_int8(REGISTER_VE);
+//TF_CALL_int64(REGISTER_VE);
+
+REGISTER_KERNEL_BUILDER(Name("Slice")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("input")
+                            .HostMemory("begin")
+                            .HostMemory("size")
+                            .HostMemory("output"),
+                        SliceOp<CPUDevice, int32>);
+
+
+#undef REGISTER_VE
+
+#endif  // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

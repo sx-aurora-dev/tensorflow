@@ -37,4 +37,13 @@ REGISTER_KERNEL_BUILDER(Name("Sign")
                         UnaryOp<CPUDevice, functor::sign<int32>>);
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Sign, float);
+REGISTER_KERNEL_BUILDER(Name("Sign")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .TypeConstraint<int32>("T"),
+                        UnaryOp<CPUDevice, functor::sign<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

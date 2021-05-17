@@ -127,4 +127,46 @@ REGISTER(tstring);
         // !defined(SUPPORT_SELECTIVE_REGISTRATION) &&
         // !defined(__ANDROID_TYPES_FULL__)
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+void ConcatVE(
+    OpKernelContext* ctx,
+    const std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>&
+        inputs_flat,
+    typename TTypes<T, 2>::Tensor* output_flat)
+{
+  VEOpKernelHelper::ArgsImpl<102400> args;
+
+  OP_REQUIRES_OK(ctx, args.addArg<int64>(DataTypeToEnum<T>::v()));
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>(inputs_flat.size()));
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>(output_flat->dimension(0)));
+
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)output_flat->data()));
+
+  uint64_t offset = 0 ;
+  OP_REQUIRES_OK(ctx, args.addArg<uint64>(offset));
+  for (int i = 0; i < inputs_flat.size(); ++i) {
+    OP_REQUIRES_OK(ctx, args.addArg<uint64>((uint64)inputs_flat[i]->data()));
+    offset += inputs_flat[i]->dimension(1) ;
+    OP_REQUIRES_OK(ctx, args.addArg<uint64>(offset));
+  }
+
+  VEOpKernelHelper::Call(ctx, "Concat", args);
+}
+
+#define REGISTER_VE(T)								\
+  template void ConcatVE<T>(							\
+    OpKernelContext* ctx,							\
+    const std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>&	\
+      inputs_flat,								\
+    typename TTypes<T, 2>::Tensor* output_flat) ;				\
+
+TF_CALL_GPU_NUMBER_TYPES(REGISTER_VE);
+TF_CALL_complex64(REGISTER_VE);
+TF_CALL_complex128(REGISTER_VE);
+TF_CALL_int64(REGISTER_VE);
+REGISTER_VE(bfloat16);
+REGISTER_VE(bool);
+#undef REGISTER_VE
+#endif // TENSORFLOW_USE_VE
 }  // namespace tensorflow

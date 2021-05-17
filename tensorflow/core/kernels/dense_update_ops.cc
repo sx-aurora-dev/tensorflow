@@ -28,6 +28,10 @@ limitations under the License.
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 template <typename Device, typename T>
@@ -78,8 +82,10 @@ class DenseUpdateOp : public OpKernel {
         errors::InvalidArgument("Parameters and update must be the same size"));
 
     functor::DenseUpdate<Device, T, OP> update_functor;
+
     update_functor(context->template eigen_device<Device>(), Tparams.flat<T>(),
                    Tupdate.flat<T>());
+
   }
 
   bool use_exclusive_lock_;
@@ -116,6 +122,28 @@ TF_CALL_uint8(REGISTER_GPU_KERNELS);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VEAssignOpT : public AssignOp, public VEOpKernelHelper {
+ public:
+  using AssignOp::AssignOp;
+
+  void Copy(OpKernelContext* context, Tensor* lhs, const Tensor& rhs) override {
+    functor::VEDenseUpdate<T, DenseUpdateType::ASSIGN> update_functor;
+    update_functor(context, lhs, &rhs);
+  }
+};
+
+#define REGISTER_VE_KERNELS(type)                                   \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("Assign").Device(DEVICE_VE).TypeConstraint<type>("T"),   \
+      VEAssignOpT<type>);
+
+TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_VE_KERNELS);
+TF_CALL_int64(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+#endif  // TENSORFLOW_USE_VE
+
 #define REGISTER_KERNELS(type)                                        \
   REGISTER_KERNEL_BUILDER(                                            \
       Name("AssignAdd").Device(DEVICE_CPU).TypeConstraint<type>("T"), \
@@ -140,5 +168,66 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
 TF_CALL_uint8(REGISTER_GPU_KERNELS);
 #undef REGISTER_GPU_KERNELS
 #endif  // end GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+// TODO(jeff): Get rid of use_exclusive_lock_ option
+template <typename T, DenseUpdateType OP>
+class VEDenseUpdateOp : public OpKernel {
+ public:
+  explicit VEDenseUpdateOp(OpKernelConstruction* context) : OpKernel(context) {
+    OP_REQUIRES_OK(context,
+                   context->GetAttr("use_locking", &use_exclusive_lock_));
+    const DataType dt = DataTypeToEnum<T>::v();
+    OP_REQUIRES_OK(context, context->MatchSignature({MakeRefType(dt), dt},
+                                                    {MakeRefType(dt)}));
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // We always return the input ref.
+    context->forward_ref_input_to_ref_output(0, 0);
+
+    if (use_exclusive_lock_) {
+      mutex_lock l(*context->input_ref_mutex(0));
+      DoUpdate(context);
+    } else {
+      DoUpdate(context);
+    }
+  }
+
+ private:
+  void DoUpdate(OpKernelContext* context) {
+    Tensor Tparams = context->mutable_input(0, use_exclusive_lock_);
+    const Tensor& Tupdate = context->input(1);
+    OP_REQUIRES(context, Tparams.IsInitialized(),
+                errors::FailedPrecondition("Attempting to use uninitialized "
+                                           "parameters: ",
+                                           requested_input(0)));
+    OP_REQUIRES(
+        context, Tparams.IsSameSize(Tupdate),
+        errors::InvalidArgument("Parameters and update must be the same size"));
+
+    functor::VEDenseUpdate<T, OP> update_functor;
+
+    update_functor(context, &Tparams, &Tupdate);
+
+  }
+
+  bool use_exclusive_lock_;
+};
+
+#define REGISTER_VE_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("AssignAdd").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      VEDenseUpdateOp<type, DenseUpdateType::ADD>);                  \
+  REGISTER_KERNEL_BUILDER(                                           \
+      Name("AssignSub").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      VEDenseUpdateOp<type, DenseUpdateType::SUB>);
+//TF_CALL_half(REGISTER_VE_KERNELS) ;
+TF_CALL_float(REGISTER_VE_KERNELS) ;
+TF_CALL_double(REGISTER_VE_KERNELS) ;
+TF_CALL_int64(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

@@ -30,6 +30,9 @@ const absl::string_view kHostThreadsPlaneName = "/host:CPU";
 const absl::string_view kGpuPlanePrefix = "/device:GPU:";
 const absl::string_view kTpuPlanePrefix = "/device:TPU:";
 const absl::string_view kTpuRuntimePlaneName = "/host:TPU-runtime";
+#ifdef TENSORFLOW_USE_VE
+const absl::string_view kVePlanePrefix = "/device:VE:";
+#endif
 const absl::string_view kCuptiDriverApiPlaneName = "/host:CUPTI";
 const absl::string_view kRoctracerApiPlaneName = "/host:ROCTRACER";
 const absl::string_view kMetadataPlaneName = "/host:metadata";

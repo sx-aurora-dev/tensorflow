@@ -132,6 +132,11 @@ void ConvertXSpaceToTraceEvents(const XSpace& xspace, Trace* trace) {
   if (device_planes.empty()) {
     device_planes = FindPlanesWithPrefix(xspace, kTpuPlanePrefix);
   }
+#ifdef TENSORFLOW_USE_VE
+  const std::vector<const XPlane*> tmp =
+      FindPlanesWithPrefix(xspace, kVePlanePrefix);
+  std::move(tmp.begin(), tmp.end(), std::back_inserter(device_planes));
+#endif
   for (const XPlane* device_plane : device_planes) {
     XPlaneVisitor xplane = CreateTfXPlaneVisitor(device_plane);
     uint32 device_id = kFirstDeviceId + xplane.Id();

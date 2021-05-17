@@ -9,6 +9,7 @@ load(
     "//third_party/mkl:build_defs.bzl",
     "if_mkl_ml",
 )
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
 
 def well_known_proto_libs():
     """Set of standard protobuf protos, like Any and Timestamp.
@@ -724,6 +725,10 @@ def tf_additional_binary_deps():
     ] + if_mkl_ml(
         [
             clean_dep("//third_party/mkl:intel_binary_blob"),
+        ],
+    ) + if_ve(
+        [
+            "//tensorflow/core:ve_runtime_impl",
         ],
     )
 

@@ -43,4 +43,9 @@ REGISTER6(SimpleBinaryOp, CPU, "ReciprocalGrad", functor::inverse_grad, float,
 REGISTER3(SimpleBinaryOp, GPU, "ReciprocalGrad", functor::inverse_grad, float,
           Eigen::half, double);
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Reciprocal, float);
+#endif  // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

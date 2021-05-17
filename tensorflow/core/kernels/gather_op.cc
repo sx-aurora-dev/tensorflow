@@ -28,6 +28,10 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/util.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -232,5 +236,196 @@ TF_CALL_GPU_ALL_TYPES(REGISTER_GATHER_GPU);
 
 #undef REGISTER_GATHER_ALL_INDICES
 #undef REGISTER_GATHER_FULL
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T, typename Index>
+class VEGatherOp : public VEOpKernel {
+ public:
+  //   QUESTION: It'd be nice to support DT_INT16, DT_UINT8,
+  //   etc. here for the type of the second input argument.  Should
+  //   we have the framework do some sort of integer promotion
+  //   automatically, or should that be something that users have to
+  //   do explicitly with a conversion operator in the graph?
+  explicit VEGatherOp(OpKernelConstruction* c) : VEOpKernel(c) {
+    // Set batch_dims_ to 0 if the attribute does not exist.
+    if (c->HasAttr("batch_dims")) {
+      OP_REQUIRES_OK(c, c->GetAttr("batch_dims", &batch_dims_));
+    } else {
+      batch_dims_ = 0;
+    }
+  }
+
+  void Compute(OpKernelContext* c) override {
+    const Tensor& params = c->input(0);
+    const Tensor& indices = c->input(1);
+    OP_REQUIRES(
+        c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+        errors::InvalidArgument("params must be at least 1 dimensional"));
+
+    // GatherV2 added an axis argument. For backwards compatibility with Gather,
+    // fall back to axis 0 if the op does not have an axis input.
+    int64 axis = 0;
+    bool axis_is_set = false;  // Indicates whether the axis argument was set.
+    if (c->num_inputs() == 3) {
+      axis_is_set = true;
+      const Tensor& axis_tensor = c->input(2);
+      OP_REQUIRES(c, TensorShapeUtils::IsScalar(axis_tensor.shape()),
+                  errors::InvalidArgument("axis must be scalar"));
+
+      if (axis_tensor.dtype() == DT_INT32) {
+        axis = axis_tensor.scalar<int32>()();
+      } else if (axis_tensor.dtype() == DT_INT64) {
+        axis = axis_tensor.scalar<int64>()();
+      } else {
+        OP_REQUIRES(c, false,
+                    errors::InvalidArgument("axis must be int32 or int64."));
+      }
+    }
+
+    OP_REQUIRES(
+        c, axis >= -params.dims() && axis < params.dims(),
+        errors::InvalidArgument("Expected axis in the range [", -params.dims(),
+                                ", ", params.dims(), "), but got ", axis));
+
+    if (axis < 0) {
+      axis = params.dims() + axis;
+    }
+
+    if (batch_dims_ != 0) {
+      if (batch_dims_ < 0) {
+        batch_dims_ = indices.dims() + batch_dims_;
+      }
+
+      if (!axis_is_set) axis = batch_dims_;
+
+      OP_REQUIRES(
+          c, batch_dims_ >= -indices.dims() && batch_dims_ < indices.dims(),
+          errors::InvalidArgument("Expected batch_dims in the range [",
+                                  -indices.dims(), ", ", indices.dims(),
+                                  "), but got ", batch_dims_));
+
+      OP_REQUIRES(c, batch_dims_ < params.dims(),
+                  errors::InvalidArgument("batch_dims (", batch_dims_,
+                                          ") must be less than rank(params) (",
+                                          params.dims(), ")."));
+
+      OP_REQUIRES(c, axis >= batch_dims_,
+                  errors::InvalidArgument("batch_dims (", batch_dims_,
+                                          ") must be less than or equal to ",
+                                          "axis (", axis, ")."));
+    }
+
+    // Check that we have enough index space
+    int64 gather_dim_size = params.dim_size(axis);
+    const int64 N = indices.NumElements();
+    OP_REQUIRES(
+        c, gather_dim_size <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("params.shape[", axis, "] too large for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", gather_dim_size, " > ",
+                                std::numeric_limits<Index>::max()));
+
+    // The result shape is params.shape[:axis] + indices.shape[batch_dims:] +
+    // params.shape[axis + 1:].
+    TensorShape result_shape;
+    int64 batch_size = 1;
+    int64 outer_size = 1;
+    int64 inner_size = 1;
+
+    for (int i = 0; i < batch_dims_; ++i) {
+      result_shape.AddDim(params.dim_size(i));
+      batch_size *= params.dim_size(i);
+    }
+    for (int i = batch_dims_; i < axis; ++i) {
+      result_shape.AddDim(params.dim_size(i));
+      outer_size *= params.dim_size(i);
+    }
+    for (int i = batch_dims_; i < indices.dims(); ++i) {
+      result_shape.AddDim(indices.dim_size(i));
+    }
+    for (int i = axis + 1; i < params.dims(); ++i) {
+      result_shape.AddDim(params.dim_size(i));
+      inner_size *= params.dim_size(i);
+    }
+
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(c, c->allocate_output(0, result_shape, &out));
+    if (N == 0) return;
+
+#if 0 // [FIXME] check bad_i
+    int64 bad_i = -1;
+    auto indices_flat = indices.flat<Index>();
+    if (batch_dims_ > 0) {
+      auto params_flat = params.shaped<T, 4>(
+          {batch_size, outer_size, gather_dim_size, inner_size});
+      auto out_flat = out->shaped<T, 4>(
+          {batch_size, outer_size, N / batch_size, inner_size});
+
+      functor::GatherFunctorBatched<Device, T, Index> functor;
+      bad_i = functor(c, params_flat, indices_flat, out_flat);
+    } else {
+      auto params_flat =
+          params.shaped<T, 3>({outer_size, gather_dim_size, inner_size});
+      auto out_flat = out->shaped<T, 3>({outer_size, N, inner_size});
+
+      functor::GatherFunctor<Device, T, Index> functor;
+      bad_i = functor(c, params_flat, indices_flat, out_flat);
+    }
+    OP_REQUIRES(
+        c, bad_i < 0,
+        errors::InvalidArgument(
+            "indices", SliceDebugString(indices.shape(), bad_i), " = ",
+            indices_flat(bad_i), " is not in [0, ", gather_dim_size, ")"));
+#else
+   if( batch_dims_ > 0 ) {
+     functor::VEGatherFunctorBatched<T, Index> functor ;
+     functor(c, &params, &indices, out, batch_size, outer_size, gather_dim_size, inner_size, N) ;
+   }
+   else {
+    functor::VEGatherFunctor<T, Index> functor ;
+    functor(c, &params, &indices, out, outer_size, gather_dim_size, inner_size, N) ;
+   }
+#endif
+  }
+
+
+ private:
+  // The number of batch dimensions, as passed in the batch_dims attribute.
+  // It must be less than rank(indices).
+  int32 batch_dims_ = 0;
+};
+
+#define VE_REGISTER_GATHER_FULL(type, index_type)                      \
+  REGISTER_KERNEL_BUILDER(Name("Gather")                               \
+                              .Device(DEVICE_VE)                       \
+                              .TypeConstraint<type>("Tparams")         \
+                              .TypeConstraint<index_type>("Tindices"), \
+                          VEGatherOp<type, index_type>);               \
+  REGISTER_KERNEL_BUILDER(Name("GatherV2")                             \
+                              .Device(DEVICE_VE)                       \
+                              .TypeConstraint<type>("Tparams")         \
+                              .TypeConstraint<index_type>("Tindices")  \
+                              .HostMemory("axis"),                     \
+                          VEGatherOp<type, index_type>)
+
+#define VE_REGISTER_GATHER_ALL_INDICES(type) 	\
+  VE_REGISTER_GATHER_FULL(type, int32);    	\
+  VE_REGISTER_GATHER_FULL(type, int64)
+
+
+//TF_CALL_bool(VE_REGISTER_GATHER_ALL_INDICES);
+TF_CALL_int32(VE_REGISTER_GATHER_ALL_INDICES);
+TF_CALL_int64(VE_REGISTER_GATHER_ALL_INDICES);
+//TF_CALL_half(VE_REGISTER_GATHER_ALL_INDICES);
+TF_CALL_float(VE_REGISTER_GATHER_ALL_INDICES);
+TF_CALL_double(VE_REGISTER_GATHER_ALL_INDICES);
+//TF_CALL_complex64(VE_REGISTER_GATHER_ALL_INDICES);
+//TF_CALL_complex128(VE_REGISTER_GATHER_ALL_INDICES);
+
+#undef VE_REGISTER_GATHER_ALL_INDICES
+#undef VE_REGISTER_GATHER_FULL
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

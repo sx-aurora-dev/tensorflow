@@ -55,6 +55,15 @@ namespace tensorflow {
 
 namespace {
 
+#ifdef DEVICE_ASSIGN_LOG
+string NodeToString(const Node& node) {
+  return "node[id=" + std::to_string(node.id())
+    + ",name=" + node.name()
+    + ",type=" + node.type_string()
+    + "]";
+}
+#endif
+
 // We hoist the conversion from C-style string literal to StringPiece here,
 // so that we can avoid the many repeated calls to strlen().
 const StringPiece kColocationAttrNameStringPiece(kColocationAttrName);
@@ -340,6 +349,19 @@ void Member::Merge(std::vector<Member>* tree, int x_root, int y_root,
 
   *new_root = &(*tree)[new_root_id];
   *old_root = &(*tree)[old_root_id];
+
+#ifdef DEVICE_ASSIGN_LOG
+#if 1
+  if (!dry_run) {
+    string tmp;
+    for (auto& deviceType : (*new_root)->supported_device_types())
+      tmp += " " + string(deviceType.first.type());
+    VLOG(2) << __FUNCTION__ << ": new_root_id=" << new_root_id
+      << " old_root_id=" << old_root_id << ": " << tmp;
+  }
+#endif
+#endif
+
 }
 
 // tree is non-const because we can change some `parent` pointers in some
@@ -1026,6 +1048,20 @@ Status ColocationGraph::ColocateNodeToGroup(
       }
     }
   }
+#ifdef DEVICE_ASSIGN_LOG
+  {
+    int id = FindRoot(root_node->id());
+    Member& root = members_[id];
+    string tmp;
+    for (auto& deviceType : root.supported_device_types())
+      tmp += " " + string(deviceType.first.type());
+
+    VLOG(2) << __FUNCTION__ << ": assign "
+      << NodeToString(*node)
+      << " to group " << colocation_group
+      << " (root=" << NodeToString(*root_node) << ") :" << tmp;
+  }
+#endif
   return Status::OK();
 }
 
@@ -1470,6 +1506,18 @@ Status ColocationGraph::InitializeMember(const Node& node, Member* member) {
       }
     }
   }
+#ifdef DEVICE_ASSIGN_LOG
+  {
+    string tmp;
+    for (auto& deviceType : member->supported_device_types())
+      tmp += " " + string(deviceType.first.type());
+    VLOG(2) << __FUNCTION__ << ": "
+      << "node[id=" << node.id()
+      << ",name=" << node.name()
+      << ",type=" << node.type_string()
+      << "] supported_device_types: " << tmp;
+  }
+#endif
   return Status::OK();
 }
 

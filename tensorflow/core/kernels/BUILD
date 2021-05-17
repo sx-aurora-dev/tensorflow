@@ -89,6 +89,7 @@ package_group(
         "//tensorflow_text/...",
     ],
 )
+load("//third_party/veoffload:build_defs.bzl", "if_ve")
 
 package_group(
     name = "optimizer_helper_friends",
@@ -957,7 +958,7 @@ ARRAY_DEPS = [
     "//tensorflow/core:protos_all_cc",
     "//tensorflow/core/framework:bounds_check",
     "//third_party/eigen3",
-]
+] + if_ve(["//tensorflow/core:ve_runtime"])
 
 tf_kernel_library(
     name = "immutable_constant_op",
@@ -1952,7 +1953,8 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core/framework:bounds_check",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime",
+               "//tensorflow/core:core_cpu"]),
 )
 
 # Unlike gather_functor library, this does not include the CUDA code and deps.
@@ -1976,7 +1978,8 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime",
+               "//tensorflow/core:core_cpu"]),
     alwayslink = 0,
 )
 
@@ -2283,7 +2286,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//third_party/eigen3",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime"]),
     alwayslink = 1,
 )
 
@@ -3322,13 +3325,15 @@ cc_library(
 tf_kernel_library(
     name = "aggregate_ops",
     prefix = "aggregate_ops",
-    deps = MATH_DEPS,
+    deps = MATH_DEPS + [
+        "//tensorflow/core:ve_runtime",
+    ],
 )
 
 tf_kernel_library(
     name = "argmax_op",
     prefix = "argmax_op",
-    deps = MATH_DEPS,
+    deps = MATH_DEPS + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -3353,7 +3358,8 @@ tf_kernel_library(
         "//conditions:default": [],
     }) + mkl_deps() + if_cuda([
         "//tensorflow/core/platform/default/build_config:cublas_plugin",
-    ]) + if_cuda_or_rocm([":gpu_utils"]),
+    ]) + if_cuda_or_rocm([":gpu_utils"])
+       + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -3412,7 +3418,9 @@ tf_kernel_library(
     prefix = "cwise_op",
     deps = MATH_DEPS + [
         "//tensorflow/core/kernels/mlir_generated:cwise_op",
-    ],
+    ] + if_ve(
+       ["//tensorflow/core:ve_runtime"]
+    ),
 )
 
 tf_kernel_library(
@@ -3443,7 +3451,7 @@ tf_kernel_library(
     deps = MATH_DEPS + [
         ":gpu_prim_hdrs",
         ":transpose_functor",
-    ],
+    ] + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -3451,7 +3459,7 @@ tf_kernel_library(
     prefix = "segment_reduction_ops",
     deps = MATH_DEPS + if_cuda_or_rocm([
         "//tensorflow/core/util:cuda_solvers",
-    ]),
+    ]) + if_ve(["//tensorflow/core:ve_runtime"]),
 )
 
 tf_kernel_library(
@@ -3821,7 +3829,7 @@ tf_kernel_library(
     ] + select({
         ":xsmm_convolutions": ["xsmm_conv2d.h"],
         "//conditions:default": [],
-    }),
+    }) + if_ve(["transpose_functor.h"]),
     defines = select({
         ":xsmm_convolutions": ["TENSORFLOW_USE_LIBXSMM_CONVOLUTIONS"],
         "//conditions:default": [],
@@ -3850,6 +3858,7 @@ tf_kernel_library(
         "//tensorflow/core/protobuf:autotuning_proto_cc",
         "//tensorflow/core/util:image_resizer_state",
         "//tensorflow/core/util/proto:proto_utils",
+        "//tensorflow/core:ve_runtime",
     ] + select({
         ":xsmm_convolutions": [
             "@libxsmm_archive//:xsmm_avx",
@@ -3865,7 +3874,7 @@ tf_kernel_library(
     ]) + if_cuda_or_rocm([
         ":gpu_utils",
         "//tensorflow/stream_executor/gpu:redzone_allocator",
-    ]),
+    ]) + if_ve([":transpose_functor"]),
 )
 
 cc_library(
@@ -3976,7 +3985,7 @@ NN_DEPS = [
     "//tensorflow/core:nn_grad",
     "//tensorflow/core/framework:bounds_check",
     "//third_party/eigen3",
-]
+] + if_ve(["//tensorflow/core:ve_runtime", "//tensorflow/core:core_cpu"])
 
 tf_kernel_library(
     name = "batch_norm_op",
@@ -4596,6 +4605,7 @@ cc_library(
         ":sparse_sparse_binary_op_shared",
         ":sparse_split_op",
         ":sparse_tensor_dense_add_op",
+	":convert_ve_sparse_tensor_op",
         ":sparse_tensor_dense_matmul_op",
         ":sparse_tensors_map_ops",
         ":sparse_to_dense_op",
@@ -4714,6 +4724,17 @@ tf_kernel_library(
 )
 
 tf_kernel_library(
+    name = "convert_ve_sparse_tensor_op",
+    prefix = "convert_ve_sparse_tensor_op",
+    deps = SPARSE_DEPS + [
+        "//tensorflow/core/framework:bounds_check",
+        ":fill_functor",
+        "//third_party/eigen3",
+    ],
+)
+
+
+tf_kernel_library(
     name = "sparse_tensor_dense_matmul_op",
     prefix = "sparse_tensor_dense_matmul_op",
     deps = SPARSE_DEPS + [
@@ -4746,6 +4767,8 @@ tf_kernel_library(
         "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
         "@local_config_rocm//rocm:rocprim",
+    ]) + if_ve(["//tensorflow/core:ve_runtime",
+             "//tensorflow/core:core_cpu",
     ]),
 )
 
@@ -5315,7 +5338,9 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core/framework:bounds_check",
         "//third_party/eigen3",
-    ],
+    ]
+    + if_ve(["//tensorflow/core:ve_runtime",
+             "//tensorflow/core:core_cpu"]),
 )
 
 tf_cc_test(
@@ -7296,7 +7321,10 @@ cc_library(
         "//tensorflow/core/framework:bounds_check",
         "//third_party/eigen3",
         "@gemmlowp",
-    ],
+    ] + if_ve([
+        "//tensorflow/core:ve_runtime",
+        "//tensorflow/core:core_cpu_lib",
+    ]),
 )
 
 # Header-only version of cwise_lib for clients that want to use the cwise_ops

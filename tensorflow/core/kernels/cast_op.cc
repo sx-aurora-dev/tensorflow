@@ -30,6 +30,10 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/cast_op_impl.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -282,4 +286,42 @@ REGISTER_KERNEL_BUILDER(Name("_HostCast").Device(DEVICE_CPU), CpuCastOp);
 REGISTER_KERNEL_BUILDER(
     Name("_HostCast").Device(DEVICE_DEFAULT).HostMemory("x").HostMemory("y"),
     CpuCastOp);
+
+#ifdef TENSORFLOW_USE_VE
+class VECastOp : public CastOpBase, public VEOpKernelHelper {
+  public:
+    explicit VECastOp(OpKernelConstruction* ctx) : CastOpBase(ctx) {
+      OP_REQUIRES_OK(ctx, Prepare());
+    }
+
+  private:
+    Status Prepare() {
+      work_ = work;
+      return Status::OK();
+    }
+
+    static void work(OpKernelContext* ctx, const Tensor& in, 
+                     Tensor* out, bool trunc) {
+      Call(ctx, "Cast", in, *out); // FIXME: what is trunc?
+    }
+};
+
+#define REGISTER_CAST_VE(srctype, dsttype)                   \
+  REGISTER_KERNEL_BUILDER(Name("Cast")                         \
+                              .TypeConstraint<srctype>("SrcT") \
+                              .TypeConstraint<dsttype>("DstT") \
+                              .Device(DEVICE_VE),            \
+                          VECastOp)
+// FIXME: add other types
+REGISTER_CAST_VE(bool, float);
+REGISTER_CAST_VE(int32, float);
+REGISTER_CAST_VE(int64, float);
+REGISTER_CAST_VE(bool, int32);
+REGISTER_CAST_VE(uint16, int32);
+REGISTER_CAST_VE(float, int32);
+REGISTER_CAST_VE(float, int64);
+REGISTER_CAST_VE(int8, bool);
+REGISTER_CAST_VE(int32, bool);
+
+#endif // TENSORFLOW_USE_VE
 }  // end namespace tensorflow

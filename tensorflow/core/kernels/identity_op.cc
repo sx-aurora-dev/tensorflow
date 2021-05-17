@@ -143,6 +143,66 @@ REGISTER_GPU_HOST_KERNEL(ResourceHandle);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                           \
+  REGISTER_KERNEL_BUILDER(                                                 \
+      Name("Identity").Device(DEVICE_VE).TypeConstraint<type>("T"),        \
+      IdentityOp);                                                         \
+  REGISTER_KERNEL_BUILDER(                                                 \
+      Name("PreventGradient").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      IdentityOp);                                                         \
+  REGISTER_KERNEL_BUILDER(                                                 \
+      Name("RefIdentity").Device(DEVICE_VE).TypeConstraint<type>("T"),     \
+      IdentityOp);                                                         \
+  REGISTER_KERNEL_BUILDER(                                                 \
+      Name("StopGradient").Device(DEVICE_VE).TypeConstraint<type>("T"),    \
+      IdentityOp);                                                         \
+  REGISTER_KERNEL_BUILDER(Name("DebugGradientIdentity")                    \
+                              .Device(DEVICE_VE)                           \
+                              .TypeConstraint<type>("T"),                  \
+                          IdentityOp);                                     \
+  REGISTER_KERNEL_BUILDER(Name("PlaceholderWithDefault")                   \
+                              .Device(DEVICE_VE)                           \
+                              .TypeConstraint<type>("dtype"),              \
+                          IdentityOp)
+
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+REGISTER_VE_KERNEL(Variant);
+#undef REGISTER_VE_KERNEL
+
+#define REGISTER_VE_HOST_KERNEL(type)                         \
+  REGISTER_KERNEL_BUILDER(Name("Identity")                    \
+                              .Device(DEVICE_VE)              \
+                              .HostMemory("input")            \
+                              .HostMemory("output")           \
+                              .TypeConstraint<type>("T"),     \
+                          IdentityOp);                        \
+  REGISTER_KERNEL_BUILDER(Name("RefIdentity")                 \
+                              .Device(DEVICE_VE)              \
+                              .HostMemory("input")            \
+                              .HostMemory("output")           \
+                              .TypeConstraint<type>("T"),     \
+                          IdentityOp);                        \
+  REGISTER_KERNEL_BUILDER(Name("StopGradient")                \
+                              .Device(DEVICE_VE)              \
+                              .HostMemory("input")            \
+                              .HostMemory("output")           \
+                              .TypeConstraint<type>("T"),     \
+                          IdentityOp);                        \
+  REGISTER_KERNEL_BUILDER(Name("PlaceholderWithDefault")      \
+                              .Device(DEVICE_VE)              \
+                              .HostMemory("input")            \
+                              .HostMemory("output")           \
+                              .TypeConstraint<type>("dtype"), \
+                          IdentityOp)
+
+REGISTER_VE_HOST_KERNEL(int32);
+REGISTER_VE_HOST_KERNEL(bool);
+REGISTER_VE_HOST_KERNEL(tstring);
+REGISTER_VE_HOST_KERNEL(ResourceHandle);
+#undef REGISTER_VE_HOST_KERNEL
+#endif // TENSORFLOW_USE_VE
+
 #define REGISTER_DEFAULT_HOST_KERNEL(type)                    \
   REGISTER_KERNEL_BUILDER(Name("Identity")                    \
                               .Device(DEVICE_DEFAULT)         \

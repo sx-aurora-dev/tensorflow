@@ -92,6 +92,21 @@ REGISTER_KERNEL_BUILDER(Name("InvertPermutation")
                         InvertPermutationOp<int64>);
 
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("InvertPermutation")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("x")
+                            .HostMemory("y"),
+                        InvertPermutationOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("InvertPermutation")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int64>("T")
+                            .HostMemory("x")
+                            .HostMemory("y"),
+                        InvertPermutationOp<int64>);
+#endif  // TENSORFLOW_USE_VE
+
 namespace {
 template <typename Tperm>
 Status PermutationHelper(const Tensor& perm, const int dims,
@@ -249,4 +264,26 @@ TF_CALL_POD_TYPES(REGISTER);
 #undef REGISTER
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+class TransposeVeOp : public TransposeOp {
+ public:
+  explicit TransposeVeOp(OpKernelConstruction* ctx) : TransposeOp(ctx) {}
+
+ protected:
+  Status DoTranspose(OpKernelContext* ctx, const Tensor& in,
+                     gtl::ArraySlice<int32> perm, Tensor* out) override;
+};
+
+Status TransposeVeOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
+                                  gtl::ArraySlice<int32> perm, Tensor* out) {
+  return ::tensorflow::VEDoTranspose(ctx, in, perm, out);
+}
+#define REGISTER(T)                                   \
+  REGISTER_KERNEL_BUILDER(Name("Transpose")           \
+                              .Device(DEVICE_VE)    \
+                              .TypeConstraint<T>("T") \
+                              .HostMemory("perm"),    \
+                          TransposeVeOp);
+TF_CALL_POD_TYPES(REGISTER);
+#endif
 }  // namespace tensorflow

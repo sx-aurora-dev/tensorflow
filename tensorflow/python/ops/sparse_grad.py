@@ -165,6 +165,7 @@ def _SparseTensorDenseMatMulGrad(op, grad):
   b = op.inputs[3]
   adj_a = op.get_attr("adjoint_a")
   adj_b = op.get_attr("adjoint_b")
+  use_ve_sparse = op.get_attr("use_ve_sparse")
 
   a_type = a_values.dtype.base_dtype
   b_type = b.dtype.base_dtype
@@ -174,9 +175,14 @@ def _SparseTensorDenseMatMulGrad(op, grad):
 
   # gradient w.r.t. dense
   b_grad = gen_sparse_ops.sparse_tensor_dense_mat_mul(
-      a_indices, a_values, a_shape, grad, adjoint_a=not adj_a)
+      a_indices, a_values, a_shape, grad, adjoint_a=not adj_a, use_ve_sparse=use_ve_sparse)
   if adj_b:
     b_grad = array_ops.matrix_transpose(b_grad, conjugate=True)
+
+  if(use_ve_sparse):
+    # b_grad is vector
+    a_values_grad = math_ops.reduce_sum(b_grad, axis=1)
+    return (None, array_ops.squeeze(a_values_grad, axis=[-2, -1]), None, b_grad)
 
   # gradient w.r.t. sparse values
 

@@ -531,6 +531,9 @@ build:elinux_armhf --config=elinux
 build:elinux_armhf --cpu=armhf
 # END TF REMOTE BUILD EXECUTION OPTIONS
 
+# Enable VectorEngine
+build:ve --copt=-DTENSORFLOW_USE_VE --copt=-DDEVICE_ASSIGN_LOG --define=using_ve=true
+
 # Config-specific options should come above this line.
 
 # Load rc file written by ./configure.

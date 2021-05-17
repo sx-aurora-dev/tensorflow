@@ -69,6 +69,42 @@ REGISTER_KERNEL_BUILDER(Name("Reshape")
                         ReshapeOp);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_VE_KERNEL(type)                                \
+  REGISTER_KERNEL_BUILDER(Name("Reshape")                       \
+                              .Device(DEVICE_VE)                \
+                              .HostMemory("shape")              \
+                              .TypeConstraint<type>("T")        \
+                              .TypeConstraint<int32>("Tshape"), \
+                          ReshapeOp);                           \
+  REGISTER_KERNEL_BUILDER(Name("Reshape")                       \
+                              .Device(DEVICE_VE)                \
+                              .HostMemory("shape")              \
+                              .TypeConstraint<type>("T")        \
+                              .TypeConstraint<int64>("Tshape"), \
+                          ReshapeOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE_KERNEL);
+TF_CALL_bool(REGISTER_VE_KERNEL);
+#undef REGISTER_VE_KERNEL
+
+REGISTER_KERNEL_BUILDER(Name("Reshape")
+                            .Device(DEVICE_VE)
+                            .HostMemory("tensor")
+                            .HostMemory("shape")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("Tshape"),
+                        ReshapeOp);
+REGISTER_KERNEL_BUILDER(Name("Reshape")
+                            .Device(DEVICE_VE)
+                            .HostMemory("tensor")
+                            .HostMemory("shape")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int64>("Tshape"),
+                        ReshapeOp);
+#endif  // TENSORFLOW_USE_VE
+
 #define REGISTER_DEFAULT_KERNEL(type)                           \
   REGISTER_KERNEL_BUILDER(Name("Reshape")                       \
                               .Device(DEVICE_DEFAULT)           \

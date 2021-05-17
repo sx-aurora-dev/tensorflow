@@ -87,4 +87,29 @@ REGISTER_KERNEL_BUILDER(
 #endif
 
 
+#ifdef TENSORFLOW_USE_VE
+DEFINE_VE_REDUCTION_OP(Max);
+REGISTER_VE_REDUCTION_OP(Max, float);
+REGISTER_VE_REDUCTION_OP(Max, double);
+
+REGISTER_KERNEL_BUILDER(
+    Name("Max")
+        .Device(DEVICE_VE)
+        .TypeConstraint<int32>("T")
+        .TypeConstraint<int32>("Tidx")
+        .HostMemory("input")
+        .HostMemory("output")
+        .HostMemory("reduction_indices"),
+    ReductionOp<CPUDevice, int32, int32, Eigen::internal::MaxReducer<int32>>);
+REGISTER_KERNEL_BUILDER(
+    Name("Max")
+        .Device(DEVICE_VE)
+        .TypeConstraint<int32>("T")
+        .TypeConstraint<int64>("Tidx")
+        .HostMemory("input")
+        .HostMemory("output")
+        .HostMemory("reduction_indices"),
+    ReductionOp<CPUDevice, int32, int64, Eigen::internal::MaxReducer<int32>>);
+#endif  // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

@@ -35,6 +35,11 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/util/bcast.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -676,6 +681,166 @@ struct ApproximateEqual<CPUDevice, T> {
 // cwise_op_equal_to_*.cc for an example.
 
 #endif  // defined(__ANDROID_TYPES_SLIM__)
+
+#ifdef TENSORFLOW_USE_VE
+class VEUnaryOp : public OpKernel {
+  public:
+    explicit VEUnaryOp(OpKernelConstruction* ctx, std::string name) 
+      : OpKernel(ctx), name_(name) {}
+
+    void Compute(OpKernelContext* ctx) override {
+      const Tensor& inp = ctx->input(0);
+      Tensor* out = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+              {0}, 0, inp.shape(), &out));
+
+      struct _Tensor {
+        int32_t dtype;
+        uint64_t addr;
+        int32_t dims;
+        int64_t nelems;
+        int64_t dim_size[8];
+      } __attribute__((__packed__));
+
+      struct {
+        _Tensor in;
+        _Tensor out;
+      } __attribute__((__packed__)) args;
+
+      args.in.dtype = inp.dtype();
+      args.in.addr = (uint64_t)DMAHelper::base(&inp);
+      args.in.dims = 0;  // doesn't use dims, so initialize it by 0
+      args.in.nelems = inp.NumElements();
+      args.out.dtype = args.in.dtype;
+      args.out.addr = (uint64_t)DMAHelper::base(out);
+      args.out.dims = 0;  // doesn't use dims, so initialize it by 0
+      args.out.nelems = args.in.nelems;
+
+      VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args));
+      if (!s.ok())
+        ctx->SetStatus(s);
+    }
+
+  private:
+    std::string name_;
+};
+
+template <typename Tin, typename Tout>
+class VEBinaryOp : public BinaryOpShared {
+  public:
+    explicit VEBinaryOp(OpKernelConstruction* context, std::string name) 
+      : BinaryOpShared(context, DataTypeToEnum<Tout>::v(), DataTypeToEnum<Tin>::v()),
+        name_(name) {}
+
+    void Compute(OpKernelContext* context) override {
+      BinaryOpState state(context);
+      if (!context->status().ok()) return;
+
+      VLOG(2) << "VEBinaryOp:"
+        << " in0.shape=" << state.in0.shape().DebugString()
+        << " in1.shape=" << state.in1.shape().DebugString()
+        << " out.shape=" << state.out->shape().DebugString();
+
+      if (state.out_num_elements == 0) {
+        return;
+      }
+
+      if (state.in0.dims() > 8 || state.in1.dims() > 8 || state.out->dims() > 8) {
+        context->SetStatus(errors::Unimplemented(
+                "in0.dims > 8 || in1.dims > 8 || out.dims > 8"
+                " is not supported by VEMulOp"));
+        return;
+      }
+
+      struct _Tensor {
+        int dtype;
+        uint64_t addr;
+        int32_t dims;
+        int64_t nelems;
+        int64_t dim_size[8];
+
+        _Tensor(const Tensor& t) :
+          dtype(t.dtype()),
+          addr((uint64_t)DMAHelper::base(&t)),
+          dims(t.dims()),
+          nelems(t.NumElements()) {
+            for (int i = 0; i < dims; ++i) {
+              dim_size[i] = t.dim_size(i);
+            }
+        }
+      } __attribute__((__packed__));
+
+      struct Args {
+        _Tensor in0;
+        _Tensor in1;
+        _Tensor out;
+
+        Args(const Tensor& in0_, const Tensor in1_, Tensor& out_) :
+          in0(in0_), in1(in1_), out(out_) {
+            if(in0.dims > in1.dims){
+                for(int i = 0; i < in1.dims; i++){
+                    in1.dim_size[in0.dims-i-1] = in1.dim_size[in1.dims-i-1] ;
+                }
+                for(int i = 0; i < in0.dims-in1.dims; i++){
+                    in1.dim_size[i] = 1;
+                }
+                in1.dims = in0.dims;
+            }
+            if(in1.dims > in0.dims){
+                for(int i = 0; i < in0.dims; i++){
+                    in0.dim_size[in1.dims-i-1] = in0.dim_size[in0.dims-i-1] ;
+                }
+                for(int i = 0; i < in1.dims-in0.dims; i++){
+                    in0.dim_size[i] = 1;
+                }
+                in0.dims = in1.dims;
+            }
+        }
+      } __attribute__((__packed__)) args(state.in0, state.in1, *state.out);
+
+
+
+      VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+      Status s = vectx->Compute(name_.c_str(), (void*)&args, sizeof(args), this);
+      if (!s.ok())
+        context->SetStatus(s);
+
+    }
+
+  private:
+    std::string name_;
+};
+
+#define DEFINE_VE_UNARY_OP(Name) \
+class VE##Name##Op : public VEUnaryOp { \
+  public: \
+    explicit VE##Name##Op(OpKernelConstruction* ctx)  \
+      : VEUnaryOp(ctx, #Name) {} \
+};
+
+#define REGISTER_VE_UNARY_OP(NAME, T) \
+  DEFINE_VE_UNARY_OP(NAME); \
+  REGISTER_KERNEL_BUILDER(Name(#NAME) \
+                          .Device(DEVICE_VE) \
+                          .TypeConstraint<T>("T"), \
+                          VE##NAME##Op);
+
+#define DEFINE_VE_BIANRY_OP(Name) \
+template <typename Tin, typename Tout> \
+class VE##Name##Op : public VEBinaryOp<Tin, Tout> { \
+  public: \
+    explicit VE##Name##Op(OpKernelConstruction* context)  \
+      : VEBinaryOp<Tin, Tout>(context, #Name) {} \
+}
+
+#define REGISTER_VE_BINARY_OP(NAME, Tin, Tout, T) \
+DEFINE_VE_BIANRY_OP(NAME); \
+REGISTER_KERNEL_BUILDER(Name(#NAME) \
+                        .Device(DEVICE_VE) \
+                        .TypeConstraint<T>("T"), \
+                        VE##NAME##Op<Tin, Tout>);
+#endif // TENSORFLOW_USE_VE
 
 }  // end namespace tensorflow
 

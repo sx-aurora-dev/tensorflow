@@ -34,4 +34,13 @@ REGISTER_KERNEL_BUILDER(Name("FloorMod")
                         BinaryOp<CPUDevice, functor::safe_floor_mod<int32>>);
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("FloorMod")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::safe_floor_mod<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

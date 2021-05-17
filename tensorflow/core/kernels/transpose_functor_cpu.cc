@@ -26,6 +26,12 @@ limitations under the License.
 #include "tensorflow/core/lib/gtl/array_slice.h"
 #include "tensorflow/core/lib/gtl/inlined_vector.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
 namespace tensorflow {
@@ -136,5 +142,68 @@ struct Transpose<CPUDevice, T, conjugate> {
 
 INSTANTIATE(CPUDevice)
 
+
+#ifdef TENSORFLOW_USE_VE
+struct VETransposeArgs {
+  int dtype;
+  uint64_t in;
+  uint64_t out;
+  int size;
+  int conjugate ;	// boolean
+  int32_t dim_size[8];
+  int32_t perm[8];
+} ;
+
+Status VEDoTranspose(OpKernelContext* ctx, const Tensor& in,
+                     gtl::ArraySlice<int32> perm, Tensor* out) {
+  if (perm.size() > 8) {
+    return errors::InvalidArgument("transpose with perm.size > 8 "
+                                   "is not supported on VE. perm.size is ",
+                                   perm.size());
+  }
+
+  struct VETransposeArgs args ;
+
+  args.dtype = in.dtype();
+  args.in = (uint64_t)DMAHelper::base(&in);
+  args.out = (uint64_t)DMAHelper::base(out);
+  args.size = perm.size();
+  args.conjugate = 0 ;	// false
+  for (int i = 0; i < perm.size(); ++i) {
+    args.dim_size[i] = in.dim_size(i);
+    args.perm[i] = perm[i];
+  }
+
+  VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+  Status s = vectx->Compute("Transpose", (void*)&args, sizeof(args));
+  return s;
+}
+
+Status VEDoConjugateTranspose(OpKernelContext* ctx, const Tensor& in,
+                     gtl::ArraySlice<int32> perm, Tensor* out) {
+  if (perm.size() > 8) {
+    return errors::InvalidArgument("transpose with perm.size > 8 "
+                                   "is not supported on VE. perm.size is ",
+                                   perm.size());
+  }
+
+  struct VETransposeArgs args ;
+
+  args.dtype = in.dtype();
+  args.in = (uint64_t)DMAHelper::base(&in);
+  args.out = (uint64_t)DMAHelper::base(out);
+  args.size = perm.size();
+  args.conjugate = 1 ;	// false
+  for (int i = 0; i < perm.size(); ++i) {
+    args.dim_size[i] = in.dim_size(i);
+    args.perm[i] = perm[i];
+  }
+
+  VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+  Status s = vectx->Compute("Transpose", (void*)&args, sizeof(args));
+  return s;
+}
+
+#endif
 
 }  // namespace tensorflow

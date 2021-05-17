@@ -274,6 +274,7 @@ so_lib_paths = [
 matches = []
 for path in so_lib_paths:
   matches.extend(['../' + x for x in find_files('*', path) if '.py' not in x])
+matches.extend(['aux-bin/veorun_tf'])
 
 if os.name == 'nt':
   EXTENSION_NAME = 'python/_pywrap_tensorflow_internal.pyd'

@@ -151,6 +151,66 @@ REGISTER_KERNEL_BUILDER(Name(kRetOp)
                         RetvalOp);
 #undef REGISTER
 
+#define REGISTER_VE(type)     \
+  REGISTER_KERNEL_BUILDER( \
+      Name(kArgOp).Device(DEVICE_VE).TypeConstraint<type>("T"), ArgOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE)
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE)
+TF_CALL_bool(REGISTER_VE)
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+						   .Device(DEVICE_VE)
+						   .HostMemory("output")
+						   .TypeConstraint<int32>("T"),
+					   ArgOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kDeviceArgOp).Device(DEVICE_VE).TypeConstraint<int32>("T"), ArgOp);
+#undef REGISTER_VE
+
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<ResourceHandle>("T"),
+                        ArgOp);
+
+REGISTER_KERNEL_BUILDER(Name(kArgOp)
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<tstring>("T"),
+                        ArgOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kArgOp).Device(DEVICE_VE).TypeConstraint<Variant>("T"), ArgOp);
+
+#define REGISTER_VE(type)     \
+  REGISTER_KERNEL_BUILDER( \
+      Name(kRetOp).Device(DEVICE_VE).TypeConstraint<type>("T"), RetvalOp);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_VE)
+TF_CALL_QUANTIZED_TYPES(REGISTER_VE)
+REGISTER_VE(Variant)
+TF_CALL_bool(REGISTER_VE)
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+						   .Device(DEVICE_VE)
+						   .HostMemory("input")
+						   .TypeConstraint<int32>("T"),
+					   RetvalOp);
+
+REGISTER_KERNEL_BUILDER(
+    Name(kDeviceRetOp).Device(DEVICE_VE).TypeConstraint<int32>("T"), RetvalOp);
+
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<ResourceHandle>("T")
+                            .HostMemory("input"),
+                        RetvalOp);
+
+REGISTER_KERNEL_BUILDER(Name(kRetOp)
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<tstring>("T")
+                            .HostMemory("input"),
+                        RetvalOp);
+#undef REGISTER_VE
+
 class PassOn : public OpKernel {
  public:
   explicit PassOn(OpKernelConstruction* ctx) : OpKernel(ctx) {
@@ -198,6 +258,33 @@ REGISTER_KERNEL_BUILDER(Name("_ListToArray")
                         PassOn);
 REGISTER_KERNEL_BUILDER(Name("_ArrayToList")
                             .Device(DEVICE_GPU)
+                            .HostMemory("input")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PassOn);
+
+#define REGISTER_VE_KERNELS(type)                                       \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("_ListToArray").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PassOn);                                                           \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("_ArrayToList").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      PassOn);
+
+// REGISTER_VE_KERNELS(Eigen::half);
+REGISTER_VE_KERNELS(float);
+REGISTER_VE_KERNELS(double);
+
+#undef REGISTER_VE_KERNELS
+
+REGISTER_KERNEL_BUILDER(Name("_ListToArray")
+                            .Device(DEVICE_VE)
+                            .HostMemory("input")
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("T"),
+                        PassOn);
+REGISTER_KERNEL_BUILDER(Name("_ArrayToList")
+                            .Device(DEVICE_VE)
                             .HostMemory("input")
                             .HostMemory("output")
                             .TypeConstraint<int32>("T"),
@@ -258,6 +345,8 @@ class SymbolicGradientOp : public AsyncOpKernel {
 REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_CPU),
                         SymbolicGradientOp);
 REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_GPU),
+                        SymbolicGradientOp);
+REGISTER_KERNEL_BUILDER(Name(kGradientOp).Device(DEVICE_VE),
                         SymbolicGradientOp);
 
 RemoteCallOp::RemoteCallOp(OpKernelConstruction* ctx) : AsyncOpKernel(ctx) {
@@ -394,4 +483,6 @@ REGISTER_KERNEL_BUILDER(
     Name("RemoteCall").Device(DEVICE_CPU).HostMemory("target"), RemoteCallOp);
 REGISTER_KERNEL_BUILDER(
     Name("RemoteCall").Device(DEVICE_GPU).HostMemory("target"), RemoteCallOp);
+REGISTER_KERNEL_BUILDER(
+    Name("RemoteCall").Device(DEVICE_VE).HostMemory("target"), RemoteCallOp);
 }  // namespace tensorflow

@@ -285,5 +285,41 @@ REGISTER_UNIQUE(tstring)
 REGISTER_UNIQUE(bool)
 #undef REGISTER_UNIQUE
 
+#ifdef TENSORFLOW_USE_VE
+
+REGISTER_KERNEL_BUILDER(Name("Unique")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("out_idx")
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("idx"),
+                        UniqueOp<int32, int32>);
+REGISTER_KERNEL_BUILDER(Name("Unique")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int64>("out_idx")
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("idx"),
+                        UniqueOp<int32, int64>);
+REGISTER_KERNEL_BUILDER(Name("Unique")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int64>("T")
+                            .TypeConstraint<int32>("out_idx")
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("idx"),
+                        UniqueOp<int64, int32>);
+REGISTER_KERNEL_BUILDER(Name("Unique")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int64>("T")
+                            .TypeConstraint<int64>("out_idx")
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("idx"),
+                        UniqueOp<int64, int64>);
+#endif // TENSORFLOW_USE_VE
+
 }  // namespace
 }  // namespace tensorflow

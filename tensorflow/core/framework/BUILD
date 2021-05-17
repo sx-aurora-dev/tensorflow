@@ -92,6 +92,7 @@ exports_files(
         "tensor_util.h",
         "thread_factory.h",
         "tracking_allocator.h",
+        "ve_ops_common.h",
         "versions.h",
     ],
     visibility = [
@@ -284,6 +285,7 @@ filegroup(
         "run_handler_util.cc",
         "tensor_slice.cc",
         "tensor_util.cc",
+        "ve_ops_common.cc",
         "versions.cc",
     ],
 )

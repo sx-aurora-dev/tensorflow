@@ -780,6 +780,19 @@ Status GraphConstructor::MakeNode(NodeDef&& node_def, Node** node) {
   if (opts_.expect_device_spec) {
     (*node)->set_assigned_device_name((*node)->def().device());
   }
+#ifdef TENSORFLOW_USE_VE
+  if (const char* tmp = getenv("TF_FORCE_CPU")) {
+    std::vector<string> v = str_util::Split(tmp, ",");
+    if (std::find(v.begin(), v.end(), (*node)->type_string()) != v.end()) {
+      const char* dev = "/job:localhost/replica:0/task:0/device:CPU:0";
+      LOG(INFO) << "assigne node " << (*node)->name()
+        << " id=" << (*node)->id()
+        << " type=" << (*node)->type_string() << " to " << dev;
+      (*node)->set_assigned_device_name(dev);
+    }
+  }
+#endif
+
   return Status::OK();
 }
 

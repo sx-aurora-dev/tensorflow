@@ -26,4 +26,7 @@ REGISTER5(UnaryOp, GPU, "Exp", functor::exp, float, Eigen::half, double,
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Exp, float);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

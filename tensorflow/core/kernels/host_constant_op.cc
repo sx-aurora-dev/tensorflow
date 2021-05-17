@@ -22,6 +22,11 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif  // TENSORFLOW_USE_SYCL
+
 namespace tensorflow {
 
 _HostConstantOp::_HostConstantOp(OpKernelConstruction* ctx)
@@ -54,6 +59,14 @@ REGISTER_KERNEL_BUILDER(Name("Const")
                         _HostConstantOp);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("Const")
+                            .Device(DEVICE_VE)
+                            .HostMemory("output")
+                            .TypeConstraint<int32>("dtype"),
+                        _HostConstantOp);
+#endif // TENSORFLOW_USE_VE
 
 // HostConst: forced to generate output on the host.
 REGISTER_KERNEL_BUILDER(Name("HostConst").Device(DEVICE_CPU), _HostConstantOp);

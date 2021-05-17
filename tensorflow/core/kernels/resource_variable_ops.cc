@@ -79,6 +79,11 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/util.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp").Device(DEVICE_CPU),
@@ -300,6 +305,65 @@ REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp")
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(
+    Name("ReadVariableOp").Device(DEVICE_VE).HostMemory("resource"),
+    ReadVariableOp);
+REGISTER_KERNEL_BUILDER(
+    Name("_ReadVariablesOp").Device(DEVICE_VE).HostMemory("resources"),
+    ReadVariablesOp);
+
+#define REGISTER_VE_KERNELS(type)                              \
+  REGISTER_KERNEL_BUILDER(Name("VarHandleOp")                  \
+                              .Device(DEVICE_VE)               \
+                              .HostMemory("resource")          \
+                              .TypeConstraint<type>("dtype"),  \
+                          ResourceHandleOp<Var>)
+
+#if 0  // FIXME : add types
+TF_CALL_half(REGISTER_VE_KERNELS)
+TF_CALL_float(REGISTER_VE_KERNELS)
+TF_CALL_double(REGISTER_VE_KERNELS)
+TF_CALL_bool(REGISTER_VE_KERNELS)
+TF_CALL_complex64(REGISTER_VE_KERNELS)
+TF_CALL_complex128(REGISTER_VE_KERNELS)
+TF_CALL_int64(REGISTER_VE_KERNELS);
+TF_CALL_variant(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+
+REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp")
+                            .Device(DEVICE_VE)
+                            .HostMemory("resources")
+                            .TypeConstraint("dtypes",
+                                            {DT_INT64, DT_COMPLEX64,
+                                             DT_COMPLEX128, DT_HALF, DT_FLOAT,
+                                             DT_DOUBLE, DT_BOOL, DT_VARIANT}),
+                        ResourceHandlesOp<Var>);
+#else
+//TF_CALL_half(REGISTER_VE_KERNELS)
+TF_CALL_float(REGISTER_VE_KERNELS)
+TF_CALL_double(REGISTER_VE_KERNELS)
+TF_CALL_bool(REGISTER_VE_KERNELS)
+//TF_CALL_complex64(REGISTER_VE_KERNELS)
+//TF_CALL_complex128(REGISTER_VE_KERNELS)
+TF_CALL_int64(REGISTER_VE_KERNELS);
+//TF_CALL_variant(REGISTER_VE_KERNELS);
+
+#undef REGISTER_VE_KERNELS
+
+REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp")
+                            .Device(DEVICE_VE)
+                            .HostMemory("resources")
+                            .TypeConstraint("dtypes",
+                                {DT_FLOAT,
+                                 DT_DOUBLE,
+                                 DT_BOOL,
+                                 DT_INT64}),
+                        ResourceHandlesOp<Var>);
+#endif
+
+#endif  // TENSORFLOW_USE_VE
+
 #define REGISTER_DEFAULT_KERNELS(type)                        \
   REGISTER_KERNEL_BUILDER(Name("VarHandleOp")                 \
                               .Device(DEVICE_DEFAULT)         \
@@ -345,6 +409,21 @@ REGISTER_KERNEL_BUILDER(Name("VariableShape")
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("VariableShape")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("out_type")
+                            .HostMemory("output")
+                            .HostMemory("input"),
+                        VariableShapeOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("VariableShape")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int64>("out_type")
+                            .HostMemory("output")
+                            .HostMemory("input"),
+                        VariableShapeOp<int64>);
+#endif
+
 DestroyResourceOp::DestroyResourceOp(OpKernelConstruction* ctx)
     : OpKernel(ctx) {
   OP_REQUIRES_OK(ctx,
@@ -365,6 +444,13 @@ REGISTER_KERNEL_BUILDER(Name("DestroyResourceOp").Device(DEVICE_CPU),
 REGISTER_KERNEL_BUILDER(
     Name("DestroyResourceOp").Device(DEVICE_GPU).HostMemory("resource"),
     DestroyResourceOp);
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(
+    Name("DestroyResourceOp").Device(DEVICE_VE).HostMemory("resource"),
+    DestroyResourceOp);
+#endif // TENSORFLOW_USE_VE
+
 
 template <typename Device, typename T>
 class AssignVariableOp : public OpKernel {
@@ -544,6 +630,97 @@ TF_CALL_uint32(REGISTER_GPU_KERNELS);
 #undef REGISTER_GPU_KERNELS
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class VEAssignVariableOp : public OpKernel {
+ public:
+  explicit VEAssignVariableOp(OpKernelConstruction* c) : OpKernel(c) {
+    OP_REQUIRES_OK(c, c->GetAttr("dtype", &dtype_));
+    if (!c->GetAttr("_grappler_relax_allocator_constraints",
+                    &relax_constraints_)
+             .ok()) {
+      relax_constraints_ = false;
+    }
+  }
+
+  void Compute(OpKernelContext* context) override {
+    OP_REQUIRES(context, dtype_ == context->input(1).dtype(),
+                errors::InvalidArgument(
+                    "Variable and value dtypes don't match; respectively, ",
+                    DataTypeString(dtype_), " and ",
+                    DataTypeString(context->input(1).dtype())));
+    Var* variable = nullptr;
+    const Tensor& value = context->input(1);
+    // Note: every resource-variable-manipulating op assumes copy-on-write
+    // semantics, and creates a copy of the variable's Tensor if its refcount is
+    // bigger than 1 when we try to modify it. This means we never need to copy
+    // the original tensor for AssignVariableOp; even if there are other live
+    // users of it we know none can modify it so this is always safe (even in
+    // esoteric cases where the same tensor is used to initialize multiple
+    // variables or the tensor is a constant this is safe, as future writes will
+    // trigger copies).
+    OP_REQUIRES_OK(context, LookupOrCreateResource<Var>(
+                                context, HandleFromInput(context, 0), &variable,
+                                [this, &value](Var** ptr) {
+                                  *ptr = new Var(dtype_);
+                                  *(*ptr)->tensor() = value;
+                                  (*ptr)->is_initialized = true;
+                                  return Status::OK();
+                                }));
+    core::ScopedUnref s(variable);
+    mutex_lock ml(*variable->mu());
+    OP_REQUIRES(context, variable->tensor()->dtype() == dtype_,
+                errors::InvalidArgument(
+                    "Trying to assign variable with wrong dtype. Expected ",
+                    DataTypeString(variable->tensor()->dtype()), " got ",
+                    DataTypeString(dtype_)));
+    if (variable->copy_on_read_mode.load()) {
+      PersistentTensor unused;
+      Tensor* tmp;
+      AllocatorAttributes attr;
+      attr.set_gpu_compatible(true);
+      attr.set_nic_compatible(true);
+      OP_REQUIRES_OK(context,
+                     context->allocate_persistent(value.dtype(), value.shape(),
+                                                  &unused, &tmp, attr));
+
+
+      functor::VEDenseUpdate<T, ASSIGN> copy_functor;
+      copy_functor(context, tmp, &value);
+
+      *variable->tensor() = *tmp;
+    } else {
+      *variable->tensor() = value;
+    }
+    variable->is_initialized = true;
+  }
+
+ private:
+  DataType dtype_;
+  bool relax_constraints_;
+};
+
+
+#define REGISTER_VE_KERNELS(type)                            \
+  REGISTER_KERNEL_BUILDER(Name("AssignVariableOp")           \
+                              .Device(DEVICE_VE)             \
+                              .TypeConstraint<type>("dtype") \
+                              .HostMemory("resource"),       \
+                          VEAssignVariableOp<type>);
+
+// FIXME : Add types
+//TF_CALL_half(REGISTER_VE_KERNELS);
+TF_CALL_float(REGISTER_VE_KERNELS);
+TF_CALL_double(REGISTER_VE_KERNELS);
+TF_CALL_bool(REGISTER_VE_KERNELS);
+//TF_CALL_complex64(REGISTER_VE_KERNELS);
+//TF_CALL_complex128(REGISTER_VE_KERNELS);
+TF_CALL_int64(REGISTER_VE_KERNELS);
+//TF_CALL_variant(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+#endif // TENSORFLOW_USE_VE
+
 template <typename Device, typename T, DenseUpdateType Op>
 class AssignUpdateVariableOp : public OpKernel {
  public:
@@ -608,6 +785,59 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
 #undef REGISTER_GPU_KERNELS
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T, DenseUpdateType Op>
+class VEAssignUpdateVariableOp : public OpKernel {
+ public:
+  explicit VEAssignUpdateVariableOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void Compute(OpKernelContext* context) override {
+    Var* variable = nullptr;
+    OP_REQUIRES_OK(context, LookupResource(context, HandleFromInput(context, 0),
+                                           &variable));
+    core::ScopedUnref s(variable);
+
+    const Tensor& value = context->input(1);
+    // TODO(apassos): We could possibly avoid the copy done by
+    // PrepareToUpdateVariable() for commutative operations like Op ==
+    // ADD if value's refcount was 1.
+    mutex_lock ml(*variable->mu());
+    Tensor* var_tensor = variable->tensor();
+    OP_REQUIRES(context, var_tensor->shape().IsSameSize(value.shape()),
+                errors::InvalidArgument("Cannot update variable with shape ",
+                                        var_tensor->shape().DebugString(),
+                                        " using a Tensor with shape ",
+                                        value.shape().DebugString(),
+                                        ", shapes must be equal."));
+    OP_REQUIRES_OK(
+        context, VEPrepareToUpdateVariable<T>(
+                     context, var_tensor, variable->copy_on_read_mode.load()));
+    functor::VEDenseUpdate<T, Op> update_functor;
+    update_functor(context, var_tensor, &value);
+  }
+};
+
+#define REGISTER_VE_KERNELS(type)                                    \
+  REGISTER_KERNEL_BUILDER(Name("AssignAddVariableOp")                \
+                              .Device(DEVICE_VE)                     \
+                              .HostMemory("resource")                \
+                              .TypeConstraint<type>("dtype"),        \
+                          VEAssignUpdateVariableOp<type, ADD>);      \
+  REGISTER_KERNEL_BUILDER(Name("AssignSubVariableOp")                \
+                              .Device(DEVICE_VE)                     \
+                              .HostMemory("resource")                \
+                              .TypeConstraint<type>("dtype"),        \
+                          VEAssignUpdateVariableOp<type, SUB>);
+
+//TF_CALL_half(REGISTER_VE_KERNELS) ;
+TF_CALL_float(REGISTER_VE_KERNELS) ;
+TF_CALL_double(REGISTER_VE_KERNELS) ;
+TF_CALL_int64(REGISTER_VE_KERNELS);
+
+#undef REGISTER_VE_KERNELS
+
+#endif // TENSORFLOW_USE_VE
+
 class VarIsInitializedOp : public OpKernel {
  public:
   explicit VarIsInitializedOp(OpKernelConstruction* c) : OpKernel(c) {}
@@ -638,6 +868,14 @@ REGISTER_KERNEL_BUILDER(Name("VarIsInitializedOp")
                             .HostMemory("is_initialized"),
                         IsResourceInitialized<Var>);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("VarIsInitializedOp")
+                            .Device(DEVICE_VE)
+                            .HostMemory("resource")
+                            .HostMemory("is_initialized"),
+                        IsResourceInitialized<Var>);
+#endif
 
 REGISTER_KERNEL_BUILDER(Name("VarIsInitializedOp")
                             .Device(DEVICE_DEFAULT)
@@ -868,6 +1106,102 @@ TF_CALL_GPU_NUMBER_TYPES(REGISTER_GATHER_ND_GPU);
 #undef REGISTER_GATHER_ND_ALL_INDICES
 #undef REGISTER_GATHER_ND_FULL
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T, typename Index>
+class VEResourceGatherOp : public OpKernel {
+ public:
+  explicit VEResourceGatherOp(OpKernelConstruction* c) : OpKernel(c) {}
+
+  void Compute(OpKernelContext* c) override {
+    Var* v = nullptr;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    core::ScopedUnref su(v);
+    OP_REQUIRES_OK(c, VEEnsureSparseVariableAccess<T>(c, v));
+    // NOTE: We hold the lock for the whole gather operation instead
+    // of increasing the reference count of v->tensor() to avoid a
+    // situation where a write to the same variable will see a
+    // reference count greater than one and make a copy of the
+    // (potentially very large) tensor buffer.
+    tf_shared_lock ml(*v->mu());
+    const Tensor& params = *v->tensor();
+    const Tensor& indices = c->input(1);
+
+    OP_REQUIRES(
+	c, TensorShapeUtils::IsVectorOrHigher(params.shape()),
+	errors::InvalidArgument("params must be at least 1 dimensional"));
+
+    // Check that we have enough index space
+    const int64 N = indices.NumElements();
+    OP_REQUIRES(
+	c, params.dim_size(0) <= std::numeric_limits<Index>::max(),
+	errors::InvalidArgument("params.shape[0] too large for ",
+				DataTypeString(DataTypeToEnum<Index>::v()),
+				" indexing: ", params.dim_size(0), " > ",
+				std::numeric_limits<Index>::max()));
+
+    // The result shape is indices.shape + params.shape[1:].
+    TensorShape result_shape = indices.shape();
+    for (int i = 1; i < params.dims(); i++) {
+      result_shape.AddDim(params.dim_size(i));
+    }
+
+    Tensor* out = nullptr;
+    Tensor tmp;
+#if 0 // // FIXME : impl Variant objects
+    if (params.dtype() == DT_VARIANT) {
+      tmp = Tensor(DT_VARIANT, result_shape);
+      c->set_output(0, tmp);
+      out = &tmp;
+    } else
+#endif
+    {
+      OP_REQUIRES_OK(c, c->allocate_output(0, result_shape, &out));
+    }
+    if (N > 0) {
+      const int64 gather_dim_size = params.dim_size(0);
+      int64 inner_size = 1;
+      for (int i = 1; i < params.dims(); i++) {
+	inner_size *= params.dim_size(i);
+      }
+
+      functor::VEGatherFunctor<T, Index> functor;
+#if 0	// FIXME : check bad_i
+      int64 bad_i = functor(c, &params, &indices, out, gather_dim_size, inner_size, N);
+
+      auto indices_flat = indices.flat<Index>();
+      OP_REQUIRES(
+	  c, bad_i < 0,
+	  errors::InvalidArgument(
+	      "indices", SliceDebugString(indices.shape(), bad_i), " = ",
+	      indices_flat(bad_i), " is not in [0, ", params.dim_size(0), ")"));
+#else
+      functor(c, &params, &indices, out, 1, gather_dim_size, inner_size, N) ;
+#endif
+    }
+  }
+};
+
+#define REGISTER_GATHER_VE(type, index_type)                           \
+  REGISTER_KERNEL_BUILDER(Name("ResourceGather")                       \
+			      .Device(DEVICE_VE)                       \
+			      .HostMemory("resource")                  \
+			      .TypeConstraint<type>("dtype")           \
+			      .TypeConstraint<index_type>("Tindices"), \
+			  VEResourceGatherOp<type, index_type>)
+
+#define REGISTER_GATHER_ALL_INDICES_VE(type)   \
+  REGISTER_GATHER_VE(type, int32);             \
+  REGISTER_GATHER_VE(type, int64)
+
+//TF_CALL_half(REGISTER_GATHER_ALL_INDICES_VE)
+TF_CALL_float(REGISTER_GATHER_ALL_INDICES_VE)
+TF_CALL_double(REGISTER_GATHER_ALL_INDICES_VE)
+
+
+#undef REGISTER_GATHER_ALL_INDICES_VE
+#undef REGISTER_GATHER_VE
+#endif // TENSORFLOW_USE_VE
+
 template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>
 class ResourceScatterUpdateOp : public OpKernel {
  public:
@@ -970,6 +1304,86 @@ class ResourceScatterUpdateOp : public OpKernel {
   }
 };
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T, typename Index, scatter_op::UpdateOp op>
+class ResourceScatterUpdateOp<VEDevice, T, Index, op> : public OpKernel {
+ public:
+  explicit ResourceScatterUpdateOp(OpKernelConstruction* c) : OpKernel(c) {
+    // We use the same kernel for many operations.
+    // Each operation has a different set of attributes defined in its nodes.
+    Status s = c->GetAttr("use_locking", &use_exclusive_lock_);
+    if (!s.ok()) {
+      use_exclusive_lock_ = false;
+    }
+  }
+
+  void Compute(OpKernelContext* c) override {
+
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    OP_REQUIRES_OK(c, VEEnsureSparseVariableAccess<T>(c, v.get()));
+    const bool is_non_pod_dtype = c->input_dtype(0) == DT_RESOURCE ||
+                                  c->input_dtype(0) == DT_STRING ||
+                                  c->input_dtype(0) == DT_VARIANT;
+    if (is_non_pod_dtype || use_exclusive_lock_) {
+      mutex_lock ml(*v->mu());
+      DoCompute(c);
+    } else {
+      // For POD dtypes, we can safely run the update without the mutex.
+      tf_shared_lock ml(*v->mu());
+      DoCompute(c);
+    }
+  }
+
+ private:
+  bool use_exclusive_lock_;
+
+  void DoCompute(OpKernelContext* c) {
+    core::RefCountPtr<Var> v;
+    OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
+    Tensor* params = v->tensor();
+    const Tensor& indices = c->input(1);
+    const Tensor& updates = c->input(2);
+
+    // Check that we have enough index space
+    const int64 N_big = indices.NumElements();
+    OP_REQUIRES(
+        c, N_big <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("indices has too many elements for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", N_big, " > ",
+                                std::numeric_limits<Index>::max()));
+    const Index N = static_cast<Index>(N_big);
+    OP_REQUIRES(
+        c, params->dim_size(0) <= std::numeric_limits<Index>::max(),
+        errors::InvalidArgument("params.shape[0] too large for ",
+                                DataTypeString(DataTypeToEnum<Index>::v()),
+                                " indexing: ", params->dim_size(0), " > ",
+                                std::numeric_limits<Index>::max()));
+
+    if (N > 0) {
+      auto indices_flat = indices.flat<Index>();
+      auto params_flat = params->flat_outer_dims<T>();
+      if (TensorShapeUtils::IsScalar(updates.shape())) {
+        functor::VEScatterScalarFunctor<T, Index, op> functor ;
+        functor(c, params, updates, indices) ;
+      }
+      else {
+        int64 num_updates = updates.NumElements();
+        OP_REQUIRES(c, num_updates % N == 0,
+                    errors::InvalidArgument(
+                        "shape of indices (", indices.shape().DebugString(),
+                        ") is not compatible with the shape of updates (",
+                        updates.shape().DebugString(), ")"));
+
+        functor::VEScatterFunctor<T, Index, op> functor ;
+        functor(c, params, updates, indices) ;
+      }
+    }
+  }
+};
+#endif	// TENSORFLOW_USE_VE
+
 #define REGISTER_SCATTER_KERNEL_INDEX(type, index_type, dev, name, op) \
   REGISTER_KERNEL_BUILDER(                                             \
       Name(name)                                                       \
@@ -1051,6 +1465,49 @@ REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
                                                 scatter_op::UpdateOp::ASSIGN>)
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_SCATTER_ARITHMETIC_VE(type) \
+  REGISTER_SCATTER_ARITHMETIC(type, VE);
+#define REGISTER_SCATTER_MINMAX_VE(type) REGISTER_SCATTER_MINMAX(type, VE);
+
+//#define REGISTER_SCATTER_UPDATE_VE(type) REGISTER_SCATTER_UPDATE(type, VE);
+
+TF_CALL_float(REGISTER_SCATTER_ARITHMETIC_VE) ;
+//TF_CALL_double(REGISTER_SCATTER_ARITHMETIC_VE) ;
+
+TF_CALL_float(REGISTER_SCATTER_MINMAX_VE) ;
+//TF_CALL_double(REGISTER_SCATTER_MINMAX_VE) ;
+
+//REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+//                            .Device(DEVICE_VE)
+//                            .HostMemory("resource")
+//                            .HostMemory("indices")
+//                            .TypeConstraint<Variant>("dtype")
+//                            .TypeConstraint<int32>("Tindices"),
+//                        ResourceScatterUpdateOp<VEevice, Variant, int32,
+//                                                scatter_op::UpdateOp::ASSIGN>)
+//REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+//                            .Device(DEVICE_VE)
+//                            .HostMemory("resource")
+//                            .TypeConstraint<bool>("dtype")
+//                            .TypeConstraint<int32>("Tindices"),
+//                        ResourceScatterUpdateOp<VEDevice, bool, int32,
+//                                                scatter_op::UpdateOp::ASSIGN>)
+//REGISTER_KERNEL_BUILDER(Name("ResourceScatterUpdate")
+//                            .Device(DEVICE_VE)
+//                            .HostMemory("resource")
+//                            .HostMemory("indices")
+//                            .TypeConstraint<Variant>("dtype")
+//                            .TypeConstraint<int64>("Tindices"),
+//                        ResourceScatterUpdateOp<VEDevice, Variant, int64,
+//                                                scatter_op::UpdateOp::ASSIGN>)
+
+#undef REGISTER_SCATTER_MINMAX_VE
+//#undef REGISTER_SCATTER_UPDATE_VE
+#undef REGISTER_SCATTER_ARITHMETIC_VE
+
+#endif  // TENSORFLOW_USE_VE
 
 #undef REGISTER_SCATTER_ARITHMETIC
 #undef REGISTER_SCATTER_ARITHMETIC_CPU

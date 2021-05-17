@@ -7049,3 +7049,12 @@ def _copy_handle_data_to_arg_def(tensor, arg_def):
     proto = arg_def.handle_data.add()
     proto.dtype = shape_and_type.dtype
     proto.shape.CopyFrom(handle_data.shape_and_type[0].shape)
+
+
+@tf_export(v1=["convert_to_ve_sparse_tensor"])
+
+def convert_to_ve_sparse_tensor(indices,values,dense_shape):
+  from tensorflow.python.ops import sparse_ops
+  return sparse_ops.convert_ve_sparse_tensor_imp(indices,values,dense_shape)
+
+

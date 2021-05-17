@@ -22,6 +22,11 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor_types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -62,6 +67,88 @@ struct DenseUpdate<CPUDevice, T, ASSIGN> {
   }
 };
 
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T, DenseUpdateType OP>
+struct VEDenseUpdate {
+  void operator()(OpKernelContext* ctx,
+                  Tensor* params,
+                  const Tensor* update);
+};
+
+// [todo] impl ADD, SUB
+template <typename T>
+struct VEDenseUpdate<T, ADD> {
+  void operator()(OpKernelContext* ctx,
+                  Tensor* params,
+                  const Tensor* update) {
+    struct {
+      int dtype;
+      int64_t num_elements ;
+      uint64_t dst_ptr, src_ptr ;
+    } args;
+
+    args.dtype = update->dtype() ;
+    args.num_elements = update->NumElements() ;
+    args.dst_ptr = (uint64_t) DMAHelper::base(params) ;
+    args.src_ptr = (uint64_t) DMAHelper::base(update) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("DenseUpdateAssignAdd", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+  }
+};
+
+template <typename T>
+struct VEDenseUpdate<T, SUB> {
+  void operator()(OpKernelContext* ctx,
+                  Tensor* params,
+                  const Tensor* update) {
+    struct {
+      int dtype;
+      int64_t num_elements ;
+      uint64_t dst_ptr, src_ptr ;
+    } args;
+
+    args.dtype = update->dtype() ;
+    args.num_elements = update->NumElements() ;
+    args.dst_ptr = (uint64_t) DMAHelper::base(params) ;
+    args.src_ptr = (uint64_t) DMAHelper::base(update) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("DenseUpdateAssignSub", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+  }
+};
+
+template <typename T>
+struct VEDenseUpdate<T, ASSIGN> {
+  void operator()(OpKernelContext* ctx,
+                  Tensor* params,
+                  const Tensor* update) {
+
+    struct {
+      int dtype;
+      int64_t num_elements ;
+      uint64_t dst_ptr, src_ptr ;
+    } args;
+
+    args.dtype = update->dtype() ;
+    args.num_elements = update->NumElements() ;
+    args.dst_ptr = (uint64_t) DMAHelper::base(params) ;
+    args.src_ptr = (uint64_t) DMAHelper::base(update) ;
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("DenseUpdateAssign", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+  }
+
+};
+
+#endif // TENSORFLOW_USE_VE
 
 }  // end namespace functor
 

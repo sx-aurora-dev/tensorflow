@@ -26,4 +26,7 @@ REGISTER2(UnaryOp, GPU, "Sinh", functor::sinh, float, double);
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Sinh, float);
+#endif
 }  // namespace tensorflow

@@ -24,10 +24,19 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/tensor_types.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 template <typename Index>
 Status CheckInvalidLabelIndex(const Tensor& labels, int64 max_index) {
@@ -133,5 +142,106 @@ REGISTER(GPU, Eigen::half, int64)
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #undef REGISTER
+
+#ifdef TENSORFLOW_USE_VE
+namespace functor {
+template <typename T, typename Index>
+struct VESparseXentFunctor {
+  void operator()(OpKernelContext* context,
+                  const Tensor* logits,
+		  const Tensor* labels,
+                  Tensor* scratch,
+		  Tensor* loss,
+                  Tensor* backprop) {
+
+    struct {
+      int dtype, idxtype;
+      int64_t batch_size, num_classes ;
+      uint64_t logits_ptr, labels_ptr ;
+      uint64_t scratch_ptr, loss_ptr, backprop_ptr ;
+    } args ;
+
+    args.dtype = logits->dtype() ;
+    args.idxtype = labels->dtype() ;
+
+    args.batch_size  = logits->dim_size(0) ;
+    args.num_classes = logits->dim_size(1) ;
+
+    args.logits_ptr = (uint64_t) DMAHelper::base(logits) ;
+    args.labels_ptr = (uint64_t) DMAHelper::base(labels) ;
+    args.scratch_ptr = (uint64_t) DMAHelper::base(scratch) ;
+    args.loss_ptr = (uint64_t) DMAHelper::base(loss) ;
+    args.backprop_ptr = (uint64_t) DMAHelper::base(backprop) ;
+
+    VEDeviceContext* vectx = context->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("SparseSoftmaxXentWithLogits", (void*)&args, sizeof(args));
+    if (!s.ok())
+      context->SetStatus(s);
+
+  }
+};
+}  // namespace functor
+
+template <typename T, typename Index>
+class VESparseSoftmaxXentWithLogitsOp : public OpKernel {
+ public:
+  explicit VESparseSoftmaxXentWithLogitsOp(OpKernelConstruction* context)
+      : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& logits = context->input(0);
+    const Tensor& labels = context->input(1);
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(logits.shape()),
+                errors::InvalidArgument("logits must be 2-D, but got shape ",
+                                        logits.shape().DebugString()));
+    OP_REQUIRES(context, TensorShapeUtils::IsVector(labels.shape()),
+                errors::InvalidArgument("labels must be 1-D, but got shape ",
+                                        labels.shape().DebugString()));
+    OP_REQUIRES(context, logits.dim_size(0) == labels.dim_size(0),
+                errors::InvalidArgument(
+                    "logits and labels must have the same first dimension, "
+                    "got logits shape ",
+                    logits.shape().DebugString(), " and labels shape ",
+                    labels.shape().DebugString()));
+    OP_REQUIRES(context, logits.dim_size(1) > 0,
+                errors::InvalidArgument(
+                    "Must have at least one class, but got logits shape ",
+                    logits.shape().DebugString()));
+
+    Tensor scratch;
+    OP_REQUIRES_OK(context, context->allocate_temp(DataTypeToEnum<T>::value,
+                                                   labels.shape(), &scratch));
+
+    Tensor* loss_out = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {1}, 0, labels.shape(), &loss_out));
+    Tensor* back_out = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 1, logits.shape(), &back_out));
+
+    if (logits.dim_size(0) > 0) {
+      functor::VESparseXentFunctor<T, Index> functor;
+      functor(context, &logits, &labels, &scratch, loss_out, back_out);
+    }
+  }
+};
+
+
+#define REGISTER_VE(T, Index)                     \
+  REGISTER_KERNEL_BUILDER(                        \
+      Name("SparseSoftmaxCrossEntropyWithLogits") \
+          .Device(DEVICE_VE)                      \
+          .TypeConstraint<T>("T")                 \
+          .TypeConstraint<Index>("Tlabels"),      \
+      VESparseSoftmaxXentWithLogitsOp<T, Index>);
+
+REGISTER_VE(float, int32)
+REGISTER_VE(float, int64)
+REGISTER_VE(double, int32)
+REGISTER_VE(double, int64)
+
+#undef REGISTER_VE
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

@@ -30,6 +30,10 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/util/work_sharder.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -401,5 +405,130 @@ REGISTER_KERNEL_BUILDER(Name("ReverseV2")
                             .HostMemory("output"),
                         ReverseV2Op<CPUDevice, int32, int64>);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T, typename Tidx>
+class VEReverseV2Op : public VEOpKernel {
+ public:
+  explicit VEReverseV2Op(OpKernelConstruction* context) : VEOpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& input = context->input(0);
+    const Tensor& sparse_dims = context->input(1);
+
+    if (TensorShapeUtils::IsScalar(input.shape())) {
+      context->set_output(0, input);
+    } else {
+
+      const int input_dims = input.dims();
+      const TensorShape& sparse_dims_shape = sparse_dims.shape();
+      const auto& axes_sparse_flat = sparse_dims.flat<Tidx>();
+
+      OP_REQUIRES(context, TensorShapeUtils::IsVector(sparse_dims_shape),
+                  errors::InvalidArgument("'dims' must be 1-dimension, not ",
+                                          sparse_dims.dims()));
+      gtl::InlinedVector<bool, 8> axes_dense(input_dims, false);
+      for (int dummy = 0; dummy < axes_sparse_flat.size(); dummy++) {
+        Tidx axis = internal::SubtleMustCopy<Tidx>(axes_sparse_flat(dummy));
+        Tidx canonical_axis = axis < 0 ? input_dims + axis : axis;
+        OP_REQUIRES(context, canonical_axis >= 0 && canonical_axis < input_dims,
+                    errors::InvalidArgument("'axis'[", dummy, "] = ", axis,
+                                            " is out of valid range [", 0, ", ",
+                                            input_dims - 1));
+        OP_REQUIRES(context, !axes_dense[canonical_axis],
+                    errors::InvalidArgument("axis ", canonical_axis,
+                                            " specified more than once."));
+        axes_dense[canonical_axis] = true;
+      }
+
+      OP_REQUIRES(context, input_dims <= 8,
+                  errors::Unimplemented(
+                      "reverse is not implemented for tensors of rank > 8."));
+
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(context,
+                     context->allocate_output(0, input.shape(), &output));
+
+      ArgsImpl<> Args = ArgsImpl<>() ;
+
+      Args.addArg<Tensor>(input) ;
+      Args.addArg<Tensor>(*output) ;
+
+      Args.addArg<int64>((int64)axes_dense[0]) ;
+      Args.addArg<int64>((int64)axes_dense[1]) ;
+      Args.addArg<int64>((int64)axes_dense[2]) ;
+      Args.addArg<int64>((int64)axes_dense[3]) ;
+      Args.addArg<int64>((int64)axes_dense[4]) ;
+      Args.addArg<int64>((int64)axes_dense[5]) ;
+      Args.addArg<int64>((int64)axes_dense[6]) ;
+      Args.addArg<int64>((int64)axes_dense[7]) ;
+
+      Call(context, "Reverse", Args);
+    }
+  }
+};
+
+// Registration of the VE implementations.
+
+// TODO : impl ReverseOp for VE
+#define REGISTER_VE_KERNELS(T)                               \
+  REGISTER_KERNEL_BUILDER(Name("ReverseV2")                  \
+                              .Device(DEVICE_VE)             \
+                              .TypeConstraint<T>("T")        \
+                              .TypeConstraint<int32>("Tidx") \
+                              .HostMemory("axis"),           \
+                          VEReverseV2Op<T, int32>)           \
+  REGISTER_KERNEL_BUILDER(Name("ReverseV2")                  \
+                              .Device(DEVICE_VE)             \
+                              .TypeConstraint<T>("T")        \
+                              .TypeConstraint<int64>("Tidx") \
+                              .HostMemory("axis"),           \
+                          VEReverseV2Op<T, int64>)
+
+//TF_CALL_uint8(REGISTER_VE_KERNELS);
+//TF_CALL_int8(REGISTER_VE_KERNELS);
+//TF_CALL_bool(REGISTER_VE_KERNELS);
+//TF_CALL_half(REGISTER_VE_KERNELS);
+TF_CALL_float(REGISTER_VE_KERNELS);
+//TF_CALL_double(REGISTER_VE_KERNELS);
+//TF_CALL_complex64(REGISTER_VE_KERNELS);
+//TF_CALL_complex128(REGISTER_VE_KERNELS);
+#undef REGISTER_VE_KERNELS
+
+// FIXME: implement Reverse on VE
+REGISTER_KERNEL_BUILDER(Name("Reverse")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("tensor")
+                            .HostMemory("dims")
+                            .HostMemory("output"),
+                        ReverseOp<CPUDevice, float>);
+
+// A special kernel for int32.
+REGISTER_KERNEL_BUILDER(Name("Reverse")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("tensor")
+                            .HostMemory("dims")
+                            .HostMemory("output"),
+                        ReverseOp<CPUDevice, int32>);
+REGISTER_KERNEL_BUILDER(Name("ReverseV2")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("Tidx")
+                            .HostMemory("tensor")
+                            .HostMemory("axis")
+                            .HostMemory("output"),
+                        ReverseV2Op<CPUDevice, int32, int32>);
+REGISTER_KERNEL_BUILDER(Name("ReverseV2")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int64>("Tidx")
+                            .HostMemory("tensor")
+                            .HostMemory("axis")
+                            .HostMemory("output"),
+                        ReverseV2Op<CPUDevice, int32, int64>);
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

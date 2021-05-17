@@ -26,6 +26,10 @@ limitations under the License.
 #include "tensorflow/core/kernels/xent_op.h"
 #include "tensorflow/core/util/bcast.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -142,6 +146,76 @@ REGISTER_KERNEL_BUILDER(Name("SoftmaxCrossEntropyWithLogits")
                             .TypeConstraint<double>("T"),
                         SoftmaxXentWithLogitsOp<GPUDevice, double>);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class VESoftmaxXentWithLogitsOp : public VEOpKernel {
+ public:
+  explicit VESoftmaxXentWithLogitsOp(OpKernelConstruction* context)
+      : VEOpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& logits_in = context->input(0);
+    const Tensor& labels_in = context->input(1);
+
+    TensorShape shape_in = logits_in.shape();
+
+    BCast bcast(BCast::FromShape(logits_in.shape()),
+                BCast::FromShape(labels_in.shape()));
+    if (!logits_in.IsSameSize(labels_in)) {
+      OP_REQUIRES(context, bcast.IsValid(),
+                  errors::InvalidArgument(
+                      "logits and labels must be broadcastable: logits_size=",
+                      logits_in.shape().DebugString(),
+                      " labels_size=", labels_in.shape().DebugString()));
+      shape_in = BCast::ToShape(bcast.output_shape());
+    }
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(shape_in),
+                errors::InvalidArgument("logits and labels must be beither "
+                                        "2-dimensional, or roadcasted to "
+                                        "2-dimensional"));
+
+    // loss is 1-D (one per example), and size is batch_size.
+
+    Tensor scratch;
+    OP_REQUIRES_OK(
+        context, context->allocate_temp(DataTypeToEnum<T>::value,
+                                        TensorShape({shape_in.dim_size(0), 1}),
+                                        &scratch));
+
+    Tensor* loss_out = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(
+                       0, TensorShape({shape_in.dim_size(0)}), &loss_out));
+    Tensor* back_out = nullptr;
+    // Try to reuse the logits_in buffer for the backprop output.
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 1, shape_in, &back_out));
+    if (shape_in.dim_size(0) > 0) {
+
+      ArgsImpl<> Args = ArgsImpl<>() ;
+      Args.addArg<Tensor>(logits_in) ;
+      Args.addArg<Tensor>(labels_in) ;
+      Args.addArg<Tensor>(scratch) ;
+      Args.addArg<Tensor>(*loss_out) ;
+      Args.addArg<Tensor>(*back_out) ;
+
+      Call(context, "SoftmaxXentWithLogits", Args);
+    }
+  }
+};
+
+REGISTER_KERNEL_BUILDER(Name("SoftmaxCrossEntropyWithLogits")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T"),
+                        VESoftmaxXentWithLogitsOp<float>);
+// REGISTER_KERNEL_BUILDER(Name("SoftmaxCrossEntropyWithLogits")
+//                              .Device(DEVICE_VE)
+//                             .TypeConstraint<double>("T"),
+//                         VESoftmaxXentWithLogitsOp<double>);
+#endif // TENSORFLOW_USE_VE
 
 
 }  // namespace tensorflow

@@ -59,4 +59,9 @@ TF_CALL_COMPLEX_TYPES(REGISTER_GPU_KERNELS);
 #endif
 
 
+#ifdef TENSORFLOW_USE_VE
+DEFINE_VE_REDUCTION_OP(Mean);
+REGISTER_VE_REDUCTION_OP(Mean, float);
+#endif // TENSORFLOW_USE_VE
+
 }  // namespace tensorflow

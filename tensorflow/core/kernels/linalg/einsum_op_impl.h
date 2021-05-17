@@ -52,6 +52,10 @@ namespace tensorflow {
 using CPUDevice = Eigen::ThreadPoolDevice;
 using GPUDevice = Eigen::GpuDevice;
 
+#ifdef TENSORFLOW_USE_VE
+using VEDevice = Eigen::VeDevice;
+#endif  // TENSORFLOW_USE_VE
+
 using ShapeVec = gtl::InlinedVector<int64, 8>;
 using Labels = gtl::InlinedVector<int, 8>;
 using OperandLabels = gtl::InlinedVector<Labels, 2>;
@@ -355,6 +359,32 @@ struct EinsumHelper {
     return Status::OK();
   }
 
+#ifdef TENSORFLOW_USE_VE
+  template <typename T>
+  static Status VETransposeOperand(
+      OpKernelContext* ctx, const Tensor& input,
+      const std::vector<int>& permutation,
+      Tensor* output)
+  {
+    if (!ShouldTranspose(input.shape(), permutation)) {
+      return CopyFrom(input, input.shape(), output);
+    }
+    TensorShape transposed_shape;
+    for (int i = 0; i < input.dims(); ++i) {
+      transposed_shape.AddDim(input.dim_size(permutation[i]));
+    }
+    // For empty Tensors, just change the shape. E.g. we may need to transpose
+    // from shape [1, 0, 5] to [5, 1, 0].
+    if (input.NumElements() == 0) {
+      return CopyFrom(input, transposed_shape, output);
+    }
+    TF_RETURN_IF_ERROR(
+        ctx->allocate_temp(DataTypeToEnum<T>::value, transposed_shape, output));
+    TF_RETURN_IF_ERROR(VEDoTranspose(ctx, input, permutation, output));
+    return Status::OK();
+  }
+#endif // TENSORFLOW_USE_VE
+
   // If there are repeated labels in either the input or output, then this
   // strides the input (e.g. iii->i) or inflates it (e.g. i->iii), respectively.
   template <typename Device, typename T>
@@ -430,6 +460,111 @@ struct EinsumHelper {
     }
     return Status::OK();
   }
+
+#ifdef TENSORFLOW_USE_VE
+  template <typename T>
+  static Status VEStrideOrInflate(OpKernelContext* ctx, const Tensor& input,
+                                const Labels& labels,
+                                const LabelCounts& label_counts,
+                                const bool should_inflate, Tensor* output) {
+    // Return early if there are no repeated indices.
+    if (absl::c_all_of(label_counts, [](int c) { return c <= 1; })) {
+      return CopyFrom(input, input.shape(), output);
+    }
+    // We reshape so that each repeated label is compressed to one dimension.
+    // E.g. For iiij -> ij, The shape [3, 3, 3, 5] would be compressed to [27,
+    // 5]. Striding appropriately (in this case with strides 14 (=1+3+9) and 1)
+    // recovers the generalized diagonal of shape [3, 5].
+    ShapeVec reshape;
+    ShapeVec strides;
+    // Strided and inflated shapes correspond to input and output shapes,
+    // respectively, should_inflate is true (vice-versa if should_inflate is
+    // false). E.g. they are [3, 5] and [3, 3, 3, 5] in the above example.
+    ShapeVec strided_shape;
+    ShapeVec inflated_shape;
+    for (int label : labels) {
+      const int count = label_counts[label];
+      const int current_axis =
+          should_inflate ? strided_shape.size() : inflated_shape.size();
+      const int64 dim = input.dim_size(current_axis);
+      strided_shape.push_back(dim);
+      inflated_shape.insert(inflated_shape.end(), count, dim);
+      const int64 reshape_dim = MathUtil::IPow(dim, count);
+      reshape.push_back(reshape_dim);
+      // While taking the d-diagonal in a rank k Tensor, we take d
+      // equally-spaced elements including the first and last element. Then, (k
+      // - 1) * stride = d^k - 1, or, stride = (d^k - 1)/(d - 1).
+      const int64 stride =
+          (dim > 1 && count > 1) ? (reshape_dim - 1) / (dim - 1) : 1;
+      strides.push_back(stride);
+    }
+
+    TensorShape output_shape =
+        TensorShape(should_inflate ? inflated_shape : strided_shape);
+    TF_RETURN_IF_ERROR(
+        ctx->allocate_temp(DataTypeToEnum<T>::value, output_shape, output));
+#if 0
+    const Device& device = ctx->eigen_device<Device>();
+    switch (reshape.size()) {
+#define NDIMS_CASE(N)                                                 \
+  case N: {                                                           \
+    if (should_inflate) {                                             \
+      auto output_map = output->shaped<T, N>(reshape);                \
+      auto input_map = input.shaped<T, N>(strided_shape);             \
+      functor::InflateFunctor<Device, T, N>()(                        \
+          device, input_map, TensorShape(strides).AsEigenDSizes<N>(), \
+          output_map);                                                \
+    } else {                                                          \
+      auto input_map = input.shaped<T, N>(reshape);                   \
+      auto output_map = output->shaped<T, N>(strided_shape);          \
+      functor::StrideFunctor<Device, T, N>()(                         \
+          device, input_map, TensorShape(strides).AsEigenDSizes<N>(), \
+          output_map);                                                \
+    }                                                                 \
+  } break;
+      NDIMS_CASE(1);
+      NDIMS_CASE(2);
+      NDIMS_CASE(3);
+      NDIMS_CASE(4);
+      NDIMS_CASE(5);
+      NDIMS_CASE(6);
+      default:
+        return errors::Unimplemented(
+            "Unsupported rank: ", reshape.size(),
+            " while handling repeated indices. Up to rank 6 is supported.");
+#undef NDIMS_CASE
+    }
+#else
+
+#define MAX_RANK 6
+    if( reshape.size() > MAX_RANK ) {
+        return errors::Unimplemented(
+            "Unsupported rank: ", reshape.size(),
+            " while handling repeated indices. Up to rank 6 is supported.");
+    }
+    else {
+      if (should_inflate) {
+	Tensor in_reshaped;
+	in_reshaped.CopyFrom(input, TensorShape(strided_shape)) ;
+	Tensor output_reshaped;
+	output_reshaped.CopyFrom(*output, TensorShape(reshape)) ;
+	functor::VEInflateFunctor()(
+	    ctx, in_reshaped, strides, output_reshaped, reshape.size());
+      }
+      else {
+	Tensor in_reshaped;
+	in_reshaped.CopyFrom(input, TensorShape(reshape)) ;
+	Tensor output_reshaped;
+	output_reshaped.CopyFrom(*output, TensorShape(strided_shape)) ;
+	functor::VEStrideFunctor()(
+	    ctx, in_reshaped, strides, output_reshaped, reshape.size());
+      }
+    }
+#undef MAX_RANK
+#endif
+    return Status::OK();
+  }
+#endif // TENSORFLOW_USE_VE
 
   // Returns true if the input dimensions are already sorted in the order
   // [batch, contract, free, reduce]. Used to implement an optimization to avoid
@@ -527,6 +662,105 @@ struct EinsumHelper {
     return Status::OK();
   }
 
+#ifdef TENSORFLOW_USE_VE
+  template <typename T>
+  static Status VEReduceOperand(
+      OpKernelContext* ctx, const Tensor& input,
+      const std::vector<DimensionType>& label_types,
+      const LabelCounts& label_counts, Labels* labels,
+      Labels* free_labels, bool* swap_free_and_contract,
+      Tensor* output)
+  {
+    // Find the permutation to transpose the input dimensions in the order of
+    // DimensionType; i.e. batch, free, contract and reduce dimensions. This
+    // makes it more convenient to invoke Reduce/Contract operations.
+    std::vector<int> permutation(input.dims());
+    absl::c_iota(permutation, 0);
+    Tensor input_transposed;
+    // Check if we can avoid the transpose. We need to flip the adj_x (or adj_y)
+    // flag during BatchMatMul. This is an extra optimization not necessary for
+    // correctness.
+    if (ShouldSwapFreeAndContract(*labels, label_types)) {
+      *swap_free_and_contract = true;
+    } else {
+      absl::c_sort(permutation, [&](int i, int j) {
+        int label_i = (*labels)[i];
+        int label_j = (*labels)[j];
+        return std::tie(label_types[label_i], label_i) <
+               std::tie(label_types[label_j], label_j);
+      });
+    }
+    // Transpose the input so that DimensionTypes are in order.
+    TF_RETURN_IF_ERROR(VETransposeOperand<T>(ctx, input, permutation,
+                                                   &input_transposed));
+    PermuteLabels(permutation, labels);
+
+    // Take the generalized diagonal for dimensions with repeated axis labels.
+    Tensor input_deduped;
+    labels->erase(std::unique(labels->begin(), labels->end()), labels->end());
+    TF_RETURN_IF_ERROR(
+        VEStrideOrInflate<T>(ctx, input_transposed, *labels, label_counts,
+                             false /* should_inflate */, &input_deduped));
+
+    // Reshape denotes the rank-5 shape [broadcast, batch, free, contract,
+    // reduce] where we've compacted the dimensions of each DimensionType.
+    gtl::InlinedVector<int64, 5> reshape(5, 1);
+    // The output shape is [batch shape] + [free size, contract size]
+    // That is, the batch shape is preserved (for broadcasting while
+    // contracting) while the free dims and contract dims are compressed to one
+    // dimension each.
+    TensorShape output_shape;
+    for (int label_idx = 0; label_idx < labels->size(); ++label_idx) {
+      const int label = labels->at(label_idx);
+      int64 dim = input_deduped.dim_size(label_idx);
+      if (label_types[label] == kBroadcasting || label_types[label] == kBatch) {
+        output_shape.AddDim(dim);
+      } else if (label_types[label] == kFree) {
+        free_labels->push_back(label);
+      }
+      reshape[label_types[label]] *= dim;
+    }
+    if (*swap_free_and_contract) std::swap(reshape[kFree], reshape[kContract]);
+    output_shape.AddDim(reshape[kFree]);
+    output_shape.AddDim(reshape[kContract]);
+
+    if (reshape[kReduce] == 1) {  // No need to actually reduce.
+      return CopyFrom(input_deduped, output_shape, output);
+    }
+    TF_RETURN_IF_ERROR(
+        ctx->allocate_temp(DataTypeToEnum<T>::value, output_shape, output));
+    using Reducer = Eigen::internal::SumReducer<T>;
+    using Index = typename TTypes<T>::Tensor::Index;
+    // Reduce along the last axis (i.e axis 1) of the rank-2 Tensor.
+    const int64 output_size = reshape[kBroadcasting] * reshape[kBatch] *
+                              reshape[kFree] * reshape[kContract];
+#if 0
+    functor::ReduceFunctor<Device, Reducer>::Reduce(
+        ctx, output->shaped<T, 1>({output_size}),
+        const_cast<const Tensor&>(input_deduped)
+            .shaped<T, 2>({output_size, reshape[kReduce]}),
+        Eigen::array<Index, 1>({1}), Reducer());
+#else
+    struct VEReudctionOpArgs args;
+
+    args.dtype = DataTypeToEnum<T>::value ;
+    args.ndims = 2;
+    args.in = (uint64_t)DMAHelper::base(&input_deduped);
+    args.out = (uint64_t)DMAHelper::base(output);
+    args.dim_size[0] = output_size ;
+    args.dim_size[1] = reshape[kReduce] ;
+    args.dim_size[2] = 0 ;
+    args.axis = 1;	// last axis
+
+    VEDeviceContext* vectx = ctx->op_device_context<VEDeviceContext>();
+    Status s = vectx->Compute("Sum", (void*)&args, sizeof(args));
+    if (!s.ok())
+      ctx->SetStatus(s);
+#endif
+    return Status::OK();
+  }
+#endif // TENSORFLOW_USE_VE
+
   // Reshapes a Tensor of shape [b0,b1...bk,N,M] to [prod(b0,b1...bk),N,M].
   static Status ReshapeToRank3(const Tensor& input, int batch_size,
                                Tensor* output) {
@@ -535,6 +769,22 @@ struct EinsumHelper {
                                 input.dim_size(rank - 1)};
     return CopyFrom(input, output_shape, output);
   }
+
+#ifdef TENSORFLOW_USE_VE
+  // Conjugates the input.
+  template <typename T>
+  static Status VEConjugate(OpKernelContext* ctx, Tensor* input)
+  {
+    std::vector<int> permutation(input->dims());
+    std::iota(permutation.begin(), permutation.end(), 0);
+    Tensor output;
+    TF_RETURN_IF_ERROR(
+        ctx->allocate_temp(DataTypeToEnum<T>::value, input->shape(), &output));
+    TF_RETURN_IF_ERROR(VEDoConjugateTranspose(ctx, *input, permutation, &output));
+    std::swap(*input, output);
+    return Status::OK();
+  }
+#endif
 
   // Contracts the inputs along the last axis (or the second last if the
   // corresponding value of swap_free_and_contract is true). The batch
@@ -584,6 +834,70 @@ struct EinsumHelper {
                                          bcast, &output_reshaped);
     return Status::OK();
   }
+
+#ifdef TENSORFLOW_USE_VE
+  template <typename T>
+  static Status VEContractOperands(
+      OpKernelContext* ctx,
+      absl::Span<const Tensor> inputs,
+      absl::Span<const bool> swap_free_and_contract,
+      Tensor* output) {
+    if (inputs.size() == 1)
+      return CopyFrom(inputs[0], inputs[0].shape(), output);
+    MatMulBCast bcast(inputs[0].shape().dim_sizes(),
+                      inputs[1].shape().dim_sizes());
+    if (!bcast.IsValid()) {
+      return errors::InvalidArgument(
+          "Invalid broadcasting dimensions: ", inputs[0].shape().DebugString(),
+          " vs. ", inputs[1].shape().DebugString());
+    }
+#if 0
+    Tensor lhs;
+    TF_RETURN_IF_ERROR(ReshapeToRank3(inputs[0], bcast.x_batch_size(), &lhs));
+    Tensor rhs;
+    TF_RETURN_IF_ERROR(ReshapeToRank3(inputs[1], bcast.y_batch_size(), &rhs));
+#else
+    Tensor lhs_notreshaped ;
+    EinsumHelper::CopyFrom(inputs[0], inputs[0].shape(), &lhs_notreshaped);
+    Tensor rhs_notreshaped ;
+    EinsumHelper::CopyFrom(inputs[1], inputs[1].shape(), &rhs_notreshaped);
+#endif
+    TensorShape output_shape = bcast.output_batch_shape();
+    for (int i = 0; i < inputs.size(); ++i) {
+      const int64 free_axis =
+          inputs[i].dims() - (swap_free_and_contract[i] ? 1 : 2);
+      output_shape.AddDim(inputs[i].dim_size(free_axis));
+    }
+    bool adj_x = swap_free_and_contract[0];
+    bool adj_y = !swap_free_and_contract[1];
+    if (is_complex<T>::value) {
+#if 0
+      if (adj_x) TF_RETURN_IF_ERROR(VEConjugate<T>(ctx, &lhs));
+      if (adj_y) TF_RETURN_IF_ERROR(VEConjugate<T>(ctx, &rhs));
+#else
+      if (adj_x) TF_RETURN_IF_ERROR(VEConjugate<T>(ctx, &lhs_notreshaped));
+      if (adj_y) TF_RETURN_IF_ERROR(VEConjugate<T>(ctx, &rhs_notreshaped));
+#endif
+    }
+    TF_RETURN_IF_ERROR(
+        ctx->allocate_temp(DataTypeToEnum<T>::value, output_shape, output));
+#if 0
+    if (lhs.NumElements() == 0 || rhs.NumElements() == 0) {
+      functor::SetZeroFunctor<Device, T> set_zero;
+      set_zero(ctx->eigen_device<Device>(), output->flat<T>());
+      return Status::OK();
+    }
+    Tensor output_reshaped;
+    TF_RETURN_IF_ERROR(
+        ReshapeToRank3(*output, bcast.output_batch_size(), &output_reshaped));
+    LaunchBatchMatMul<Device, T>::Launch(ctx, lhs, rhs, adj_x, adj_y, bcast,
+                                         &output_reshaped);
+#else
+    VELaunchBatchMatMul<T>::Launch(ctx, lhs_notreshaped, rhs_notreshaped, adj_x, adj_y, output);
+#endif
+    return Status::OK();
+  }
+#endif // TENSORFLOW_USE_VE
 };
 
 template <typename Device, typename T>
@@ -775,6 +1089,149 @@ DECLARE_GPU_SPECS(complex128);
 #undef DECLARE_GPU_SPECS
 }  // namespace functor
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class EinsumOp<VEDevice, T> : public OpKernel {
+ public:
+  explicit EinsumOp(OpKernelConstruction* c) : OpKernel(c) {
+    string equation;
+    OP_REQUIRES_OK(c, c->GetAttr("equation", &equation));
+    OP_REQUIRES_OK(c,
+                   EinsumHelper::ParseEquation(
+                       equation, &input_labels_, &output_labels_, &label_types_,
+                       &input_label_counts_, &output_label_counts_,
+                       &input_has_ellipsis_, &output_has_ellipsis_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    OpInputList inputs;
+    OP_REQUIRES_OK(ctx, ctx->input_list("inputs", &inputs));
+
+    OperandLabels input_labels(input_labels_);
+    Labels output_labels(output_labels_);
+    std::vector<EinsumHelper::DimensionType> label_types(label_types_);
+    OperandLabelCounts input_label_counts(input_label_counts_);
+    LabelCounts output_label_counts(output_label_counts_);
+    LabelToDimSizes label_to_dim_sizes;
+
+    OP_REQUIRES_OK(ctx, EinsumHelper::ProcessDimensions(
+                            inputs, input_has_ellipsis_, output_has_ellipsis_,
+                            &input_labels, &output_labels, &label_types,
+                            &input_label_counts, &output_label_counts,
+                            &label_to_dim_sizes));
+
+    // The reduction phase (a) sums across reduction dimensions, (b) takes
+    // generalized diagonals, and (c) reshapes it into shape
+    //   [(broadcasting) batch shape] + [F,C]
+    // where F and C denote the total (compacted) size of free and contract
+    // dimensions, respectively.
+    const int num_inputs = inputs.size();
+    OperandLabels free_labels(num_inputs);
+    gtl::InlinedVector<Tensor, 2> inputs_reduced(num_inputs);
+    gtl::InlinedVector<bool, 2> swap_free_and_contract(num_inputs);
+    for (int i = 0; i < num_inputs; ++i) {
+      OP_REQUIRES_OK(ctx,
+                     EinsumHelper::VEReduceOperand<T>(
+                         ctx, inputs[i], label_types, input_label_counts[i],
+                         &input_labels[i], &free_labels[i],
+                         &swap_free_and_contract[i], &inputs_reduced[i]));
+    }
+
+    // After reduction, the inputs should be reshaped to Tensors suitable for
+    // contraction. If num_inputs is 1, the reduced input is simply forwarded to
+    // the output.
+    Tensor contraction_output_reshaped;
+    OP_REQUIRES_OK(ctx, EinsumHelper::VEContractOperands<T>(
+                            ctx, inputs_reduced, swap_free_and_contract,
+                            &contraction_output_reshaped));
+
+    // Copy the batch labels from the contraction output. Recover the batch
+    // shape, which may have been broadcasted.
+    TensorShape result_shape = contraction_output_reshaped.shape();
+    result_shape.RemoveLastDims(2);
+
+    int num_labels = label_types.size();
+    Labels result_labels;
+    // All batch dimensions should be present in the contracted result. First
+    // the broadcasting dimensions, then the named batch dimensions.
+    for (int label = 0; label < num_labels; ++label) {
+      if (label_types[label] == EinsumHelper::kBroadcasting)
+        result_labels.push_back(label);
+    }
+    for (int label = 0; label < num_labels; ++label) {
+      if (label_types[label] == EinsumHelper::kBatch)
+        result_labels.push_back(label);
+    }
+    for (int i = 0; i < num_inputs; ++i) {
+      for (int label : free_labels[i]) {
+        result_labels.push_back(label);
+        result_shape.AddDim(label_to_dim_sizes[label]);
+      }
+    }
+
+    // Reshape the contraction (or reduction) result to its expanded shape:
+    // [(broadcasted) batch shape] + [free shape 0] + [free shape 1].
+    Tensor contraction_output;
+    OP_REQUIRES_OK(
+        ctx, EinsumHelper::CopyFrom(contraction_output_reshaped, result_shape,
+                                    &contraction_output));
+
+    // Inflate the output if necessary. (E.g. for the equation 'i->iii' which
+    // may arise while computing gradient of a regular Einsum).
+    // TODO(anudhyan): It's possible that Eigen's contract and inflate can be
+    // chained here to avoid materializing an intermediate.
+    Tensor output_inflated;
+    OP_REQUIRES_OK(
+        ctx, EinsumHelper::VEStrideOrInflate<T>(
+                 ctx, contraction_output, result_labels, output_label_counts,
+                 true /* should_inflate */, &output_inflated));
+    if (output_inflated.dims() > contraction_output.dims()) {
+      // We inflated the output. Modify result labels accordingly.
+      Labels inflated_labels;
+      for (int label : result_labels) {
+        inflated_labels.insert(inflated_labels.end(),
+                               output_label_counts[label], label);
+      }
+      result_labels.swap(inflated_labels);
+    }
+    // Find the permutation to map the result labels to the output labels. Note
+    // that both the result and the final output may have the repeated labels,
+    // in which case the permutation preserves the left-to-right ordering.
+    // E.g. if result labels are [0, 0, 1] and output is [0, l, 0] then the
+    // permutation should be [0, 2, 1]. We also use the fact that repeated
+    // labels in the result are adjacent to each other.
+    std::vector<int> output_permutation(output_labels.size());
+    std::vector<int> label_to_position(num_labels, -1);
+    for (int i = 0; i < result_labels.size(); ++i) {
+      // Remember the position of only the leftmost result label.
+      if (label_to_position[result_labels[i]] == -1) {
+        label_to_position[result_labels[i]] = i;
+      }
+    }
+    for (int i = 0; i < output_labels.size(); ++i) {
+      output_permutation[i] = label_to_position[output_labels[i]];
+      // We have found the leftmost occurrence. The next one would be adjacent.
+      label_to_position[output_labels[i]] += 1;
+    }
+    Tensor output;
+    OP_REQUIRES_OK(ctx, EinsumHelper::VETransposeOperand<T>(
+                            ctx, output_inflated, output_permutation, &output));
+    ctx->set_output(0, output);
+  }
+
+ private:
+  OperandLabels input_labels_;
+  Labels output_labels_;
+  std::vector<EinsumHelper::DimensionType> label_types_;
+  OperandLabelCounts input_label_counts_;
+  LabelCounts output_label_counts_;
+  gtl::InlinedVector<bool, 2> input_has_ellipsis_;
+  bool output_has_ellipsis_ = false;
+};
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow
 

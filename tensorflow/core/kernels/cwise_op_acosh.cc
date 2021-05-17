@@ -26,4 +26,9 @@ REGISTER4(UnaryOp, CPU, "Acosh", functor::acosh, float, double, complex64,
 REGISTER2(UnaryOp, GPU, "Acosh", functor::acosh, float, double);
 #endif
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Acosh, float);
+#endif
+
 }  // namespace tensorflow

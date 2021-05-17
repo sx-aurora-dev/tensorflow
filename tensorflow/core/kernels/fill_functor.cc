@@ -113,5 +113,69 @@ DEFINE_FILL_CPU(qint32);
 #undef DEFINE_FILL_CPU
 
 
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+void VESetZeroFunctor(OpKernelContext* c, Tensor* out )
+{
+  VEOpKernelHelper::ArgsImpl<> args;
+
+  OP_REQUIRES_OK(c, args.addArg<int64>(DataTypeToEnum<T>::v()));	// 0
+  OP_REQUIRES_OK(c, args.addArg<Tensor>(*out));				// 1
+
+  VEOpKernelHelper::Call(c, "SetZero", args);
+} ;
+
+#define DEFINE_SETZERO_VE(T)	\
+  template void VESetZeroFunctor<T>(OpKernelContext* c, Tensor* out ) ;
+
+TF_CALL_float(DEFINE_SETZERO_VE) ;
+TF_CALL_double(DEFINE_SETZERO_VE) ;
+TF_CALL_int64(DEFINE_SETZERO_VE) ;
+#undef DEFINE_SETZERO_VE
+
+
+template <typename T>
+void VESetOneFunctor(OpKernelContext* c, Tensor* out )
+{
+  VEOpKernelHelper::ArgsImpl<> args;
+
+  OP_REQUIRES_OK(c, args.addArg<int64>(DataTypeToEnum<T>::v()));	// 0
+  OP_REQUIRES_OK(c, args.addArg<Tensor>(*out));				// 1
+
+  VEOpKernelHelper::Call(c, "SetOne", args);
+} ;
+
+#define DEFINE_SETONE_VE(T)	\
+  template void VESetOneFunctor<T>(OpKernelContext* c, Tensor* out ) ;
+
+TF_CALL_float(DEFINE_SETONE_VE) ;
+TF_CALL_double(DEFINE_SETONE_VE) ;
+TF_CALL_int64(DEFINE_SETONE_VE) ;
+#undef DEFINE_SETONE_VE
+
+
+template <typename T>
+void VEFillFunctor(OpKernelContext* c, Tensor* out, const Tensor& in )
+{
+  VEOpKernelHelper::ArgsImpl<> args;
+
+  OP_REQUIRES_OK(c, args.addArg<int64>(DataTypeToEnum<T>::v()));	// 0
+  OP_REQUIRES_OK(c, args.addArg<Tensor>(*out));				// 1
+  OP_REQUIRES_OK(c, args.addArg<Tensor>(in));		// 2
+
+  VEOpKernelHelper::Call(c, "Fill", args);
+} ;
+
+#define DEFINE_FILL_VE(T)	\
+  template void VEFillFunctor<T>(OpKernelContext* c, Tensor* out, const Tensor& in ) ;
+
+TF_CALL_float(DEFINE_FILL_VE) ;
+TF_CALL_double(DEFINE_FILL_VE) ;
+TF_CALL_int64(DEFINE_FILL_VE) ;
+#undef DEFINE_FILL_VE
+
+#endif	// TENSORFLOW_USE_VE
+
 }  // namespace functor
 }  // namespace tensorflow

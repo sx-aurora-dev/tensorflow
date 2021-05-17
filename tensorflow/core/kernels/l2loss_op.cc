@@ -25,6 +25,10 @@ limitations under the License.
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -62,5 +66,41 @@ REGISTER_KERNEL(Eigen::half);
 REGISTER_KERNEL(bfloat16);
 #endif  // INTEL_MKL
 #undef REGISTER_KERNEL
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class VEL2LossOp : public VEOpKernel {
+ public:
+  explicit VEL2LossOp(OpKernelConstruction* context) : VEOpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    // The input tensor can be of any number of dimensions, even though it's
+    // 2D in most typical applications.
+    const Tensor& input = context->input(0);
+    // The output is a single number.
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, TensorShape({}), &output));
+
+    ArgsImpl<> Args = ArgsImpl<>() ;
+
+    Args.addArg<Tensor>(input) ;
+    Args.addArg<Tensor>(*output) ;
+
+    Call(context, "L2Loss", Args);
+  }
+};
+
+#define REGISTER_VE_KERNEL(T)                                   \
+  REGISTER_KERNEL_BUILDER(                                      \
+      Name("L2Loss").Device(DEVICE_VE).TypeConstraint<T>("T"),  \
+      VEL2LossOp<T>);
+
+REGISTER_VE_KERNEL(float);
+REGISTER_VE_KERNEL(double);
+#undef REGISTER_VE_KERNEL
+
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

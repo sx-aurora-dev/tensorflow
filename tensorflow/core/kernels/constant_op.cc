@@ -39,6 +39,11 @@ limitations under the License.
 #include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/platform/macros.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/common_runtime/ve/ve_device.h"
+#include "tensorflow/core/common_runtime/dma_helper.h"
+#endif  // TENSORFLOW_USE_SYCL
+
 namespace tensorflow {
 
 namespace {
@@ -95,6 +100,33 @@ ConstantOp::~ConstantOp() {}
 REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_CPU), ConstantOp);
 REGISTER_KERNEL_BUILDER(Name("Const").Device(DEVICE_TPU_SYSTEM), ConstantOp);
 
+#ifdef TENSORFLOW_USE_VE
+#define REGISTER_KERNEL(D, TYPE)                                      \
+  REGISTER_KERNEL_BUILDER(                                            \
+      Name("Const").Device(DEVICE_##D).TypeConstraint<TYPE>("dtype"), \
+      ConstantOp);
+REGISTER_KERNEL(VE, Eigen::half);
+REGISTER_KERNEL(VE, bfloat16);
+REGISTER_KERNEL(VE, float);
+REGISTER_KERNEL(VE, double);
+REGISTER_KERNEL(VE, uint8);
+REGISTER_KERNEL(VE, int8);
+REGISTER_KERNEL(VE, qint8);
+REGISTER_KERNEL(VE, uint16);
+REGISTER_KERNEL(VE, int16);
+REGISTER_KERNEL(VE, qint16);
+REGISTER_KERNEL(VE, quint16);
+REGISTER_KERNEL(VE, uint32);
+REGISTER_KERNEL(VE, qint32);
+REGISTER_KERNEL(VE, int64);
+REGISTER_KERNEL(VE, uint64);
+REGISTER_KERNEL(VE, complex64);
+REGISTER_KERNEL(VE, complex128);
+REGISTER_KERNEL(VE, bool);
+REGISTER_KERNEL(VE, Variant);
+#undef REGISTER_KERNEL
+#endif
+
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
     (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
 #define REGISTER_KERNEL(D, TYPE)                                      \
@@ -137,6 +169,9 @@ TF_CALL_variant(REGISTER_DEFAULT_KERNEL);
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif  // TENSORFLOW_USE_VE
 
 template <typename Device, typename T, typename Index>
 class FillOp : public OpKernel {
@@ -200,6 +235,18 @@ REGISTER_KERNEL(CPU, qint16);
 REGISTER_KERNEL(CPU, qint32);
 #undef REGISTER_CPU_KERNEL
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("Fill")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("index_type")
+                            .HostMemory("dims")
+                            .HostMemory("value")
+                            .HostMemory("output"),
+                        FillOp<CPUDevice, int32, int32>);
+#undef REGISTER_KERNEL_VE
+#endif  // TENSORFLOW_USE_VE
+
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
     (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
 REGISTER_KERNEL(GPU, Eigen::half);
@@ -228,6 +275,51 @@ REGISTER_KERNEL_BUILDER(Name("Fill")
                             .HostMemory("output"),
                         FillOp<CPUDevice, int32, int32>);
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T, typename Index>
+class FillOp<VEDevice, T, Index> : public OpKernel {
+  public:
+    explicit FillOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+    void Compute(OpKernelContext* context) override {
+      const Tensor& Tdims = context->input(0);
+      OP_REQUIRES(
+        context,
+        // TODO(rmlarsen): Disallow legacy use of scalars to represent shape.
+        (TensorShapeUtils::IsVector(Tdims.shape()) ||
+         TensorShapeUtils::IsScalar(Tdims.shape())),
+        errors::InvalidArgument("dims must represent a vector, got shape ",
+                                Tdims.shape().DebugString()));
+
+      const Tensor& Tvalue = context->input(1);
+      OP_REQUIRES(
+        context,
+        // TODO(rmlarsen): Disallow legacy use of length-1 vector to represent
+        // scalar.
+        TensorShapeUtils::IsScalar(Tvalue.shape()) ||
+            (TensorShapeUtils::IsVector(Tvalue.shape()) &&
+             Tvalue.shape().dim_size(0) == 1),
+        errors::InvalidArgument("value must represent a scalar, got shape ",
+                                Tvalue.shape().DebugString()));
+
+      auto dims = Tdims.flat<Index>();
+      TensorShape shape;
+      OP_REQUIRES_OK(context, TensorShapeUtils::MakeShape(
+                                  reinterpret_cast<const Index*>(dims.data()),
+                                  dims.size(), &shape));
+      Tensor* out = nullptr;
+      OP_REQUIRES_OK(context, context->allocate_output(0, shape, &out));
+
+      functor::VEFillFunctor<T>(context, out, Tvalue) ;
+    }
+};
+
+REGISTER_KERNEL(VE, float);
+REGISTER_KERNEL(VE, double);
+REGISTER_KERNEL(VE, int64);
+#endif // TENSORFLOW_USE_VE
 
 #undef REGISTER_KERNEL
 
@@ -291,6 +383,59 @@ REGISTER_KERNEL_BUILDER(Name("ZerosLike")
                         ZerosLikeOp<CPUDevice, int32>);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+class ZerosLikeOp<VEDevice, T> : public OpKernel {
+ public:
+  explicit ZerosLikeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+
+#if 0 // FIXME : DT_VARIANT
+    if (std::is_same<T, Variant>::value) {
+      OP_REQUIRES(
+          ctx, input.dims() == 0,
+          errors::InvalidArgument("ZerosLike non-scalar Tensor with "
+                                  "dtype=DT_VARIANT is not supported."));
+      const Variant& v = input.scalar<Variant>()();
+      // DT_VARIANT tensors must be allocated on CPU since they wrap C++
+      // objects which can not be efficiently represented in GPU memory.
+      int numa_node = DeviceNumaNode(ctx->device());
+      Tensor out(cpu_allocator(numa_node), DT_VARIANT, TensorShape({}));
+      Variant* out_v = &(out.scalar<Variant>()());
+      OP_REQUIRES_OK(ctx, UnaryOpVariant<Device>(
+                              ctx, ZEROS_LIKE_VARIANT_UNARY_OP, v, out_v));
+      ctx->set_output(0, out);
+    }
+    else
+#endif
+    {
+      Tensor* out = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+                              {0}, 0, input.shape(), &out));
+      functor::VESetZeroFunctor<T>(ctx, out) ;
+    }
+  }
+};
+
+REGISTER_KERNEL(float, VE);
+REGISTER_KERNEL(double, VE);
+REGISTER_KERNEL(int64, VE);
+// FIXME: implement bool for VE
+REGISTER_KERNEL_BUILDER(Name("ZerosLike")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<bool>("T")
+                            .HostMemory("y"),
+                        ZerosLikeOp<CPUDevice, bool>);
+REGISTER_KERNEL_BUILDER(Name("ZerosLike")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("y"),
+                        ZerosLikeOp<CPUDevice, int32>);
+
+#endif
+
 #undef REGISTER_KERNEL
 
 template <typename Device, typename T>
@@ -334,6 +479,38 @@ REGISTER_KERNEL_BUILDER(Name("OnesLike")
                         OnesLikeOp<CPUDevice, int32>);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+
+#ifdef TENSORFLOW_USE_VE
+
+template <typename T>
+class OnesLikeOp<VEDevice, T> : public OpKernel {
+ public:
+  explicit OnesLikeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+
+  void Compute(OpKernelContext* ctx) override {
+    const Tensor& input = ctx->input(0);
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+                            {0}, 0, input.shape(), &out));
+    functor::VESetOneFunctor<T>(ctx, out);
+  }
+};
+
+//REGISTER_KERNEL(bool, VE);
+//REGISTER_KERNEL(Eigen::half, VE);
+//REGISTER_KERNEL(bfloat16, VE);
+REGISTER_KERNEL(float, VE);
+REGISTER_KERNEL(double, VE);
+//REGISTER_KERNEL(complex64, VE);
+//REGISTER_KERNEL(complex128, VE);
+//REGISTER_KERNEL(int64, VE);
+REGISTER_KERNEL_BUILDER(Name("OnesLike")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("y"),
+                        OnesLikeOp<CPUDevice, int32>);
+#endif	// TENSORFLOW_USE_VE
+
 #undef REGISTER_KERNEL
 
 PlaceholderOp::PlaceholderOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
@@ -366,4 +543,5 @@ REGISTER_KERNEL_BUILDER(Name("Placeholder").Device(DEVICE_DEFAULT),
                         PlaceholderOp);
 REGISTER_KERNEL_BUILDER(Name("PlaceholderV2").Device(DEVICE_DEFAULT),
                         PlaceholderOp);
+
 }  // namespace tensorflow

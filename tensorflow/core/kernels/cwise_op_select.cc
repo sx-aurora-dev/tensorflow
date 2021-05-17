@@ -24,6 +24,10 @@ limitations under the License.
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 #include "tensorflow/core/platform/prefetch.h"
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -276,6 +280,50 @@ REGISTER_SELECT_GPU(complex128);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+
+#ifdef TENSORFLOW_USE_VE
+class VESelectOp : public VEOpKernel {
+  public:
+    VESelectOp(OpKernelConstruction* context) : VEOpKernel(context) {}
+
+    void Compute(OpKernelContext* ctx) override {
+      const Tensor* cond;
+      const Tensor* then;
+      const Tensor* else_;
+      OP_REQUIRES_OK(ctx, ctx->input("condition", &cond));
+      OP_REQUIRES_OK(ctx, ctx->input("t", &then));
+      OP_REQUIRES_OK(ctx, ctx->input("e", &else_));
+
+      if (!ctx->ValidateInputsAreSameShape(this)) return;
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(ctx, ctx->forward_input_or_allocate_output(
+              {"t", "e"}, "output", then->shape(), &output));
+      if (output->NumElements() > 0) {
+        ArgsImpl<> args;
+        args.addArg<Tensor>(*cond);
+        args.addArg<Tensor>(*then);
+        args.addArg<Tensor>(*else_);
+        args.addArg<Tensor>(*output);
+
+        Call(ctx, "Select", args);
+      }
+    }
+};
+
+#define REGISTER_SELECT_VE(type)                                    \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("Select").Device(DEVICE_VE).TypeConstraint<type>("T"),   \
+      VESelectOp);                                                  \
+  REGISTER_KERNEL_BUILDER(                                          \
+      Name("SelectV2").Device(DEVICE_VE).TypeConstraint<type>("T"), \
+      VESelectOp);
+
+REGISTER_SELECT_VE(float);
+REGISTER_SELECT_VE(double);
+REGISTER_SELECT_VE(int32);
+REGISTER_SELECT_VE(int64);
+#undef REGISTER_SELECT_VE
+#endif  // TENSORFLOW_USE_VE
 
 namespace functor {
 

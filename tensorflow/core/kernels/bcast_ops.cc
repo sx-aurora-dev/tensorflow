@@ -179,4 +179,22 @@ REGISTER_KERNEL_BUILDER(Name("BroadcastGradientArgs")
                             .HostMemory("r1"),
                         BCastGradArgsOp<int64>);
 
+#if TENSORFLOW_USE_VE
+REGISTER_KERNEL_BUILDER(Name("BroadcastGradientArgs")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("s0")
+                            .HostMemory("s1")
+                            .HostMemory("r0")
+                            .HostMemory("r1"),
+                        BCastGradArgsOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("BroadcastGradientArgs")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<int64>("T")
+                            .HostMemory("s0")
+                            .HostMemory("s1")
+                            .HostMemory("r0")
+                            .HostMemory("r1"),
+                        BCastGradArgsOp<int64>);
+#endif
 }  // end namespace tensorflow

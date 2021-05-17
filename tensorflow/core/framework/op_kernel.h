@@ -59,6 +59,7 @@ limitations under the License.
 namespace Eigen {
 struct ThreadPoolDevice;
 struct GpuDevice;
+struct VeDevice;
 }  // end namespace Eigen
 
 namespace tensorflow {

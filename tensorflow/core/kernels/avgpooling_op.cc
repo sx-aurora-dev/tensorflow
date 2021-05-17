@@ -47,10 +47,18 @@ limitations under the License.
 #include "tensorflow/core/kernels/pooling_ops_common_gpu.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#ifdef TENSORFLOW_USE_VE
+#include "tensorflow/core/kernels/transpose_functor.h"
+#include "tensorflow/core/framework/ve_ops_common.h"
+#endif // TENSORFLOW_USE_VE
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_VE
+typedef Eigen::VeDevice VEDevice;
+#endif
 
 template <typename Device, typename T>
 class AvgPoolingOp : public UnaryOp<T> {
@@ -245,6 +253,164 @@ REGISTER_KERNEL_BUILDER(
     Name("AvgPool").Device(DEVICE_GPU).TypeConstraint<double>("T"),
     AvgPoolingOp<GPUDevice, double>);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+struct Param {
+  int64_t ksize[4];
+  int64_t stride[4];
+  int32_t data_format;
+  int32_t padding; // Padding
+  int64_t pad_rows;
+  int64_t pad_cols;
+} __attribute__((__packed__));
+
+template <typename T>
+class AvgPoolingOp<VEDevice, T> : public UnaryOp<T> {
+  public:
+    explicit AvgPoolingOp(OpKernelConstruction* context) : UnaryOp<T>(context) {
+      string data_format;
+      OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+      OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                  errors::InvalidArgument("Invalid data format"));
+#if 0
+      OP_REQUIRES(
+                  context, data_format_ == FORMAT_NHWC,
+                  errors::InvalidArgument("Default AvgPoolingOp only supports NHWC ",
+                                          "on device type ",
+                                          DeviceTypeString(context->device_type())));
+#endif
+      OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+      OP_REQUIRES(context, ksize_.size() == 4,
+                  errors::InvalidArgument("Sliding window ksize field must "
+                                          "specify 4 dimensions"));
+      OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+      OP_REQUIRES(context, stride_.size() == 4,
+                  errors::InvalidArgument("Sliding window stride field must "
+                                          "specify 4 dimensions"));
+      OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+      OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+                  errors::Unimplemented(
+                                        "Pooling is not yet supported on the batch dimension."));
+
+      for (size_t i = 0; i < 4; ++i) {
+        param_.ksize[i] = ksize_[i];
+        param_.stride[i] = stride_[i];
+      }
+      param_.data_format = data_format_;
+      param_.padding = padding_;
+
+    }
+
+    void Compute(OpKernelContext* context) override {
+      const Tensor& tensor_in = context->input(0);
+
+      // For avgpooling, tensor_in should have 4 dimensions.
+      OP_REQUIRES(context, tensor_in.dims() == 4,
+                  errors::InvalidArgument("tensor_in must be 4-dimensional"));
+
+#if 1
+      PoolParameters params{context,
+                            ksize_,
+                            stride_,
+                            padding_,
+                            /*explicit_paddings=*/{},
+                            data_format_,
+                            tensor_in.shape()};
+      if (!context->status().ok()) {
+        return;
+      }
+      OP_REQUIRES(context, params.depth_window == 1,
+                  errors::Unimplemented("Non-spatial pooling is not "
+                                        "yet supported. Volunteers? :)"));
+      Tensor* output = nullptr;
+      OP_REQUIRES_OK(context, context->allocate_output(
+                                                       0, params.forward_output_shape(), &output));
+
+#endif
+
+      OP_REQUIRES(context,
+                  ((params.pad_left == params.pad_right
+                    || params.pad_left + 1 == params.pad_right)
+                   && ((params.pad_top == params.pad_bottom)
+                       || params.pad_top + 1 == params.pad_bottom)),
+                  errors::Unimplemented("VE padding only supports"
+                                        " symmetric padding"));
+
+      param_.pad_rows = (params.pad_left + params.pad_right) / 2;
+      param_.pad_cols = (params.pad_top + params.pad_bottom) / 2;
+
+      Tensor in_transposed ;
+      Tensor out_transposed ;
+      Param param_nchw = param_ ;
+      if( data_format_ == FORMAT_NHWC ) {
+	// if data_format is NHWC, then transpose in/out tensor
+
+	const int64 batch = GetTensorDim(tensor_in, data_format_, 'N');
+
+	const int64 in_rows = GetTensorDim(tensor_in, data_format_, 'H');
+	const int64 in_cols = GetTensorDim(tensor_in, data_format_, 'W');
+	const int64 in_depths = GetTensorDim(tensor_in, data_format_, 'C');
+
+	const int64 out_rows = GetTensorDim(*output, data_format_, 'H');
+	const int64 out_cols = GetTensorDim(*output, data_format_, 'W');
+	const int64 out_depths = GetTensorDim(*output, data_format_, 'C');
+
+	OP_REQUIRES_OK(context,
+		       context->allocate_temp(
+			   reinterpret_cast<DataType>(tensor_in.dtype()),
+			   ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+			   &in_transposed)
+		       );
+
+	OP_REQUIRES_OK(context,
+		       context->allocate_temp(
+			   reinterpret_cast<DataType>(tensor_in.dtype()),
+			   ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+			   &out_transposed));
+
+	OP_REQUIRES_OK( context, VEDoTranspose(context, tensor_in, {0,3,1,2}, &in_transposed));
+
+	param_nchw.ksize[0]  = param_.stride[0] ;
+	param_nchw.ksize[1]  = param_.stride[3] ;
+	param_nchw.ksize[2]  = param_.stride[1] ;
+	param_nchw.ksize[3]  = param_.stride[2] ;
+
+	param_nchw.stride[0]  = param_.stride[0] ;
+	param_nchw.stride[1]  = param_.stride[3] ;
+	param_nchw.stride[2]  = param_.stride[1] ;
+	param_nchw.stride[3]  = param_.stride[2] ;
+
+      }
+      else {
+	in_transposed  = tensor_in ;
+	out_transposed = *output ;
+      }
+
+      VEOpKernelHelper::ArgsImpl<> args;
+      args.addArg<Tensor>(out_transposed);
+      args.addArg<Tensor>(in_transposed);
+      args.addArg<Param>(param_nchw);
+
+      VEOpKernelHelper::Call(context, "AvgPool", args);
+
+      // if data_format is NHWC, then transpose output tensor
+      if ( data_format_ == FORMAT_NHWC ) {
+        OP_REQUIRES_OK( context, VEDoTranspose(context, out_transposed, {0,2,3,1}, output));
+      }
+    }
+
+  private:
+    std::vector<int32> ksize_;
+    std::vector<int32> stride_;
+    Padding padding_;
+    TensorFormat data_format_;
+    Param param_ ;
+};
+
+REGISTER_KERNEL_BUILDER(
+    Name("AvgPool").Device(DEVICE_VE).TypeConstraint<float>("T"),
+    AvgPoolingOp<VEDevice, float>);
+#endif
 
 // The operation to compute AvgPool gradients.
 // It takes two inputs:
@@ -642,5 +808,188 @@ REGISTER_KERNEL_BUILDER(Name("AvgPoolGrad")
                         AvgPoolingGradOpCustomGPUKernel<Eigen::half>);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#ifdef TENSORFLOW_USE_VE
+template <class T>
+class AvgPoolingGradOp<VEDevice, T> : public OpKernel {
+ public:
+  explicit AvgPoolingGradOp(OpKernelConstruction* context) : OpKernel(context) {
+    string data_format;
+    OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
+    OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
+                errors::InvalidArgument("Invalid data format"));
+#if 0
+    OP_REQUIRES(
+        context, data_format_ == FORMAT_NHWC,
+        errors::InvalidArgument("Default AvgPoolingGradOp only supports NHWC ",
+                                "on device type ",
+                                DeviceTypeString(context->device_type())));
+#endif
+    OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
+    OP_REQUIRES(context, ksize_.size() == 4,
+                errors::InvalidArgument("Sliding window ksize field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("strides", &stride_));
+    OP_REQUIRES(context, stride_.size() == 4,
+                errors::InvalidArgument("Sliding window strides field must "
+                                        "specify 4 dimensions"));
+    OP_REQUIRES_OK(context, context->GetAttr("padding", &padding_));
+    OP_REQUIRES(context, ksize_[0] == 1 && stride_[0] == 1,
+                errors::Unimplemented(
+                    "Pooling is not yet supported on the batch dimension."));
+
+    for (size_t i = 0; i < 4; ++i) {
+      param_.ksize[i] = ksize_[i];
+      param_.stride[i] = stride_[i];
+    }
+    param_.data_format = data_format_;
+    param_.padding = padding_;
+  }
+
+  void Compute(OpKernelContext* context) override {
+    const Tensor& tensor_in_shape = context->input(0);
+    const Tensor& out_backprop = context->input(1);
+    // For avgpooling, tensor_in_shape should have 1 dimension, and 4 elements.
+    OP_REQUIRES(
+        context,
+        tensor_in_shape.dims() == 1 && tensor_in_shape.NumElements() == 4,
+        errors::InvalidArgument("out_backprop must be 1-dimensional and 4 "
+                                "elements"));
+    // For avgpooling, out_backprop should have 4 dimensions.
+    OP_REQUIRES(context, out_backprop.dims() == 4,
+                errors::InvalidArgument("out_backprop must be 4-dimensional"));
+#if 0
+    const int64 out_backprop_batch = out_backprop.dim_size(0);
+    const int64 out_backprop_rows = out_backprop.dim_size(1);
+    const int64 out_backprop_cols = out_backprop.dim_size(2);
+    const int64 out_backprop_depth = out_backprop.dim_size(3);
+#endif
+
+    TensorShape output_shape;
+    auto shape_vec = tensor_in_shape.vec<int32>();
+    for (int64 i = 0; i < tensor_in_shape.NumElements(); ++i) {
+      output_shape.AddDim(shape_vec(i));
+    }
+    const int64 in_rows = output_shape.dim_size(1);
+    const int64 in_cols = output_shape.dim_size(2);
+
+    Tensor* input_backprop = nullptr;
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &input_backprop));
+#if 0
+    input_backprop->flat<T>().setZero();
+#endif
+
+    const int window_rows = ksize_[1];
+    const int window_cols = ksize_[2];
+#if 0
+    const int depth_window = ksize_[3];
+#endif
+
+    const int row_stride = stride_[1];
+    const int col_stride = stride_[2];
+
+#if 0
+    // We (will) use different code for spatial pooling and
+    // non-spatial pooling.
+    //
+    // Spatial pooling is when depth_window = 1
+    OP_REQUIRES(context, depth_window == 1,
+                errors::Unimplemented("Non-spatial pooling is not "
+                                      "yet supported. Volunteers? :)"));
+#endif
+
+    int64 out_height, out_width, pad_rows, pad_cols;
+    OP_REQUIRES_OK(context,
+                   GetWindowedOutputSize(in_rows, window_rows, row_stride,
+                                         padding_, &out_height, &pad_rows));
+    OP_REQUIRES_OK(context,
+                   GetWindowedOutputSize(in_cols, window_cols, col_stride,
+                                         padding_, &out_width, &pad_cols));
+
+#if 0
+    const T* out_backprop_ptr = out_backprop.flat<T>().data();
+    T* input_backprop_ptr = output->flat<T>().data();
+#endif
+
+    param_.pad_rows = pad_rows;
+    param_.pad_cols = pad_cols;
+
+    Tensor out_bp_transposed ;
+    Tensor in_bp_transposed ;
+    Param param_nchw = param_ ;
+    if( data_format_ == FORMAT_NHWC ) {
+	// if data_format is NHWC, then transpose in/out tensor
+
+	const int64 batch = GetTensorDim(out_backprop, data_format_, 'N');
+
+	const int64 out_rows = GetTensorDim(out_backprop, data_format_, 'H');
+	const int64 out_cols = GetTensorDim(out_backprop, data_format_, 'W');
+	const int64 out_depths = GetTensorDim(out_backprop, data_format_, 'C');
+
+
+	const int64 in_rows = GetTensorDim(*input_backprop, data_format_, 'H');
+	const int64 in_cols = GetTensorDim(*input_backprop, data_format_, 'W');
+	const int64 in_depths = GetTensorDim(*input_backprop, data_format_, 'C');
+
+
+	OP_REQUIRES_OK(context,
+		       context->allocate_temp(
+			   reinterpret_cast<DataType>(out_backprop.dtype()),
+			   ShapeFromFormat(FORMAT_NCHW, batch, out_rows, out_cols, out_depths),
+			   &out_bp_transposed));
+
+	OP_REQUIRES_OK(context,
+		       context->allocate_temp(
+			   reinterpret_cast<DataType>(out_backprop.dtype()),
+			   ShapeFromFormat(FORMAT_NCHW, batch, in_rows, in_cols, in_depths),
+			   &in_bp_transposed)
+		       );
+
+	OP_REQUIRES_OK( context, VEDoTranspose(context, out_backprop, {0,3,1,2}, &out_bp_transposed));
+
+	param_nchw.ksize[0]  = param_.stride[0] ;
+	param_nchw.ksize[1]  = param_.stride[3] ;
+	param_nchw.ksize[2]  = param_.stride[1] ;
+	param_nchw.ksize[3]  = param_.stride[2] ;
+
+	param_nchw.stride[0]  = param_.stride[0] ;
+	param_nchw.stride[1]  = param_.stride[3] ;
+	param_nchw.stride[2]  = param_.stride[1] ;
+	param_nchw.stride[3]  = param_.stride[2] ;
+
+    }
+    else {
+	out_bp_transposed = out_backprop ;
+	in_bp_transposed  = *input_backprop ;
+    }
+
+
+    VEOpKernelHelper::ArgsImpl<> args;
+    args.addArg<Tensor>(in_bp_transposed);
+    args.addArg<Tensor>(out_bp_transposed);
+    args.addArg<Param>(param_nchw);
+
+    VEOpKernelHelper::Call(context, "AvgPoolGrad", args);
+
+    // if data_format is NHWC, then transpose in_backprop tensor
+    if ( data_format_ == FORMAT_NHWC ) {
+      OP_REQUIRES_OK( context, VEDoTranspose(context, in_bp_transposed, {0,2,3,1}, input_backprop));
+    }
+  }
+
+ private:
+  std::vector<int32> ksize_;
+  std::vector<int32> stride_;
+  Padding padding_;
+  TensorFormat data_format_;
+  Param param_;
+};
+
+REGISTER_KERNEL_BUILDER(Name("AvgPoolGrad")
+                            .Device(DEVICE_VE)
+                            .TypeConstraint<float>("T")
+                            .HostMemory("orig_input_shape"),
+                        AvgPoolingGradOp<VEDevice, float>);
+#endif // TENSORFLOW_USE_VE
 
 }  // namespace tensorflow

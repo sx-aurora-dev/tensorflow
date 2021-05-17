@@ -30,4 +30,7 @@ REGISTER3(UnaryOp, GPU, "Tan", functor::tan, Eigen::half, float, double);
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Tan, float);
+#endif
 }  // namespace tensorflow

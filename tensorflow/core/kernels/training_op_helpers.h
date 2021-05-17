@@ -69,6 +69,50 @@ Status EnsureSparseVariableAccess(OpKernelContext* ctx, Var* var) {
   return Status::OK();
 }
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+Status VEEnsureSparseVariableAccess(OpKernelContext* ctx, Var* var) {
+  if (var->copy_on_read_mode.load()) {
+    return Status::OK();
+  }
+  mutex_lock ml(*var->mu());
+  // Once copy-on-read mode is True the refcount is guaranteed to be 1. This can
+  // also happen if there are no concurrent reads of the variable and
+  // copy-on-read mode is false.
+  if (var->tensor()->RefCountIsOne()) {
+    var->copy_on_read_mode.store(true);
+    return Status::OK();
+  }
+  PersistentTensor unused;
+  Tensor* tmp;
+  if (std::is_same<T, Variant>::value) {
+    AllocatorAttributes attr;
+    attr.set_on_host(true);
+    TF_RETURN_IF_ERROR(ctx->allocate_persistent(
+        var->tensor()->dtype(), var->tensor()->shape(), &unused, &tmp, attr));
+
+    const auto elements_in = var->tensor()->flat<Variant>();
+    auto elements_out = tmp->flat<Variant>();
+    for (int64 i = 0; i < elements_in.size(); ++i) {
+      elements_out(i) = elements_in(i);
+    }
+  } else {
+    AllocatorAttributes attr;
+    attr.set_gpu_compatible(true);
+    attr.set_nic_compatible(true);
+    TF_RETURN_IF_ERROR(ctx->allocate_persistent(
+        var->tensor()->dtype(), var->tensor()->shape(), &unused, &tmp, attr));
+    functor::VEDenseUpdate<T, ASSIGN> copy_functor;
+    copy_functor(ctx,
+	         tmp,
+                 const_cast<const Tensor*>(var->tensor()));
+  }
+  *var->tensor() = *tmp;
+  var->copy_on_read_mode.store(true);
+  return Status::OK();
+}
+#endif // TENSORFLOW_USE_VE
+
 // Utility structure that releases a sequence of borrowed mutexes when it is
 // deleted.
 struct VariableInputLockHolder {
@@ -126,6 +170,28 @@ mutex* GetTrainingVariableMutex(OpKernelContext* ctx, int input, bool sparse,
   }
   return ctx->input_ref_mutex(input);
 }
+
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+mutex* VEGetTrainingVariableMutex(OpKernelContext* ctx, int input, bool sparse,
+                                Var** maybe_resource) {
+  *maybe_resource = nullptr;
+  if (ctx->input_dtype(input) == DT_RESOURCE) {
+    if (LookupResource(ctx, HandleFromInput(ctx, input), maybe_resource).ok()) {
+      if (sparse) {
+        VEEnsureSparseVariableAccess<T>(ctx, *maybe_resource)
+            .IgnoreError();
+      }
+      return (*maybe_resource)->mu();
+    } else {
+      ctx->CtxFailureWithWarning(
+          errors::Internal("Invalid variable reference."));
+      return nullptr;
+    }
+  }
+  return ctx->input_ref_mutex(input);
+}
+#endif // TENSORFLOW_USE_VE
 
 // MaybeLockVariableInputMutexesInOrder is a helper function to acquire mutexes
 // in address order to mitigate deadlock.  Returns a structure that, when
@@ -188,6 +254,61 @@ VariableInputLockHolder MaybeLockVariableInputMutexesInOrder(
                                  std::move(shared_locks));
 }
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+VariableInputLockHolder VEMaybeLockVariableInputMutexesInOrder(
+    OpKernelContext* ctx, bool do_lock, bool sparse,
+    const std::vector<int>& input_ids) {
+  bool any_resource = false;
+  for (auto i : input_ids) {
+    if (ctx->input_dtype(i) == DT_RESOURCE) {
+      any_resource = true;
+      break;
+    }
+  }
+  if (!do_lock && !any_resource) {
+    return VariableInputLockHolder({}, {}, {});
+  }
+  std::vector<Var*> vars;
+  std::vector<mutex*> mutexes;
+  std::vector<int> acquire_order;
+  for (auto input : input_ids) {
+    Var* var;
+    mutex* mutex =
+        VEGetTrainingVariableMutex<T>(ctx, input, sparse, &var);
+    if (var) vars.push_back(var);
+    // Only lock each mutex once if duplicates exist (n^2 but n is 2 or 3).
+    if (std::find(mutexes.begin(), mutexes.end(), mutex) == mutexes.end()) {
+      acquire_order.push_back(mutexes.size());
+      mutexes.push_back(mutex);
+    }
+  }
+  std::sort(acquire_order.begin(), acquire_order.end(),
+            [&mutexes](int a, int b) { return mutexes[a] < mutexes[b]; });
+
+  std::unique_ptr<std::vector<mutex_lock>> locks =
+      absl::make_unique<std::vector<mutex_lock>>();
+  std::unique_ptr<std::vector<tf_shared_lock>> shared_locks =
+      absl::make_unique<std::vector<tf_shared_lock>>();
+  locks->reserve(acquire_order.size());
+
+  for (auto input : acquire_order) {
+    Var* var;
+    mutex* mu = VEGetTrainingVariableMutex<T>(ctx, input, sparse, &var);
+    core::ScopedUnref scoped_unref(var);
+    if (mu != nullptr) {
+      if (!sparse || do_lock) {
+        locks->emplace_back(*mu);
+      } else {
+        shared_locks->emplace_back(*mu);
+      }
+    }
+  }
+  return VariableInputLockHolder(std::move(vars), std::move(locks),
+                                 std::move(shared_locks));
+}
+#endif // TENSORFLOW_USE_VE
+
 void MaybeForwardRefInputToRefOutput(OpKernelContext* ctx, int input,
                                      int output);
 
@@ -228,6 +349,43 @@ Status PrepareToUpdateVariable(OpKernelContext* ctx, Tensor* tensor,
   return Status::OK();
 }
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+Status VEPrepareToUpdateVariable(OpKernelContext* ctx, Tensor* tensor,
+                               bool copy_on_read_mode) {
+  if (copy_on_read_mode || !tensor->RefCountIsOne()) {
+    // Tensor's buffer is in use by some read, so we need to copy before
+    // updating.
+    PersistentTensor unused;
+    Tensor* tmp;
+    if (std::is_same<T, Variant>::value) {
+      AllocatorAttributes attr;
+      attr.set_on_host(true);
+      TF_RETURN_IF_ERROR(ctx->allocate_persistent(
+          tensor->dtype(), tensor->shape(), &unused, &tmp, attr));
+
+      const auto elements_in = tensor->flat<Variant>();
+      auto elements_out = tmp->flat<Variant>();
+      for (int64 i = 0; i < elements_in.size(); ++i) {
+        elements_out(i) = elements_in(i);
+      }
+    } else {
+      AllocatorAttributes attr;
+      attr.set_gpu_compatible(true);
+      attr.set_nic_compatible(true);
+      TF_RETURN_IF_ERROR(ctx->allocate_persistent(
+          tensor->dtype(), tensor->shape(), &unused, &tmp, attr));
+      functor::VEDenseUpdate<T, ASSIGN> copy_functor;
+      copy_functor(ctx,
+	           tmp,
+                   const_cast<const Tensor*>(tensor));
+    }
+    *tensor = *tmp;
+  }
+  return Status::OK();
+}
+#endif
+
 // This gives you `*out`, a tensor you can update, corresponding to a variable
 // passed as input index `input`.  This handles the differences between
 // reference and resource variables. For reference variables we can just grab
@@ -256,6 +414,30 @@ Status GetInputTensorFromVariable(OpKernelContext* ctx, int input,
   return Status::OK();
 }
 
+#ifdef TENSORFLOW_USE_VE
+template <typename T>
+Status VEGetInputTensorFromVariable(OpKernelContext* ctx, int input,
+                                  bool lock_held, bool sparse, Tensor* out) {
+  if (ctx->input_dtype(input) == DT_RESOURCE) {
+    Var* var;
+    TF_RETURN_IF_ERROR(LookupResource(ctx, HandleFromInput(ctx, input), &var));
+    core::ScopedUnref unref_var(var);
+    if (sparse) {
+      TF_RETURN_IF_ERROR(VEEnsureSparseVariableAccess<T>(ctx, var));
+      *out = *var->tensor();
+      return Status::OK();
+    }
+    TF_RETURN_IF_ERROR(VEPrepareToUpdateVariable<T>(
+        ctx, var->tensor(), var->copy_on_read_mode.load()));
+    *out = *var->tensor();
+    return Status::OK();
+  }
+  *out = ctx->mutable_input(input, lock_held);
+  return Status::OK();
+}
+#endif // TENSORFLOW_USE_VE
+
 }  // end namespace tensorflow
+
 
 #endif  // TENSORFLOW_CORE_KERNELS_TRAINING_OP_HELPERS_H_

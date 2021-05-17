@@ -23,4 +23,7 @@ REGISTER6(UnaryOp, CPU, "Expm1", functor::expm1, float, Eigen::half, bfloat16,
 REGISTER3(UnaryOp, GPU, "Expm1", functor::expm1, float, Eigen::half, double);
 #endif
 #endif
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Expm1, float);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

@@ -24,4 +24,8 @@ REGISTER4(UnaryOp, CPU, "Floor", functor::floor, float, Eigen::half, bfloat16,
 REGISTER3(UnaryOp, GPU, "Floor", functor::floor, float, Eigen::half, double);
 #endif
 #endif
+
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Floor, float);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

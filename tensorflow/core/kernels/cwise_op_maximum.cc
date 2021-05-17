@@ -39,4 +39,14 @@ REGISTER_KERNEL_BUILDER(Name("Maximum")
                         BinaryOp<CPUDevice, functor::maximum<int32>>);
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(Maximum, float, float, float);
+REGISTER_KERNEL_BUILDER(Name("Maximum")
+                            .Device(DEVICE_VE)
+                            .HostMemory("x")
+                            .HostMemory("y")
+                            .HostMemory("z")
+                            .TypeConstraint<int32>("T"),
+                        BinaryOp<CPUDevice, functor::maximum<int32>>);
+#endif  // TENSORFLOW_USE_VE
 }  // namespace tensorflow

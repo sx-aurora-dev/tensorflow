@@ -27,4 +27,8 @@ REGISTER5(BinaryOp, GPU, "Xlogy", functor::xlogy, float, Eigen::half, double,
 REGISTER3(BinaryOp, GPU, "Xlogy", functor::xlogy, float, Eigen::half, double);
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_BINARY_OP(Xlogy, float, float, float);
+#endif
+
 }  // namespace tensorflow

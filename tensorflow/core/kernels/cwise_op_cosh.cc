@@ -25,4 +25,8 @@ REGISTER2(UnaryOp, GPU, "Cosh", functor::cosh, float, double);
 #endif
 #endif
 
+#ifdef TENSORFLOW_USE_VE
+REGISTER_VE_UNARY_OP(Cosh, float);
+#endif
+
 }  // namespace tensorflow
