@@ -1630,6 +1630,14 @@ struct LaunchMaxPoolingVEOP {
       out_transposed = *output ;
     }
 
+    OP_REQUIRES(ctx,
+                ((params.pad_left == params.pad_right
+                  || params.pad_left + 1 == params.pad_right)
+                 && ((params.pad_top == params.pad_bottom)
+                     || params.pad_top + 1 == params.pad_bottom)),
+                errors::Unimplemented("VE padding only supports"
+                                      " symmetric padding"));
+
     VEOpKernelHelper::ArgsImpl<> args;
     args.addArg<Tensor>(in_transposed) ;    // 0
     args.addArg<Tensor>(out_transposed) ;   // 1
@@ -1639,14 +1647,8 @@ struct LaunchMaxPoolingVEOP {
     args.addArg<int>(params.window_cols);   // 3
     args.addArg<int>(params.row_stride);    // 4
     args.addArg<int>(params.col_stride);    // 5
-#if 0
-    args.addArg<int>(params.pad_rows);      // 6
-    args.addArg<int>(params.pad_cols);      // 7
-#else
-    // FIXME soon
-    args.addArg<int>(params.pad_left + params.pad_right);      // 6
-    args.addArg<int>(params.pad_top + params.pad_bottom);      // 7
-#endif
+    args.addArg<int>((params.pad_left + params.pad_right) / 2);      // 6
+    args.addArg<int>((params.pad_top + params.pad_bottom) / 2);      // 7
 
 #if 0
     args.addArg<int>(FORMAT_NHWC); // data_layout   : current vetfkernel supports NCHW only.
@@ -1729,6 +1731,14 @@ struct LaunchMaxPoolingGradVEOP {
       in_bp_transposed = *in_backprop ;
     }
 
+    OP_REQUIRES(ctx,
+                ((params.pad_left == params.pad_right
+                  || params.pad_left + 1 == params.pad_right)
+                 && ((params.pad_top == params.pad_bottom)
+                     || params.pad_top + 1 == params.pad_bottom)),
+                errors::Unimplemented("VE padding only supports"
+                                      " symmetric padding"));
+
     VEOpKernelHelper::ArgsImpl<> args;
     args.addArg<Tensor>(out_bp_transposed) ;	// 0
     args.addArg<Tensor>(out_transposed) ;	// 1
@@ -1740,14 +1750,8 @@ struct LaunchMaxPoolingGradVEOP {
     args.addArg<int>(params.window_cols);   // 5
     args.addArg<int>(params.row_stride);    // 6
     args.addArg<int>(params.col_stride);    // 7
-#if 0
-    args.addArg<int>(params.pad_rows);      // 8
-    args.addArg<int>(params.pad_cols);      // 9
-#else
-    // FIXME soon
-    args.addArg<int>(params.pad_left + params.pad_right);      // 8
-    args.addArg<int>(params.pad_top + params.pad_bottom);      // 9
-#endif
+    args.addArg<int>((params.pad_left + params.pad_right) / 2);      // 8
+    args.addArg<int>((params.pad_top + params.pad_bottom) / 2);      // 9
 
 #if 0
     args.addArg<int>(FORMAT_NHWC); // data_layout   : current vetfkernel supports NCHW only.

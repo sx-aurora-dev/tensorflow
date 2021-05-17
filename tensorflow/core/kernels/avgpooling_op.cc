@@ -328,14 +328,16 @@ class AvgPoolingOp<VEDevice, T> : public UnaryOp<T> {
 
 #endif
 
-#if 0
-      param_.pad_rows = params.pad_rows;
-      param_.pad_cols = params.pad_cols;
-#else
-      // FIXME soon
-      param_.pad_rows = params.pad_left + params.pad_right;
-      param_.pad_cols = params.pad_top + params.pad_bottom;
-#endif 
+      OP_REQUIRES(context,
+                  ((params.pad_left == params.pad_right
+                    || params.pad_left + 1 == params.pad_right)
+                   && ((params.pad_top == params.pad_bottom)
+                       || params.pad_top + 1 == params.pad_bottom)),
+                  errors::Unimplemented("VE padding only supports"
+                                        " symmetric padding"));
+
+      param_.pad_rows = (params.pad_left + params.pad_right) / 2;
+      param_.pad_cols = (params.pad_top + params.pad_bottom) / 2;
 
       Tensor in_transposed ;
       Tensor out_transposed ;
