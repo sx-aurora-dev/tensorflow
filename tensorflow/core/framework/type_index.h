@@ -24,9 +24,9 @@ limitations under the License.
 
 #include "tensorflow/core/platform/types.h"
 
-#if defined(MACOS) || defined(TARGET_OS_MAC)
+#if defined(MACOS) || defined(TARGET_OS_MAC) || defined(PLATFORM_WINDOWS)
 #include "tensorflow/core/platform/hash.h"
-#endif  // defined(MACOS) || defined(TARGET_OS_MAC)
+#endif  // defined(MACOS) || defined(TARGET_OS_MAC) || defined(PLATFORM_WINDOWS)
 
 namespace tensorflow {
 
@@ -62,7 +62,7 @@ class TypeIndex {
 
 #if defined(__GXX_RTTI) || defined(_CPPRTTI)
 
-#if defined(MACOS) || defined(TARGET_OS_MAC)
+#if defined(MACOS) || defined(TARGET_OS_MAC) || defined(PLATFORM_WINDOWS)
     // Use a hash based on the type name to avoid issues due to RTLD_LOCAL on
     // MacOS (b/156979412).
     return TypeIndex(Hash64(typeid(T).name()), typeid(T).name());
@@ -70,15 +70,15 @@ class TypeIndex {
     // Use the real type name if we have RTTI.
     return TypeIndex(static_cast<uint64>(reinterpret_cast<intptr_t>(hash_bit)),
                      typeid(T).name());
-#endif  // defined(MACOS) || defined(TARGET_OS_MAC)
+#endif  // defined(MACOS) || defined(TARGET_OS_MAC) || defined(PLATFORM_WINDOWS)
 
 #else
-#if defined(MACOS) || defined(TARGET_OS_MAC)
+#if TARGET_OS_OSX
     // Warn MacOS users that not using RTTI can cause problems (b/156979412).
 #warning \
     "Compiling with RTTI disabled on MacOS can cause problems when comparing " \
     "types across shared libraries."
-#endif  // defined(MACOS) || defined(TARGET_OS_MAC)
+#endif  // TARGET_OS_OSX
 
     // No type names available.
     return TypeIndex(static_cast<uint64>(reinterpret_cast<intptr_t>(hash_bit)),
@@ -94,11 +94,6 @@ class TypeIndex {
   uint64 hash_;
   const char* name_;
 };
-
-template <typename T>
-inline TypeIndex MakeTypeIndex() {
-  return TypeIndex::Make<T>();
-}
 
 }  // namespace tensorflow
 

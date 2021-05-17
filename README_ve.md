@@ -6,19 +6,10 @@ You can use prebuilt packages if you do not need to modify tensorflow.
 
 We are providing a whl package on github. See [releases](https://github.com/sx-aurora-dev/tensorflow/releases) page.
 
-We have tested on CentOS7.7 and CentOS8.1:
+We have tested on CentOS8.1:
 
-CentOS7.7
-
-- veos: 2.6.0
-- veoffload-aveo: 2.6.0
-- python: 3.6
-
-CentOS8.1
-
-- veos: 2.7.2
-- veoffload-aveo: 2.7.1
-- python: 3.6
+- veos: 2.7.5
+- python: 3.8.3
 
 ### Enable Huge Page for DMA
 
@@ -31,32 +22,22 @@ example to enable huge pages.
 
 ### Install required packages
 
-CentOS7
-
-```
-% yum install centos-release-scl
-% yum install rh-python36 veoffload veoffload-veorun
-```
-
 CentOS8
 
 ```
-% yum install python36 python36-devel
+% yum install python38 python38-devel
 ```
 
 
-### Create virtualenv with python 3.6
+### Create virtualenv with python 3.8
 
-Create virtualenv and update package, then install prebuilt packages.  If you
-are using CentOS7, enable scl first.
+Create virtualenv and update package, then install prebuilt packages.
 
 ```
-$ scl enable rh-python36 bash # CentOS7
-$ python3.6 -mvenv ~/.virtualenvs/tmp
+$ python3.8 -mvenv ~/.virtualenvs/tmp
 $ source ~/.virtualenvs/tmp/bin/activate
 (tmp)$ pip install -U pip
-(tms)$ pip install -U six numpy==1.18.0 wheel setuptools
-(tmp)% pip install -U tensorflow_ve-2.3.1-cp36-cp36m-linux_x86_64.whl
+(tmp)% pip install -U tensorflow_ve-2.5.0-cp38-cp38-linux_x86_64.whl
 ```
 
 Now you can run your scripts.
@@ -70,21 +51,14 @@ program to support NCHW format.
 
 We have tested on above envirionment with:
 
-- bazel 3.1.0
-- gcc 8.3.1 (devtoolset-8)
-- git 2.9.3 (rh-git29 on CentOS7) or 2.18.1 (CentOS8)
+- bazel 3.7.2
+- gcc 8.3.1
+- git 2.27.0
 
 
 ### Setup
 
-If you are using CentOS7, install devtoolset and git then enable scl.
-
-```
-$ yum install devtoolset-8 rh-git29 veoffload-devel veoffload-veorun-devel
-$ scl enable rh-python36 devtoolset-8 rh-git29 bash
-```
-
-Download bazel 3.1.0 from <https://github.com/bazelbuild/bazel/releases/tag/3.1.0> and install.
+Download bazel 3.7.2 from <https://github.com/bazelbuild/bazel/releases/tag/3.7.2> and install.
 
 ### Build tensorflow
 
@@ -92,7 +66,7 @@ Build tensorflow with virtualenv.
 
 ```
 $ source ~/.virtualenvs/tmp/bin/activate
-(tmp)% pip install keras-preprocessing
+(tmp)% pip install numpy==1.19.2 keras-preprocessing wheel
 (tmp)% ./configure # answer N for all questions. You can probably ignore an error on getsitepackages.
 (tmp)% BAZEL_LINKLIBS="-lstdc++" BAZEL_LINKOPTS="" bazel build --jobs 24 --config=ve --config=opt $* //tensorflow/tools/pip_package:build_pip_package
 (tmp)% ./bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow_ve .

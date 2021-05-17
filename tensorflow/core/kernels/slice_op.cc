@@ -62,9 +62,6 @@ void IntTensorToInt64Vec(const Tensor& tensor,
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
-#ifdef TENSORFLOW_USE_SYCL
-typedef Eigen::SyclDevice SYCLDevice;
-#endif  // TENSORFLOW_USE_SYCL
 #ifdef TENSORFLOW_USE_VE
 typedef Eigen::VeDevice VEDevice;
 #endif  // TENSORFLOW_USE_VE
@@ -346,60 +343,6 @@ REGISTER_KERNEL_BUILDER(Name("Slice")
 #undef REGISTER_GPU
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-
-#ifdef TENSORFLOW_USE_SYCL
-// Forward declarations of the functor specializations for SYCL.
-namespace functor {
-#define DECLARE_SYCL_SPEC(T, NDIM)                                  \
-  template <>                                                       \
-  void Slice<SYCLDevice, T, NDIM>::operator()(                      \
-      const SYCLDevice& d, typename TTypes<T, NDIM>::Tensor output, \
-      typename TTypes<T, NDIM>::ConstTensor input,                  \
-      const Eigen::DSizes<Eigen::DenseIndex, NDIM>& indices,        \
-      const Eigen::DSizes<Eigen::DenseIndex, NDIM>& sizes);         \
-  extern template struct Slice<SYCLDevice, T, NDIM>;
-
-#define DECLARE_FOR_N(T)   \
-  DECLARE_SYCL_SPEC(T, 1); \
-  DECLARE_SYCL_SPEC(T, 2); \
-  DECLARE_SYCL_SPEC(T, 3); \
-  DECLARE_SYCL_SPEC(T, 4); \
-  DECLARE_SYCL_SPEC(T, 5); \
-  DECLARE_SYCL_SPEC(T, 6); \
-  DECLARE_SYCL_SPEC(T, 7); \
-  DECLARE_SYCL_SPEC(T, 8);
-
-TF_CALL_GPU_NUMBER_TYPES_NO_HALF(DECLARE_FOR_N);
-DECLARE_FOR_N(int32);
-DECLARE_FOR_N(bool);
-
-#undef DECLARE_FOR_N
-#undef DECLARE_SYCL_SPEC
-}  // namespace functor
-
-#define REGISTER_SYCL(type)                                    \
-  REGISTER_KERNEL_BUILDER(Name("Slice")                        \
-                              .Device(DEVICE_SYCL)             \
-                              .TypeConstraint<type>("T")       \
-                              .HostMemory("begin")             \
-                              .HostMemory("size")              \
-                              .TypeConstraint<int32>("Index"), \
-                          SliceOp<SYCLDevice, type>)
-
-TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL);
-
-REGISTER_KERNEL_BUILDER(Name("Slice")
-                            .Device(DEVICE_SYCL)
-                            .TypeConstraint<int32>("T")
-                            .TypeConstraint<int32>("Index")
-                            .HostMemory("input")
-                            .HostMemory("begin")
-                            .HostMemory("size")
-                            .HostMemory("output"),
-                        SliceOp<CPUDevice, int32>);
-#undef REGISTER_SYCL
-
-#endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
 

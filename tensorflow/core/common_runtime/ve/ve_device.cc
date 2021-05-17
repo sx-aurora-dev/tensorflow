@@ -819,8 +819,10 @@ class VEMemAllocator : public SubAllocator {
   public:
     VEMemAllocator(VEO* veo) : SubAllocator({}, {}), veo_(veo) {}
     ~VEMemAllocator();
-    void* Alloc(size_t alignments, size_t num_bytes);
-    void Free(void* ptr, size_t num_bytes);
+    void* Alloc(size_t alignments, size_t num_bytes,
+                size_t* bytes_received) override;
+    void Free(void* ptr, size_t num_bytes) override;
+    bool SupportsCoalescing() const override { return false; }
 
   private:
     VEO* veo_;
@@ -828,13 +830,15 @@ class VEMemAllocator : public SubAllocator {
 
 VEMemAllocator::~VEMemAllocator() {}
 
-void* VEMemAllocator::Alloc(size_t alignments, size_t num_bytes) {
+void* VEMemAllocator::Alloc(size_t alignments, size_t num_bytes,
+                            size_t *bytes_received) {
   VLOG(1) << "VEMemAllocator::Alloc: alignments=" << alignments << " num_bytes=" << num_bytes;
 
   void* addr;
   Status s = veo_->posix_memalign(&addr, alignments, num_bytes);
   if (!s.ok())
       addr = nullptr;
+  *bytes_received = num_bytes;
   VLOG(1) << "VEMemAllocator::Alloc: return " << addr;
   return addr;
 }

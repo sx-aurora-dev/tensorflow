@@ -16,15 +16,20 @@ limitations under the License.
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 
 namespace tensorflow {
+
+#if !defined(MLIR_GENERATED_EXPERIMENTAL_KERNELS_ENABLED)
 REGISTER5(UnaryOp, CPU, "Rsqrt", functor::rsqrt, float, Eigen::half, double,
           complex64, complex128);
+#else
+REGISTER2(UnaryOp, CPU, "Rsqrt", functor::rsqrt, complex64, complex128);
+#endif
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if !defined(MLIR_GENERATED_GPU_KERNELS_ENABLED)
 REGISTER3(UnaryOp, GPU, "Rsqrt", functor::rsqrt, float, Eigen::half, double);
 #endif
-#ifdef TENSORFLOW_USE_SYCL
-REGISTER2(UnaryOp, SYCL, "Rsqrt", functor::rsqrt, float, double);
-#endif  // TENSORFLOW_USE_SYCL
+#endif
+
 #ifdef TENSORFLOW_USE_VE
 REGISTER_VE_UNARY_OP(Rsqrt, float);
 #endif  // TENSORFLOW_USE_SYCL
@@ -35,10 +40,7 @@ REGISTER5(SimpleBinaryOp, CPU, "RsqrtGrad", functor::rsqrt_grad, float,
 REGISTER3(SimpleBinaryOp, GPU, "RsqrtGrad", functor::rsqrt_grad, float,
           Eigen::half, double);
 #endif
-#ifdef TENSORFLOW_USE_SYCL
-REGISTER2(SimpleBinaryOp, SYCL, "RsqrtGrad", functor::rsqrt_grad, float,
-          double);
-#endif  //  TENSORFLOW_USE_SYCL
+
 #ifdef TENSORFLOW_USE_VE
 REGISTER_VE_BINARY_OP(RsqrtGrad, float, float, float);
 #endif  // TENSORFLOW_USE_VE

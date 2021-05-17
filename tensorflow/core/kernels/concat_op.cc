@@ -35,9 +35,6 @@ typedef Eigen::ThreadPoolDevice CPUDevice;
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 typedef Eigen::GpuDevice GPUDevice;
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#ifdef TENSORFLOW_USE_SYCL
-typedef Eigen::SyclDevice SYCLDevice;
-#endif  // TENSORFLOW_USE_SYCL
 #ifdef TENSORFLOW_USE_VE
 typedef Eigen::VeDevice VEDevice;
 #endif  // TENSORFLOW_USE_VE
@@ -171,12 +168,6 @@ class ConcatBaseOp : public OpKernel {
         return;
       }
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#ifdef TENSORFLOW_USE_SYCL
-      if (std::is_same<Device, SYCLDevice>::value) {
-        ConcatSYCL<T>(c->eigen_sycl_device(), inputs_flat, &output_flat);
-        return;
-      }
-#endif  // TENSORFLOW_USE_SYCL
 #ifdef TENSORFLOW_USE_VE
       if (std::is_same<Device, VEDevice>::value) {
         ConcatVE<T>(c, inputs_flat, &output_flat);
@@ -217,8 +208,6 @@ REGISTER_CONCAT(qint8);
 REGISTER_CONCAT(quint16);
 REGISTER_CONCAT(qint16);
 REGISTER_CONCAT(qint32);
-REGISTER_CONCAT(uint32);
-REGISTER_CONCAT(uint64);
 
 #undef REGISTER_CONCAT
 
@@ -236,9 +225,8 @@ REGISTER_CONCAT(uint64);
                               .HostMemory("axis"),       \
                           ConcatV2Op<GPUDevice, type>)
 
+TF_CALL_INTEGRAL_TYPES_NO_INT32(REGISTER_GPU);
 TF_CALL_bfloat16(REGISTER_GPU);
-TF_CALL_uint8(REGISTER_GPU);
-TF_CALL_int64(REGISTER_GPU);
 TF_CALL_GPU_ALL_TYPES(REGISTER_GPU);
 #undef REGISTER_GPU
 
@@ -262,38 +250,6 @@ REGISTER_KERNEL_BUILDER(Name("ConcatV2")
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
-#ifdef TENSORFLOW_USE_SYCL
-#define REGISTER_SYCL(type)                              \
-  REGISTER_KERNEL_BUILDER(Name("Concat")                 \
-                              .Device(DEVICE_SYCL)       \
-                              .TypeConstraint<type>("T") \
-                              .HostMemory("concat_dim"), \
-                          ConcatOp<SYCLDevice, type>)    \
-  REGISTER_KERNEL_BUILDER(Name("ConcatV2")               \
-                              .Device(DEVICE_SYCL)       \
-                              .TypeConstraint<type>("T") \
-                              .HostMemory("axis"),       \
-                          ConcatV2Op<SYCLDevice, type>)
-
-TF_CALL_GPU_NUMBER_TYPES_NO_HALF(REGISTER_SYCL);
-
-REGISTER_KERNEL_BUILDER(Name("Concat")
-                            .Device(DEVICE_SYCL)
-                            .TypeConstraint<int32>("T")
-                            .HostMemory("concat_dim")
-                            .HostMemory("values")
-                            .HostMemory("output"),
-                        ConcatOp<CPUDevice, int32>);
-REGISTER_KERNEL_BUILDER(Name("ConcatV2")
-                            .Device(DEVICE_SYCL)
-                            .TypeConstraint<int32>("T")
-                            .HostMemory("values")
-                            .HostMemory("axis")
-                            .HostMemory("output"),
-                        ConcatV2Op<CPUDevice, int32>);
-
-#undef REGISTER_SYCL
-#endif  // TENSORFLOW_USE_SYCL
 
 class ConcatOffsetOp : public OpKernel {
  public:
@@ -381,15 +337,6 @@ REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
                             .HostMemory("offset"),
                         ConcatOffsetOp);
 
-#ifdef TENSORFLOW_USE_SYCL
-REGISTER_KERNEL_BUILDER(Name("ConcatOffset")
-                            .Device(DEVICE_SYCL)
-                            .HostMemory("concat_dim")
-                            .HostMemory("shape")
-                            .HostMemory("offset"),
-                        ConcatOffsetOp);
-#endif  // TENSORFLOW_USE_SYCL
-
 #ifdef TENSORFLOW_USE_VE
 
 #define REGISTER_VE(type)                             	 \
@@ -435,6 +382,4 @@ REGISTER_KERNEL_BUILDER(Name("ConcatV2")
 #undef MAX_CONCAT_SIZE
 
 #endif // TENSORFLOW_USE_VE
-
-
 }  // namespace tensorflow

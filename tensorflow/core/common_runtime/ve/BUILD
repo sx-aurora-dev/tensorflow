@@ -6,7 +6,7 @@ cc_library(
         "ve_device.cc",
         ],
     deps = [
-        "//tensorflow/core:core_cpu_impl",
+        "//tensorflow/core/common_runtime:core_cpu_impl",
         "//third_party/veoffload",
         ":ve_runtime",
     ],

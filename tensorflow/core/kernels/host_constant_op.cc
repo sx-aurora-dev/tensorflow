@@ -59,13 +59,6 @@ REGISTER_KERNEL_BUILDER(Name("Const")
                         _HostConstantOp);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
-#ifdef TENSORFLOW_USE_SYCL
-REGISTER_KERNEL_BUILDER(Name("Const")
-                            .Device(DEVICE_SYCL)
-                            .HostMemory("output")
-                            .TypeConstraint<int32>("dtype"),
-                        _HostConstantOp);
-#endif  // TENSORFLOW_USE_SYCL
 
 #ifdef TENSORFLOW_USE_VE
 REGISTER_KERNEL_BUILDER(Name("Const")

@@ -9,9 +9,9 @@ cc_library(
         "ve_tracer.cc"
         ],
     deps = [
-        "//tensorflow/core:stream_executor",
-        "//tensorflow/core/profiler/internal:profiler_factory",
-        "//tensorflow/core/profiler/internal:profiler_interface",
+        # "//tensorflow/core:stream_executor",
+        "//tensorflow/core/profiler/lib:profiler_factory",
+        "//tensorflow/core/profiler/lib:profiler_interface",
         "//tensorflow/core/profiler/protobuf:xplane_proto_cc",
         "//tensorflow/core/profiler/utils:xplane_builder",
         "//tensorflow/core/profiler/utils:xplane_schema",
