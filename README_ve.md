@@ -99,8 +99,8 @@ https://github.com/sx-aurora-dev/llvm-project.
 
 ```
 (tmp)% cd <working directory>
-(tmp)% git clone https://github.com/sx-aurora-dev/vetfkernel vetfkernel
-(tmp)% cd vetfkernel
+(tmp)% git clone https://github.com/sx-aurora-dev/vml vml
+(tmp)% cd vml
 (tmp)% (mkdir build && cd build && cmake3 -DUSE_PREBUILT_VEDNN=ON .. && make)
 ```
 
